@@ -1,0 +1,38 @@
+$Id: TODO,v 1.40 2003/04/03 13:40:43 alexis Exp $
+
+AUTOCONF
+
+- check whether the --with-nsd-user exists in the system
+
+ZONE COMPILER
+- memory allocation optimization is needed
+- as writing the zone the order should be DNS SEC compliant (use dnameinvert())
+- error diagnostic has to be improved a lot
+- add a check to make sure that the biggest answer in the database does not
+  exceed the query buffer
+- improve the strdname() routine
+- empty node should not cause NXDOMAIN
+
+
+SERVER
+- in tcp the timeout should be handled different than with alarm()?
+- replace all ntohs(..) with #define .... something[i] and ntohs() it beforehand
+- make sure that we dont copy anything from the query we dont want to copy, like
+  funny headers etc
+- query buffer is now 64k, perhaps we want it smaller? (used to be 1k)
+
+SECURITY
+
+PURITY
+- some data is in network order some in host order, make it clear with prefixes
+- brush up the fuction and identifiers names
+- bzero pads so the databases can be cmp'd
+
+TESTS
+
+MISC
+
+DOCUMENTATION
+
+- convert the manual pages into -man macros set for better compatibility?
+- update DESIGN document
