@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,2.3-devel,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,2.2.1,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -184,7 +184,7 @@ AC_DEFUN([CHECK_SSL], [
             HAVE_SSL=yes 
             LDFLAGS="$LDFLAGS -L$ssldir/lib";
             AC_CHECK_LIB(crypto, HMAC_CTX_init,, [
-                    AC_MSG_ERROR(OpenSSL found in $ssldir, but version 0.9.7 or higher is required)
+                    AC_MSG_ERROR([OpenSSL found in $ssldir, but version 0.9.7 or higher is required])
                 ])
         fi
         AC_SUBST(HAVE_SSL)

@@ -247,10 +247,10 @@ rdata_apl_to_string(buffer_type *output, rdata_atom_type rdata)
 		uint16_t address_family = buffer_read_u16(&packet);
 		uint8_t prefix = buffer_read_u8(&packet);
 		uint8_t length = buffer_read_u8(&packet);
-		int negated = length & 0x80;
+		int negated = length & APL_NEGATION_MASK;
 		int af = -1;
 		
-		length &= 0x7f;
+		length &= APL_LENGTH_MASK;
 		switch (address_family) {
 		case 1: af = AF_INET; break;
 		case 2: af = AF_INET6; break;
@@ -385,7 +385,7 @@ rdata_unknown_to_string(buffer_type *output, rdata_atom_type rdata)
 	return 1;
 }
 
-static rdata_to_string_type rdata_to_string_table[RDATA_KIND_UNKNOWN + 1] = {
+static rdata_to_string_type rdata_to_string_table[RDATA_ZF_UNKNOWN + 1] = {
 	rdata_dname_to_string,
 	rdata_text_to_string,
 	rdata_byte_to_string,
@@ -410,10 +410,10 @@ static rdata_to_string_type rdata_to_string_table[RDATA_KIND_UNKNOWN + 1] = {
 };
 
 int
-rdata_atom_to_string(buffer_type *output, rdata_kind_type kind,
+rdata_atom_to_string(buffer_type *output, rdata_zoneformat_type type,
 		     rdata_atom_type rdata)
 {
-	return rdata_to_string_table[kind](output, rdata);
+	return rdata_to_string_table[type](output, rdata);
 }
 
 ssize_t
@@ -443,53 +443,46 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 		size_t length = 0;
 		int required = i < descriptor->minimum;
 		
-		switch (rdata_atom_kind(rrtype, i)) {
-		case RDATA_KIND_DNAME:
+		switch (rdata_atom_wireformat_type(rrtype, i)) {
+		case RDATA_WF_COMPRESSED_DNAME:
+		case RDATA_WF_UNCOMPRESSED_DNAME:
 			is_domain = 1;
 			break;
-		case RDATA_KIND_TEXT:
-			/* Length is stored in the first byte.  */
-			length = 1 + buffer_current(packet)[0];
-			break;
-		case RDATA_KIND_BYTE:
-		case RDATA_KIND_ALGORITHM:
+		case RDATA_WF_BYTE:
 			length = sizeof(uint8_t);
 			break;
-		case RDATA_KIND_SHORT:
-		case RDATA_KIND_RRTYPE:
-		case RDATA_KIND_CERTIFICATE_TYPE:
+		case RDATA_WF_SHORT:
 			length = sizeof(uint16_t);
 			break;
-		case RDATA_KIND_LONG:
-		case RDATA_KIND_PERIOD:
-		case RDATA_KIND_TIME:
+		case RDATA_WF_LONG:
 			length = sizeof(uint32_t);
 			break;
-		case RDATA_KIND_A:
+		case RDATA_WF_TEXT:
+			/* Length is stored in the first byte.  */
+			length = 1;
+			if (buffer_position(packet) + length <= end) {
+				length += buffer_current(packet)[length - 1];
+			}
+			break;
+		case RDATA_WF_A:
 			length = sizeof(in_addr_t);
 			break;
-		case RDATA_KIND_AAAA:
+		case RDATA_WF_AAAA:
 			length = IP6ADDRLEN;
 			break;
-		case RDATA_KIND_BASE64:
-		case RDATA_KIND_HEX:
-		case RDATA_KIND_NSAP:
-		case RDATA_KIND_SERVICES:
-		case RDATA_KIND_NXT:
-		case RDATA_KIND_NSEC:
-		case RDATA_KIND_LOC:
-		case RDATA_KIND_UNKNOWN:
-			/* All remaining RDATA.  */
+		case RDATA_WF_BINARY:
+			/* Remaining RDATA is binary.  */
 			length = end - buffer_position(packet);
 			break;
-		case RDATA_KIND_APL:
+		case RDATA_WF_APL:
 			length = (sizeof(uint16_t)    /* address family */
 				  + sizeof(uint8_t)   /* prefix */
 				  + sizeof(uint8_t)); /* length */
 			if (buffer_position(packet) + length <= end) {
-				length += (buffer_current(packet)[sizeof(uint16_t) + sizeof(uint8_t)]) & 0x7f;
+				/* Mask out negation bit.  */
+				length += (buffer_current(packet)[length - 1]
+					   & APL_LENGTH_MASK);
 			}
-
 			break;
 		}
 
@@ -501,7 +494,7 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 			}
 			
 			dname = dname_make_from_packet(
-				temp_region, packet, 1);
+				temp_region, packet, 1, 1);
 			if (!dname || buffer_position(packet) > end) {
 				/* Error in domain name.  */
 				region_destroy(temp_region);
@@ -548,8 +541,7 @@ rdata_maximum_wireformat_size(rrtype_descriptor_type *descriptor,
 	size_t i;
 	for (i = 0; i < rdata_count; ++i) {
 		if (rdata_atom_is_domain(descriptor->type, i)) {
-			result += dname_length(
-				domain_dname(rdata_atom_domain(rdatas[i])));
+			result += domain_dname(rdata_atom_domain(rdatas[i]))->name_size;
 		} else {
 			result += rdata_atom_size(rdatas[i]);
 		}
@@ -572,7 +564,7 @@ rdata_atoms_to_unknown_string(buffer_type *output,
 			const dname_type *dname =
 				domain_dname(rdata_atom_domain(rdatas[i]));
 			hex_to_string(
-				output, dname_name(dname), dname_length(dname));
+				output, dname_name(dname), dname->name_size);
 		} else {
 			rdata_hex_to_string(output, rdatas[i]);
 		}
