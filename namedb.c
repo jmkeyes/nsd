@@ -1,9 +1,39 @@
 /*
  * namedb.c -- common namedb operations.
  *
- * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
+ * Erik Rozendaal, <erik@nlnetlabs.nl>
  *
- * See LICENSE for the license.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights
+ * reserved.
+ *
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -17,7 +47,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "dns.h"
+#include "dname.h"
 #include "namedb.h"
+#include "util.h"
 
 
 static domain_type *
@@ -56,7 +89,7 @@ domain_table_create(region_type *region)
 
 	assert(region);
 	
-	origin = dname_make(region, (uint8_t *) "", 0);
+	origin = dname_make(region, (uint8_t *) "");
 
 	root = (domain_type *) region_alloc(region, sizeof(domain_type));
 	root->node.key = origin;
@@ -214,7 +247,7 @@ domain_find_rrset(domain_type *domain, zone_type *zone, uint16_t type)
 	rrset_type *result = domain->rrsets;
 
 	while (result) {
-		if (result->zone == zone && result->rrs[0].type == type) {
+		if (result->zone == zone && result->type == type) {
 			return result;
 		}
 		result = result->next;
@@ -242,7 +275,7 @@ domain_find_zone(domain_type *domain)
 	rrset_type *rrset;
 	while (domain) {
 		for (rrset = domain->rrsets; rrset; rrset = rrset->next) {
-			if (rrset->rrs[0].type == TYPE_SOA) {
+			if (rrset->type == TYPE_SOA) {
 				return rrset->zone;
 			}
 		}
@@ -259,7 +292,7 @@ domain_find_parent_zone(zone_type *zone)
 	assert(zone);
 
 	for (rrset = zone->apex->rrsets; rrset; rrset = rrset->next) {
-		if (rrset->zone != zone && rrset->rrs[0].type == TYPE_NS) {
+		if (rrset->zone != zone && rrset->type == TYPE_NS) {
 			return rrset->zone;
 		}
 	}
@@ -314,11 +347,11 @@ rrset_rrsig_type_covered(rrset_type *rrset, uint16_t rr)
 {
 	rdata_atom_type atom;
 	
-	assert(rrset->rrs[0].type == TYPE_RRSIG);
-	assert(rr < rrset->rr_count);
-	assert(rrset->rrs[rr].rdata_count > 0);
+	assert(rrset->type == TYPE_RRSIG);
+	assert(rr < rrset->rrslen);
+	assert(rrset->rrs[rr]->rdata_count > 0);
 	
-	atom = rrset->rrs[rr].rdatas[0];
+	atom = rrset->rrs[rr]->rdata[0];
 	assert(rdata_atom_size(atom) == sizeof(uint16_t));
 	
 	return ntohs(* (uint16_t *) rdata_atom_data(atom));
@@ -336,3 +369,102 @@ namedb_find_zone(namedb_type *db, domain_type *domain)
 
 	return zone;
 }
+
+#ifdef TEST
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#define BUFSZ 1000
+
+int
+main(void)
+{
+	static const char *dnames[] = {
+		"com",
+		"aaa.com",
+		"hhh.com",
+		"zzz.com",
+		"ns1.aaa.com",
+		"ns2.aaa.com",
+		"foo.bar.com",
+		"a.b.c.d.e.bar.com",
+		"*.aaa.com"
+	};
+	region_type *region = region_create(xalloc, free);
+	dname_table_type *table = dname_table_create(region);
+	size_t key = dname_info_create_key(table);
+	const dname_type *dname;
+	size_t i;
+	dname_info_type *closest_match;
+	dname_info_type *closest_encloser;
+	int exact;
+	
+	for (i = 0; i < sizeof(dnames) / sizeof(char *); ++i) {
+		dname_info_type *temp;
+		dname = dname_parse(region, dnames[i], NULL);
+		temp = dname_table_insert(table, dname);
+		dname_info_put_ptr(temp, key, (void *) dnames[i]);
+	}
+	
+	exact = dname_table_search(
+		table,
+		dname_parse(region, "foo.bar.com", NULL),
+		&closest_match, &closest_encloser);
+	assert(exact);
+	assert(dname_info_get_ptr(closest_match, key) == dnames[6]);
+	assert(dname_info_get_ptr(closest_encloser, key) == dnames[6]);
+	
+	exact = dname_table_search(
+		table,
+		dname_parse(region, "a.b.hhh.com", NULL),
+		&closest_match, &closest_encloser);
+	assert(!exact);
+	assert(dname_info_get_ptr(closest_match, key) == dnames[2]);
+	assert(dname_info_get_ptr(closest_encloser, key) == dnames[2]);
+	
+	exact = dname_table_search(
+		table,
+		dname_parse(region, "ns3.aaa.com", NULL),
+		&closest_match, &closest_encloser);
+	assert(!exact);
+	assert(dname_info_get_ptr(closest_match, key) == dnames[5]);
+	assert(dname_info_get_ptr(closest_encloser, key) == dnames[1]);
+	
+	exact = dname_table_search(
+		table,
+		dname_parse(region, "a.ns1.aaa.com", NULL),
+		&closest_match, &closest_encloser);
+	assert(!exact);
+	assert(dname_info_get_ptr(closest_match, key) == dnames[4]);
+	assert(dname_info_get_ptr(closest_encloser, key) == dnames[4]);
+	
+	exact = dname_table_search(
+		table,
+		dname_parse(region, "x.y.z.d.e.bar.com", NULL),
+		&closest_match, &closest_encloser);
+	assert(!exact);
+/* 	assert(dname_compare(closest_match->dname, */
+/* 			     dname_parse(region, "c.d.e.bar.com", NULL)) == 0); */
+/* 	assert(dname_compare(closest_encloser->dname, */
+/* 			     dname_parse(region, "d.e.bar.com", NULL)) == 0); */
+	
+	exact = dname_table_search(
+		table,
+		dname_parse(region, "a.aaa.com", NULL),
+		&closest_match, &closest_encloser);
+	assert(!exact);
+	assert(dname_info_get_ptr(closest_match, key) == dnames[8]);
+	assert(dname_info_get_ptr(closest_encloser, key) == dnames[1]);
+	assert(closest_encloser->wildcard_child);
+	assert(dname_info_get_ptr(closest_encloser->wildcard_child, key)
+	       == dnames[8]);
+
+	dname = dname_parse(region, "a.b.c.d", NULL);
+	assert(dname_compare(dname_parse(region, "d", NULL),
+			     dname_partial_copy(region, dname, 2)) == 0);
+	
+	exit(0);
+}
+
+#endif /* TEST */

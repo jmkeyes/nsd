@@ -1,16 +1,44 @@
 /*
  * util.c -- set of various support routines.
  *
- * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
+ * Erik Rozendaal, <erik@nlnetlabs.nl>
  *
- * See LICENSE for the license.
+ * Copyright (c) 2003-2004, NLnet Labs. All rights reserved.
+ *
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
 #include <config.h>
 
 #include <assert.h>
-#include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -68,33 +96,28 @@ log_finalize(void)
 }
 
 void
-log_file(int priority ATTR_UNUSED, const char *format, va_list args)
+log_file(int priority ATTR_UNUSED, const char *message)
 {
-	char buffer[MAXSYSLOGMSGLEN + 1];
-	size_t end;
-
+	size_t length;
+	
 	assert(global_ident);
 	assert(current_log_file);
-	
-	vsnprintf(buffer, sizeof(buffer) - 1, format, args);
-	end = strlen(buffer);
-	if (buffer[end - 1] != '\n') {
-		buffer[end] = '\n';
-		buffer[end + 1] = '\0';
+
+	fprintf(current_log_file, "%s: %s", global_ident, message);
+	length = strlen(message);
+	if (length == 0 || message[length - 1] != '\n') {
+		fprintf(current_log_file, "\n");
 	}
-	fprintf(current_log_file, "%s: %s", global_ident, buffer);
 	fflush(current_log_file);
 }
 
 void
-log_syslog(int priority, const char *format, va_list args)
+log_syslog(int priority, const char *message)
 {
 #ifdef HAVE_SYSLOG_H
-	char buffer[MAXSYSLOGMSGLEN];
-	vsnprintf(buffer, sizeof(buffer), format, args);
-	syslog(priority, "%s", buffer);
-#endif /* HAVE_SYSLOG_H */
-	log_file(priority, format, args);
+	syslog(priority, "%s", message);
+#endif /* !HAVE_SYSLOG_H */
+	log_file(priority, message);
 }
 
 void
@@ -115,59 +138,9 @@ log_msg(int priority, const char *format, ...)
 void
 log_vmsg(int priority, const char *format, va_list args)
 {
-	current_log_function(priority, format, args);
-}
-
-void 
-set_bit(uint8_t bits[], size_t index)
-{
-	/*
-	 * The bits are counted from left to right, so bit #0 is the
-	 * left most bit.
-	 */
-	bits[index / 8] |= (1 << (7 - index % 8));
-}
-
-void 
-clear_bit(uint8_t bits[], size_t index)
-{
-	/*
-	 * The bits are counted from left to right, so bit #0 is the
-	 * left most bit.
-	 */
-	bits[index / 8] &= ~(1 << (7 - index % 8));
-}
-
-int 
-get_bit(uint8_t bits[], size_t index)
-{
-	/*
-	 * The bits are counted from left to right, so bit #0 is the
-	 * left most bit.
-	 */
-	return bits[index / 8] & (1 << (7 - index % 8));
-}
-
-lookup_table_type *
-lookup_by_name(lookup_table_type *table, const char *name)
-{
-	while (table->name != NULL) {
-		if (strcasecmp(name, table->name) == 0)
-			return table;
-		table++;
-	}
-	return NULL;
-}
-
-lookup_table_type *
-lookup_by_id(lookup_table_type *table, int id)
-{
-	while (table->name != NULL) {
-		if (table->id == id)
-			return table;
-		table++;
-	}
-	return NULL;
+	char message[MAXSYSLOGMSGLEN];
+	vsnprintf(message, sizeof(message), format, args);
+	current_log_function(priority, message);
 }
 
 void *
@@ -271,117 +244,4 @@ timespec_subtract(struct timespec *left,
 		--left->tv_sec;
 		left->tv_nsec += NANOSECONDS_PER_SECOND;
 	}
-}
-
-
-long
-strtottl(const char *nptr, const char **endptr)
-{
-	int sign = 0;
-	long i = 0;
-	long seconds = 0;
-
-	for(*endptr = nptr; **endptr; (*endptr)++) {
-		switch (**endptr) {
-		case ' ':
-		case '\t':
-			break;
-		case '-':
-			if(sign == 0) {
-				sign = -1;
-			} else {
-				return (sign == -1) ? -seconds : seconds;
-			}
-			break;
-		case '+':
-			if(sign == 0) {
-				sign = 1;
-			} else {
-				return (sign == -1) ? -seconds : seconds;
-			}
-			break;
-		case 's':
-		case 'S':
-			seconds += i;
-			i = 0;
-			break;
-		case 'm':
-		case 'M':
-			seconds += i * 60;
-			i = 0;
-			break;
-		case 'h':
-		case 'H':
-			seconds += i * 60 * 60;
-			i = 0;
-			break;
-		case 'd':
-		case 'D':
-			seconds += i * 60 * 60 * 24;
-			i = 0;
-			break;
-		case 'w':
-		case 'W':
-			seconds += i * 60 * 60 * 24 * 7;
-			i = 0;
-			break;
-		case '0':
-		case '1':
-		case '2':
-		case '3':
-		case '4':
-		case '5':
-		case '6':
-		case '7':
-		case '8':
-		case '9':
-			i *= 10;
-			i += (**endptr - '0');
-			break;
-		default:
-			seconds += i;
-			return (sign == -1) ? -seconds : seconds;
-		}
-	}
-	seconds += i;
-	return (sign == -1) ? -seconds : seconds;
-}
-
-
-ssize_t
-hex_ntop(uint8_t const *src, size_t srclength, char *target, size_t targsize)
-{
-	static char hexdigits[] = {
-		'0', '1', '2', '3', '4', '5', '6', '7',
-		'8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
-	};
-	size_t i;
-	
-	if (targsize < srclength * 2 + 1) {
-		return -1;
-	}
-
-	for (i = 0; i < srclength; ++i) {
-		*target++ = hexdigits[src[i] >> 4U];
-		*target++ = hexdigits[src[i] & 0xfU];
-	}
-	*target = '\0';
-	return 2 * srclength;
-}
-
-
-void
-strip_string(char *str)
-{
-	char *start = str;
-	char *end = str + strlen(str) - 1;
-
-	while (isspace(*start))
-		++start;
-	while (isspace(*end))
-		--end;
-	end[1] = '\0';
-	
-	if (str != start)
-		memmove(str, start, start - end + 1);
 }
