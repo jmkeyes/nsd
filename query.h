@@ -40,13 +40,6 @@
 #define _QUERY_H_
 
 #include <assert.h>
-#include <string.h>
-
-#include "dname.h"
-#include "namedb.h"
-#include "nsd.h"
-#include "region-allocator.h"
-#include "util.h"
 
 /*
  * Set of macro's to deal with the dns message header as specified
@@ -80,71 +73,71 @@
 /* First octet of flags */
 #define	RD_MASK		0x01U
 #define	RD_SHIFT	0
-#define	RD(query)	(*((query)->iobuf+2) & RD_MASK)
-#define	RD_SET(query)	(*((query)->iobuf+2) |= RD_MASK)
-#define	RD_CLR(query)	(*((query)->iobuf+2) &= ~RD_MASK)
+#define	RD(query)	(*(query->iobuf+2) & RD_MASK)
+#define	RD_SET(query)	*(query->iobuf+2) |= RD_MASK
+#define	RD_CLR(query)	*(query->iobuf+2) &= ~RD_MASK
 
 #define TC_MASK		0x02U
 #define TC_SHIFT	1
-#define	TC(query)	(*((query)->iobuf+2) & TC_MASK)
-#define	TC_SET(query)	(*((query)->iobuf+2) |= TC_MASK)
-#define	TC_CLR(query)	(*((query)->iobuf+2) &= ~TC_MASK)
+#define	TC(query)	(*(query->iobuf+2) & TC_MASK)
+#define	TC_SET(query)	*(query->iobuf+2) |= TC_MASK
+#define	TC_CLR(query)	*(query->iobuf+2) &= ~TC_MASK
 
 #define	AA_MASK		0x04U
 #define	AA_SHIFT	2
-#define	AA(query)	(*((query)->iobuf+2) & AA_MASK)
-#define	AA_SET(query)	(*((query)->iobuf+2) |= AA_MASK)
-#define	AA_CLR(query)	(*((query)->iobuf+2) &= ~AA_MASK)
+#define	AA(query)	(*(query->iobuf+2) & AA_MASK)
+#define	AA_SET(query)	*(query->iobuf+2) |= AA_MASK
+#define	AA_CLR(query)	*(query->iobuf+2) &= ~AA_MASK
 
 #define	OPCODE_MASK	0x78U
 #define	OPCODE_SHIFT	3
-#define	OPCODE(query)	((*((query)->iobuf+2) & OPCODE_MASK) >> OPCODE_SHIFT)
+#define	OPCODE(query)	((*(query->iobuf+2) & OPCODE_MASK) >> OPCODE_SHIFT)
 #define	OPCODE_SET(query, opcode) \
-	(*((query)->iobuf+2) = ((*((query)->iobuf+2)) & ~OPCODE_MASK) | ((opcode) << OPCODE_SHIFT))
+	*(query->iobuf+2) = ((*(query->iobuf+2)) & ~OPCODE_MASK) | (opcode << OPCODE_SHIFT)
 
 #define	QR_MASK		0x80U
 #define	QR_SHIFT	7
-#define	QR(query)	(*((query)->iobuf+2) & QR_MASK)
-#define	QR_SET(query)	(*((query)->iobuf+2) |= QR_MASK)
-#define	QR_CLR(query)	(*((query)->iobuf+2) &= ~QR_MASK)
+#define	QR(query)	(*(query->iobuf+2) & QR_MASK)
+#define	QR_SET(query)	*(query->iobuf+2) |= QR_MASK
+#define	QR_CLR(query)	*(query->iobuf+2) &= ~QR_MASK
 
 #define	RCODE_MASK	0x0fU
 #define	RCODE_SHIFT	0
-#define	RCODE(query)	(*((query)->iobuf+3) & RCODE_MASK)
+#define	RCODE(query)	(*(query->iobuf+3) & RCODE_MASK)
 #define	RCODE_SET(query, rcode) \
-	(*((query)->iobuf+3) = ((*((query)->iobuf+3)) & ~RCODE_MASK) | (rcode))
+	*(query->iobuf+3) = ((*(query->iobuf+3)) & ~RCODE_MASK) | rcode
 
 #define	Z_MASK		0x70U
 #define	Z_SHIFT		4
-#define	Z(query)	(*((query)->iobuf+3) & Z_MASK)
+#define	Z(query)	(*(query->iobuf+3) & Z_MASK)
 #define	Z_SET(query, z) \
-	(*((query)->iobuf+3) = ((*((query)->iobuf+3)) & ~Z_MASK) | (z))
+	*(query->iobuf+3) = ((*(query->iobuf+3)) & ~Z_MASK) | z
 
 /* Second octet of flags */
 #define	RA_MASK		0x80U
 #define	RA_SHIFT	7
-#define	RA(query)	(*((query)->iobuf+3) & RA_MASK)
-#define	RA_SET(query)	(*((query)->iobuf+3) |= RA_MASK)
-#define	RA_CLR(query)	(*((query)->iobuf+3) &= ~RA_MASK)
+#define	RA(query)	(*(query->iobuf+3) & RA_MASK)
+#define	RA_SET(query)	*(query->iobuf+3) |= RA_MASK
+#define	RA_CLR(query)	*(query->iobuf+3) &= ~RA_MASK
 
 /* Query ID */
-#define	ID(query)		(*(uint16_t *)((query)->iobuf))
+#define	ID(query)		(*(uint16_t *)(query->iobuf))
 
 /* Counter of the question section */
 #define QDCOUNT_OFF		4
-#define	QDCOUNT(query)		(*(uint16_t *)((query)->iobuf+QDCOUNT_OFF))
+#define	QDCOUNT(query)		(*(uint16_t *)(query->iobuf+QDCOUNT_OFF))
 
 /* Counter of the answer section */
 #define ANCOUNT_OFF		6
-#define	ANCOUNT(query)		(*(uint16_t *)((query)->iobuf+ANCOUNT_OFF))
+#define	ANCOUNT(query)		(*(uint16_t *)(query->iobuf+ANCOUNT_OFF))
 
 /* Counter of the authority section */
 #define NSCOUNT_OFF		8
-#define	NSCOUNT(query)		(*(uint16_t *)((query)->iobuf+NSCOUNT_OFF))
+#define	NSCOUNT(query)		(*(uint16_t *)(query->iobuf+NSCOUNT_OFF))
 
 /* Counter of the additional section */
 #define ARCOUNT_OFF		10
-#define	ARCOUNT(query)		(*(uint16_t *)((query)->iobuf+ARCOUNT_OFF))
+#define	ARCOUNT(query)		(*(uint16_t *)(query->iobuf+ARCOUNT_OFF))
 
 /* Possible OPCODE values */
 #define	OPCODE_QUERY		0 	/* a standard query (QUERY) */
@@ -161,27 +154,32 @@
 #define RCODE_IMPL		4 	/* Not implemented */
 #define RCODE_REFUSE		5 	/* Refused */
 
+/* Size of IPv6 address */
+#define	IP6ADDRLEN		128/8
+
 /* Miscelaneous limits */
-#define MAX_PACKET_SIZE         16384   /* Maximum supported size of DNS packets.  */
-#define MAX_RDATA_SIZE          65536   /* Maximum size of rdata.  */
-#define	QIOBUFSZ		(MAX_PACKET_SIZE + MAX_RDATA_SIZE)	 
-#define	MAXLABELLEN		63
-#define	MAXDOMAINLEN		255
-#define	MAXRRSPP		10240    /* Maximum number of rr's per packet */
-#define MAX_COMPRESSED_DNAMES	MAXRRSPP /* Maximum number of compressed domains. */
+#define	QIOBUFSZ	(65536+20)
+#define	MAXLABELLEN	63
+#define	MAXDOMAINLEN	255
+#define	MAXRRSPP	1024	/* Maximum number of rr's per packet */
+#define	MINRDNAMECOMP	3	/* Minimum dname to be compressed */
 
+/* Current amount of data in the query IO buffer.  */
+#define QUERY_USED_SIZE(q)  ((size_t) ((q)->iobufptr - (q)->iobuf))
 
-enum query_state {
-	QUERY_PROCESSED,
-	QUERY_DISCARDED,
-	QUERY_IN_AXFR
-};
-typedef enum query_state query_state_type;
+/* Current available data size of the query IO buffer.  */
+#define QUERY_AVAILABLE_SIZE(q) ((q)->iobufsz - QUERY_USED_SIZE(q))
 
+/* Append data to the query IO buffer.  */
+#define QUERY_WRITE(query, data, size)				\
+	do {							\
+		assert(size <= QUERY_AVAILABLE_SIZE(query));	\
+		memcpy((query)->iobufptr, data, size);		\
+		(query)->iobufptr += size;			\
+	} while (0)
+	
 /* Query as we pass it around */
 struct query {
-	/* Memory region freed after each query is processed. */
-	region_type *region;
 #ifdef INET6
 	struct sockaddr_storage addr;
 #else
@@ -190,168 +188,23 @@ struct query {
 	socklen_t addrlen;
 	size_t maxlen;
 	int edns;
-	int dnssec_ok;
 	int tcp;
-	
 	uint8_t *iobufptr;
+	size_t iobufsz;
 	uint8_t iobuf[QIOBUFSZ];
-
-	/* Normalized query domain name.  */
-	const dname_type *name;
-
-	/* The zone used to answer the query.  */
-	zone_type *zone;
-	
-	/* The domain used to answer the query.  */
-	domain_type *domain;
-
-	/* The delegation domain, if any.  */
-	domain_type *delegation_domain;
-
-	/* The delegation NS rrset, if any.  */
-	rrset_type *delegation_rrset;
-
-	/* Original opcode.  */
-	uint8_t opcode;
-	
-	/* Query class and type in host byte order.  */
-	uint16_t class;
-	uint16_t type;
-
-	/* Used for dname compression.  */
-	uint16_t     compressed_dname_count;
-	domain_type *compressed_dnames[MAXRRSPP];
-
-	 /*
-	  * Indexed by domain->number, index 0 is reserved for the
-	  * query name when generated from a wildcard record.
-	  */
-	uint16_t    *compressed_dname_offsets;
-
-	/*
-	 * Used for AXFR processing.
-	 */
-	int          axfr_is_done;
-	zone_type   *axfr_zone;
-	domain_type *axfr_current_domain;
-	rrset_type  *axfr_current_rrset;
-	uint16_t     axfr_current_rr;
+#ifdef PLUGINS
+	uint8_t normalized_domain_name[MAXDOMAINLEN];
+	void **plugin_data;
+#endif /* PLUGINS */
 };
 
-
-/* Current amount of data in the query IO buffer.  */
-static inline size_t query_used_size(struct query *q);
-
-/* Current available data size of the query IO buffer.  */
-static inline size_t query_available_size(struct query *q);
-
-/* Append data to the query IO buffer until an overflow occurs.  */
-static inline void query_write(struct query *q, const void *data, size_t size);
-
-/* Check if the last write resulted in an overflow.  */
-static inline int query_overflow(struct query *q);
-
-/*
- * Store the offset of the specified domain in the dname compression
- * table.
- */
-void query_put_dname_offset(struct query *query,
-			    domain_type  *domain,
-			    uint16_t      offset);
-/*
- * Lookup the offset of the specified domain in the dname compression
- * table.  Offset 0 is used to indicate the domain is not yet in the
- * compression table.
- */
-static inline
-uint16_t query_get_dname_offset(struct query *query, domain_type *domain)
-{
-	return query->compressed_dname_offsets[domain->number];
-}
-
-/*
- * Remove all compressed dnames that have an offset that points beyond
- * the end of the current answer.  This must be done after some RRs
- * are truncated and before adding new RRs.  Otherwise dnames may be
- * compressed using truncated data!
- */
-void query_clear_dname_offsets(struct query *query);
-
-/*
- * Clear the compression tables.
- */
-void query_clear_compression_tables(struct query *query);
-	
-/*
- * Enter the specified domain into the compression table starting at
- * the specified offset.
- */
-void query_add_compression_domain(struct query *query,
-				  domain_type  *domain,
-				  uint16_t      offset);
-
-
 /* query.c */
+int query_axfr(struct query *q, struct nsd *nsd, const uint8_t *qname, const uint8_t *zname, int depth);
 void query_init(struct query *q);
-query_state_type query_process(struct query *q, struct nsd *nsd);
+void query_addtxt(struct query *q, uint8_t *dname, int16_t class, int32_t ttl, const char *txt);
+void query_addanswer(struct query *q, const uint8_t *dname, const struct answer *a, int trunc);
+int query_process(struct query *q, struct nsd *nsd);
 void query_addedns(struct query *q, struct nsd *nsd);
 void query_error(struct query *q, int rcode);
-
-
-
-static inline size_t
-query_used_size(struct query *q)
-{
-	return q->iobufptr - q->iobuf;
-}
-
-static inline size_t
-query_available_size(struct query *q)
-{
-	return q->maxlen - query_used_size(q);
-}
-
-static inline void
-query_write(struct query *q, const void *data, size_t size)
-{
-	memcpy(q->iobufptr, data, size); 
-	q->iobufptr += size;
-	assert(query_used_size(q) <= QIOBUFSZ);
-}
-
-static inline void
-query_write_u8(struct query *q, uint8_t data)
-{
-	*q->iobufptr++ = data;
-	assert(query_used_size(q) <= QIOBUFSZ);
-}
-
-/*
- * Write a 2 byte integer to the query in network byte order.
- */
-static inline void
-query_write_u16(struct query *q, uint16_t data)
-{
-	copy_uint16(q->iobufptr, data);
-	q->iobufptr += sizeof(data);
-	assert(query_used_size(q) <= QIOBUFSZ);
-}
-
-/*
- * Write a 4 byte integer to the query in network byte order.
- */
-static inline void
-query_write_u32(struct query *q, uint32_t data)
-{
-	copy_uint32(q->iobufptr, data);
-	q->iobufptr += sizeof(data);
-	assert(query_used_size(q) <= QIOBUFSZ);
-}
-
-static inline int
-query_overflow(struct query *q)
-{
-	return query_used_size(q) > q->maxlen;
-}
 
 #endif /* _QUERY_H_ */

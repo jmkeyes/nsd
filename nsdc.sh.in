@@ -1,6 +1,6 @@
 #!@shell@
 #
-# $Id: nsdc.sh.in,v 1.27 2003/07/28 12:28:39 erik Exp $
+# $Id: nsdc.sh.in,v 1.26.2.2 2003/07/21 10:23:04 erik Exp $
 #
 # nsdc.sh -- a shell script to manage the beast
 #

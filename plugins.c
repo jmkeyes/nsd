@@ -70,27 +70,27 @@ static int
 register_data(
 	const nsd_plugin_interface_type *nsd,
 	nsd_plugin_id_type               plugin_id,
-	const dname_type *               domain_name,
+	const uint8_t *                  domain_name,
 	void *                           data)
 {
-	domain_type *domain;
-	
+	struct domain *d;
+
 	assert(plugin_id < maximum_plugin_count);
 	assert(domain_name);
 
-	domain = domain_table_find(nsd->nsd->db->domains, domain_name);
-	if (!domain)
+	d = namedb_lookup(nsd->nsd->db, domain_name);
+	if (d) {
+		void **plugin_data;
+		if (!d->runtime_data) {
+			d->runtime_data = xalloc(maximum_plugin_count * sizeof(void *));
+			memset(d->runtime_data, 0, maximum_plugin_count * sizeof(void *));
+		}
+		plugin_data = (void **) d->runtime_data;
+		plugin_data[plugin_id] = data;
+		return 1;
+	} else {
 		return 0;
-
-	if (!domain->plugin_data) {
-		domain->plugin_data
-			= region_alloc_zero(
-				nsd->nsd->db->region,
-				maximum_plugin_count * sizeof(void *));
 	}
-	domain->plugin_data[plugin_id] = data;
-	
-	return 1;
 }
 
 static nsd_plugin_interface_type plugin_interface;
@@ -99,24 +99,13 @@ void
 plugin_init(struct nsd *nsd)
 {
 	plugin_interface.nsd = nsd;
-	plugin_interface.root_dname = dname_make(nsd->region, (const uint8_t *) "");
 	plugin_interface.register_data = register_data;
-	plugin_interface.log_msg = log_msg;
-	plugin_interface.xalloc = xalloc;
-	plugin_interface.xrealloc = xrealloc;
-	plugin_interface.free = free;
-	plugin_interface.region_create = region_create;
-	plugin_interface.region_destroy = region_destroy;
-	plugin_interface.region_alloc = region_alloc;
-	plugin_interface.region_free_all = region_free_all;
-	plugin_interface.dname_parse = dname_parse;
-	plugin_interface.dname_to_string = dname_to_string;
 }
 
 #define STR2(x) #x
 #define STR(x) STR2(x)
 int
-plugin_load(struct nsd *nsd, const char *name, const char *arg)
+plugin_load(const char *name, const char *arg)
 {
 	struct nsd_plugin *plugin;
 	nsd_plugin_init_type *init;
@@ -149,7 +138,7 @@ plugin_load(struct nsd *nsd, const char *name, const char *arg)
 		return 0;
 	}
 
-	plugin = region_alloc(nsd->region, sizeof(struct nsd_plugin));
+	plugin = xalloc(sizeof(struct nsd_plugin));
 	plugin->next = NULL;
 	plugin->handle = handle;
 	plugin->id = plugin_count;

@@ -1,4 +1,6 @@
 /*
+ * $Id: dns.h,v 1.14 2003/07/07 09:42:21 erik Exp $
+ *
  * dns.h -- everything we wanted to know but were afraid
  *		to ask about DNS
  *
@@ -40,14 +42,9 @@
 #ifndef _DNS_H_
 #define _DNS_H_
 
-#ifndef _TCR
-#define _TCR
-#endif /* _TCR */
-
 /* RFC1035 */
 #define	CLASS_IN	1	/* Class IN */
 #define	CLASS_CHAOS	3	/* Class CHAOS */
-#define CLASS_HS        4       /* Class HS */
 #define	CLASS_ANY	255	/* Class IN */
 
 #define TYPE_A		1	/* a host address */
@@ -68,26 +65,11 @@
 #define TYPE_TXT	16	/* text strings */
 #define	TYPE_RP		17	/* RFC1183 */
 #define	TYPE_AFSDB	18	/* RFC1183 */
-
-/* type code rollover */
-#ifdef _TCR /* new types */
-#define	TYPE_SIG	46	/* map to new type codes */
-#define	TYPE_NXT	47 	
-#define	TYPE_KEY	48	
-#define TYPE_RRSIG	46	/* draft-ietf-dnsext-dnssec-25 */
-#define TYPE_NSEC	47	
-#define TYPE_DNSKEY	48
-#else	/* old types */
-#define	TYPE_SIG	24	/* 2535typecode */
-#define	TYPE_KEY	25	/* 2535typecode */
-#define	TYPE_NXT	30 	/* 2535typecode */
-#define TYPE_RRSIG	24	/* draft-ietf-dnsext-dnssec-2535typecode-change */
-#define TYPE_NSEC	30	/* map to the old type codes */
-#define TYPE_DNSKEY	25
-#endif /* _TCR */
-
+#define	TYPE_SIG	24	/* RFC2065 */
+#define	TYPE_KEY	25	/* RFC2065 */
 #define TYPE_AAAA	28	/* ipv6 address */
 #define TYPE_LOC	29	/* LOC record  RFC1876 */
+#define	TYPE_NXT	30	/* RFC2065 */
 #define	TYPE_SRV	33	/* SRV record RFC2782 */
 #define	TYPE_NAPTR	35	/* NAPTR record RFC2915 */
 #define	TYPE_OPT	41	/* Pseudo OPT record... */
