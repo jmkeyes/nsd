@@ -53,7 +53,6 @@ usage (void)
 		"Supported options:\n"
 		"  -4              Only listen to IPv4 connections.\n"
 		"  -6              Only listen to IPv6 connections.\n"
-		"  -A              Set the AD bit on answers from secure zones.\n"
 		"  -a ip-address   Listen to the specified incoming IP address (may be\n"
 		"                  specified multiple times).\n"
 		"  -d              Enable debug mode (do not fork as a daemon process).\n"
@@ -63,8 +62,8 @@ usage (void)
 	fprintf(stderr,
 		"  -i identity     Specify the identity when queried for id.server CHAOS TXT.\n"
 		"  -l filename     Specify the log file.\n"
-		"  -N udp-servers  Specify the number of child UDP servers.\n"
-		"  -n tcp-servers  Specify the number of child TCP servers.\n"
+		"  -N server-count The number of servers to start.\n"
+		"  -n tcp-count    The maximum number of TCP connections per server.\n"
 		"  -P pidfile      Specify the PID file to write.\n"
 		"  -p port         Specify the port to listen to.\n"
 		"  -s seconds      Dump statistics every SECONDS seconds.\n"
@@ -101,7 +100,7 @@ error(const char *format, ...)
 	exit(1);
 }
 
-pid_t
+pid_t 
 readpid (const char *file)
 {
 	int fd;
@@ -135,7 +134,7 @@ readpid (const char *file)
 	return pid;
 }
 
-int
+int 
 writepid (struct nsd *nsd)
 {
 	FILE * fd;
@@ -162,13 +161,13 @@ writepid (struct nsd *nsd)
 
 	return 0;
 }
+	
 
-
-void
+void 
 sig_handler (int sig)
 {
 	size_t i;
-
+	
 	/* Are we a child server? */
 	if (nsd.server_kind != NSD_SERVER_MAIN) {
 		switch (sig) {
@@ -243,7 +242,7 @@ sig_handler (int sig)
  *
  */
 #ifdef BIND8_STATS
-void
+void 
 bind8_stats (struct nsd *nsd)
 {
 	char buf[MAXSYSLOGMSGLEN];
@@ -345,7 +344,7 @@ bind8_stats (struct nsd *nsd)
 extern char *optarg;
 extern int optind;
 
-int
+int 
 main (int argc, char *argv[])
 {
 	/* Scratch variables... */
@@ -353,7 +352,7 @@ main (int argc, char *argv[])
 	pid_t	oldpid;
 	size_t i;
 	struct sigaction action;
-
+	
 	/* For initialising the address info structures */
 	struct addrinfo hints[MAX_INTERFACES];
 	const char *nodes[MAX_INTERFACES];
@@ -361,7 +360,7 @@ main (int argc, char *argv[])
 	const char *tcp_port;
 
 	const char *log_filename = NULL;
-
+	
 #ifdef PLUGINS
 	nsd_plugin_id_type plugin_count = 0;
 	char **plugins = (char **) xalloc(sizeof(char *));
@@ -376,7 +375,7 @@ main (int argc, char *argv[])
 	nsd.dbfile	= DBFILE;
 	nsd.pidfile	= PIDFILE;
 	nsd.server_kind = NSD_SERVER_MAIN;
-
+	
 	/* Initialise the ports */
 	udp_port = UDP_PORT;
 	tcp_port = TCP_PORT;
@@ -396,7 +395,7 @@ main (int argc, char *argv[])
 	nsd.child_count = 1;
 	nsd.maximum_tcp_count = 10;
 	nsd.current_tcp_count = 0;
-
+	
 	/* EDNS0 */
 	edns_init_data(&nsd.edns_ipv4, EDNS_MAX_MESSAGE_LEN);
 #if defined(INET6)
@@ -435,8 +434,12 @@ main (int argc, char *argv[])
 #endif /* !INET6 */
 			break;
 		case 'a':
-			nodes[nsd.ifs] = optarg;
-			++nsd.ifs;
+			if (nsd.ifs < MAX_INTERFACES) {
+				nodes[nsd.ifs] = optarg;
+				++nsd.ifs;
+			} else {
+				error("too many interfaces ('-a') specified");
+			}
 			break;
 		case 'd':
 			nsd.debug = 1;
@@ -533,14 +536,14 @@ main (int argc, char *argv[])
 		error("server identity too long (%u characters)",
 		      (unsigned) strlen(nsd.identity));
 	}
-
+	
 	/* Number of child servers to fork.  */
 	nsd.children = (struct nsd_child *) region_alloc(
 		nsd.region, nsd.child_count * sizeof(struct nsd_child));
 	for (i = 0; i < nsd.child_count; ++i) {
 		nsd.children[i].kind = NSD_SERVER_BOTH;
 	}
-
+	
 	/* We need at least one active interface */
 	if (nsd.ifs == 0) {
 		nsd.ifs = 1;
@@ -575,12 +578,12 @@ main (int argc, char *argv[])
 		/* We don't perform name-lookups */
 		if (nodes[i] != NULL)
 			hints[i].ai_flags |= AI_NUMERICHOST;
-
+		
 		hints[i].ai_socktype = SOCK_DGRAM;
 		if (getaddrinfo(nodes[i], udp_port, &hints[i], &nsd.udp[i].addr) != 0) {
 			error("cannot parse address '%s'", nodes[i]);
 		}
-
+		
 		hints[i].ai_socktype = SOCK_STREAM;
 		if (getaddrinfo(nodes[i], tcp_port, &hints[i], &nsd.tcp[i].addr) != 0) {
 			error("cannot parse address '%s'", nodes[i]);
@@ -626,10 +629,10 @@ main (int argc, char *argv[])
 	if (!log_filename) {
 		log_set_log_function(log_syslog);
 	}
-
+	
 	/* Relativize the pathnames for chroot... */
 	if (nsd.chrootdir) {
-		size_t l = strlen(nsd.chrootdir);
+		int l = strlen(nsd.chrootdir);
 
 		if (strncmp(nsd.chrootdir, nsd.pidfile, l) != 0) {
 			log_msg(LOG_ERR, "%s is not relative to %s: will not chroot",
@@ -667,7 +670,7 @@ main (int argc, char *argv[])
 		nsd.server_kind = NSD_SERVER_BOTH;
 	} else {
 		int fd;
-
+		
 		/* Take off... */
 		switch ((nsd.pid = fork())) {
 		case 0:
@@ -746,7 +749,7 @@ main (int argc, char *argv[])
 	}
 	free(plugins);
 #endif /* PLUGINS */
-
+	
 	log_msg(LOG_NOTICE, "nsd started, pid %d", (int) nsd.pid);
 
 	if (nsd.server_kind == NSD_SERVER_MAIN) {

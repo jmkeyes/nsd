@@ -107,7 +107,7 @@ ANY     [^\"\n]|\\.
 }
 <incl>.+ 		{ 	
 	char *tmp;
-	const dname_type *origin = parser->origin;
+	domain_type *origin = parser->origin;
 	int error_occurred = parser->error_occurred;
 	
 	BEGIN(INITIAL);
@@ -139,7 +139,8 @@ ANY     [^\"\n]|\\.
 				zc_error("incorrect include origin '%s'",
 					 tmp + 1);
 			} else {
-				origin = dname;
+				origin = domain_table_insert(
+					parser->db->domains, dname);
 			}
 		}
 		
