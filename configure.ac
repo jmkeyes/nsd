@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,1.4.0-alpha1,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,1.2.3,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -103,8 +103,6 @@ AC_PROG_AWK
 AC_PROG_CC
 AC_PROG_LN_S
 AC_PROG_INSTALL
-AC_PROG_LEX
-AC_PROG_YACC
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST
@@ -121,7 +119,6 @@ AC_CACHE_VAL(ac_cv_c_format_attribute,
 AC_TRY_COMPILE(
 [#include <stdio.h>
 void f (char *format, ...) __attribute__ ((format (printf, 1, 2)));
-void (*pf) (char *format, ...) __attribute__ ((format (printf, 1, 2)));
 ], [
    f ("%s", "str");
 ],
@@ -236,7 +233,7 @@ AC_FUNC_CHOWN
 AC_FUNC_FORK
 AC_FUNC_MALLOC
 AC_TYPE_SIGNAL
-AC_CHECK_FUNCS([alarm chroot dup2 endpwent gethostname memset memcpy mmap socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask dlopen dlerror dlsym dlclose])
+AC_CHECK_FUNCS([alarm chroot dup2 endpwent gethostname memset memcpy select socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask dlopen dlerror dlsym dlclose])
 
 #
 # Checking for missing functions we can replace
@@ -247,7 +244,6 @@ AC_REPLACE_FUNCS(snprintf)
 AC_REPLACE_FUNCS(b64_pton)
 AC_REPLACE_FUNCS(b64_ntop)
 AC_REPLACE_FUNCS(timegm)
-AC_REPLACE_FUNCS(pselect)
 
 dnl
 dnl Check for libwrap
@@ -370,18 +366,6 @@ case "$enable_checking" in
 		;;
         no|*)
                 AC_DEFINE([NDEBUG], [], [Undefine this to enable internal runtime checks.])
-                ;;
-esac
-
-AC_ARG_ENABLE(mmap, AC_HELP_STRING([--enable-mmap], [Configure NSD to load the database using mmap(2).]))
-case "$enable_mmap" in
-        yes)
-                if test "$ac_cv_func_mmap" != yes; then
-                    AC_MSG_ERROR(mmap support requested but mmap not found)
-                fi
-		AC_DEFINE_UNQUOTED([USE_MMAP], [], [Define this to load the database using mmap(2).])
-		;;
-        no|*)
                 ;;
 esac
 

@@ -40,12 +40,6 @@
 #define _QUERY_H_
 
 #include <assert.h>
-#include <string.h>
-
-#include "dname.h"
-#include "namedb.h"
-#include "nsd.h"
-#include "region-allocator.h"
 
 /*
  * Set of macro's to deal with the dns message header as specified
@@ -160,25 +154,32 @@
 #define RCODE_IMPL		4 	/* Not implemented */
 #define RCODE_REFUSE		5 	/* Refused */
 
+/* Size of IPv6 address */
+#define	IP6ADDRLEN		128/8
+
 /* Miscelaneous limits */
-#define	QIOBUFSZ		16384	 /* Maximum size of returned packet.  */
-#define	MAXLABELLEN		63
-#define	MAXDOMAINLEN		255
-#define	MAXRRSPP		10240    /* Maximum number of rr's per packet */
-#define MAX_COMPRESSED_DNAMES	MAXRRSPP /* Maximum number of compressed domains. */
+#define	QIOBUFSZ	(65536+20)
+#define	MAXLABELLEN	63
+#define	MAXDOMAINLEN	255
+#define	MAXRRSPP	1024	/* Maximum number of rr's per packet */
+#define	MINRDNAMECOMP	3	/* Minimum dname to be compressed */
 
+/* Current amount of data in the query IO buffer.  */
+#define QUERY_USED_SIZE(q)  ((size_t) ((q)->iobufptr - (q)->iobuf))
 
-enum query_state {
-	QUERY_PROCESSED,
-	QUERY_DISCARDED,
-	QUERY_IN_AXFR
-};
-typedef enum query_state query_state_type;
+/* Current available data size of the query IO buffer.  */
+#define QUERY_AVAILABLE_SIZE(q) ((q)->iobufsz - QUERY_USED_SIZE(q))
 
+/* Append data to the query IO buffer.  */
+#define QUERY_WRITE(query, data, size)				\
+	do {							\
+		assert(size <= QUERY_AVAILABLE_SIZE(query));	\
+		memcpy((query)->iobufptr, data, size);		\
+		(query)->iobufptr += size;			\
+	} while (0)
+	
 /* Query as we pass it around */
 struct query {
-	/* Memory region freed after each query is processed. */
-	region_type *region;
 #ifdef INET6
 	struct sockaddr_storage addr;
 #else
@@ -188,126 +189,22 @@ struct query {
 	size_t maxlen;
 	int edns;
 	int tcp;
-
 	uint8_t *iobufptr;
+	size_t iobufsz;
 	uint8_t iobuf[QIOBUFSZ];
-	int overflow;		/* True if the I/O buffer overflowed.  */
-
-	/* Normalized query domain name.  */
-	const dname_type *name;
-
-	/* The zone used to answer the query.  */
-	zone_type *zone;
-	
-	/* The domain used to answer the query.  */
-	domain_type *domain;
-
-	/* The delegation domain, if any.  */
-	domain_type *delegation_domain;
-
-	/* The delegation NS rrset, if any.  */
-	rrset_type *delegation_rrset;
-	
-	/* Query class and type in host byte order.  */
-	uint16_t class;
-	uint16_t type;
-
-	/* Used for dname compression.  */
-	uint16_t     compressed_dname_count;
-	domain_type *compressed_dnames[MAXRRSPP];
-
-	 /*
-	  * Indexed by domain->number, index 0 is reserved for the
-	  * query name when generated from a wildcard record.
-	  */
-	uint16_t    *compressed_dname_offsets;
-
-	/*
-	 * Used for AXFR processing.
-	 */
-	int          axfr_is_done;
-	zone_type   *axfr_zone;
-	rbnode_t    *axfr_current_domain;
-	rrset_type  *axfr_current_rrset;
-	uint16_t     axfr_current_rr;
+#ifdef PLUGINS
+	uint8_t normalized_domain_name[MAXDOMAINLEN];
+	void **plugin_data;
+#endif /* PLUGINS */
 };
 
-
-/* Current amount of data in the query IO buffer.  */
-static inline size_t query_used_size(struct query *q);
-
-/* Current available data size of the query IO buffer.  */
-static inline size_t query_available_size(struct query *q);
-
-/* Append data to the query IO buffer until an overflow occurs.  */
-static inline void query_write(struct query *q, const void *data, size_t size);
-
-
-/*
- * Store the offset of the specified domain in the dname compression
- * table.
- */
-void query_put_dname_offset(struct query *query,
-			    domain_type  *domain,
-			    uint16_t      offset);
-/*
- * Lookup the offset of the specified domain in the dname compression
- * table.  Offset 0 is used to indicate the domain is not yet in the
- * compression table.
- */
-uint16_t query_get_dname_offset(struct query *query, domain_type *domain);
-
-/*
- * Remove all compressed dnames that have an offset that points beyond
- * the end of the current answer.  This must be done after some RRs
- * are truncated and before adding new RRs.  Otherwise dnames may be
- * compressed using truncated data!
- */
-void query_clear_dname_offsets(struct query *query);
-
-/*
- * Clear the compression tables.
- */
-void query_clear_compression_tables(struct query *query);
-	
-/*
- * Enter the specified domain into the compression table starting at
- * the specified offset.
- */
-void query_add_compression_domain(struct query *query,
-				  domain_type  *domain,
-				  uint16_t      offset);
-
-
 /* query.c */
+int query_axfr(struct query *q, struct nsd *nsd, const uint8_t *qname, const uint8_t *zname, int depth);
 void query_init(struct query *q);
-query_state_type query_process(struct query *q, struct nsd *nsd);
+void query_addtxt(struct query *q, uint8_t *dname, int16_t class, int32_t ttl, const char *txt);
+void query_addanswer(struct query *q, const uint8_t *dname, const struct answer *a, int trunc);
+int query_process(struct query *q, struct nsd *nsd);
 void query_addedns(struct query *q, struct nsd *nsd);
 void query_error(struct query *q, int rcode);
-
-
-
-static inline size_t
-query_used_size(struct query *q)
-{
-	return q->iobufptr - q->iobuf;
-}
-
-static inline size_t
-query_available_size(struct query *q)
-{
-	return q->maxlen - query_used_size(q);
-}
-
-static inline void
-query_write(struct query *q, const void *data, size_t size)
-{
-	if (size <= query_available_size(q)) {
-		memcpy(q->iobufptr, data, size); 
-		q->iobufptr += size;
-	} else {
-		q->overflow = 1;
-	}	
-}
 
 #endif /* _QUERY_H_ */

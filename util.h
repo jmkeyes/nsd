@@ -44,12 +44,6 @@
 #include <stdarg.h>
 #include <syslog.h>
 
-#define ALIGN_UP(n, alignment)  \
-	(((n) + (alignment) - 1) & (~((alignment) - 1)))
-#define PADDING(n, alignment)   \
-	(ALIGN_UP((n), (alignment)) - (n))
-
-
 /*
  * Initialize the logging system.  All messages are logged to stderr
  * until log_open and log_set_log_function are called.
@@ -105,38 +99,6 @@ void log_vmsg(int priority, const char *format, va_list args);
  * returns NULL.
  */
 void *xalloc(size_t size);
-void *xalloc_zero(size_t size);
 void *xrealloc(void *ptr, size_t size);
-
-/*
- * Write SIZE bytes of DATA to FILE.  Report an error on failure.
- *
- * Returns 0 on failure, 1 on success.
- */
-int write_data(FILE * file, const void *data, size_t size);
-
-
-/*
- * Print debugging information using fprintf(3).
- */
-#define DEBUG_PARSER           0x0001U
-#define DEBUG_ZONEC            0x0002U
-#define DEBUG_QUERY            0x0004U
-#define DEBUG_DBACCESS         0x0008U
-#define DEBUG_NAME_COMPRESSION 0x0010U
-
-#ifdef NDEBUG
-#define DEBUG(facility, level, args)  /* empty */
-#else
-extern unsigned nsd_debug_facilities;
-extern int nsd_debug_level;
-#define DEBUG(facility, level, args)				\
-	do {							\
-		if ((facility) & nsd_debug_facilities &&	\
-		    (level) <= nsd_debug_level) {		\
-			fprintf args ;				\
-		}						\
-	} while (0)
-#endif
 
 #endif /* _UTIL_H_ */

@@ -1,4 +1,6 @@
 /*
+ * $Id: dbcreate.c,v 1.22.2.1 2003/07/21 13:51:37 erik Exp $
+ *
  * namedb_create.c -- routines to create an nsd(8) name database 
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
@@ -36,10 +38,10 @@
  *
  */
 
-#include <config.h>
+#include "config.h"
 
 #include <sys/types.h>
-#include <errno.h>
+
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,65 +50,86 @@
 #include "namedb.h"
 #include "util.h"
 
-static int write_db (namedb_type *db);
-
 struct namedb *
 namedb_new (const char *filename)
 {
 	struct namedb *db;
-	region_type *region = region_create(xalloc, free);
-	
+
 	/* Make a new structure... */
-	db = region_alloc(region, sizeof(namedb_type));
-	db->region = region;
-	db->domains = domain_table_create(region);
-	db->zones = NULL;
-	db->filename = region_strdup(region, filename);
-
-	/*
-	 * Unlink the old database, if it exists.  This is useful to
-	 * ensure that NSD (when using mmap) doesn't see the changes
-	 * until a reload is done.
-	 */
-	if (unlink(db->filename) == -1 && errno != ENOENT) {
-		region_destroy(region);
+	if((db = xalloc(sizeof(struct namedb))) == NULL) {
 		return NULL;
 	}
-	
+
+	if((db->filename = strdup(filename)) == NULL) {
+		free(db);
+		return NULL;
+	}
+
 	/* Create the database */
-        if ((db->fd = fopen(db->filename, "w")) == NULL) {
-		region_destroy(region);
+        if((db->fd = open(db->filename, O_CREAT | O_TRUNC | O_WRONLY, 0664)) == -1) {
+		free(db->filename);
+		free(db);
 		return NULL;
-	}
+        }
 
-
-	if (!write_data(db->fd, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE)) {
-		fclose(db->fd);
+	if(write(db->fd, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE) == -1) {
+		close(db->fd);
 		namedb_discard(db);
 		return NULL;
 	}
+
+	/* Initialize the masks... */
+	memset(db->masks[NAMEDB_AUTHMASK], 0, NAMEDB_BITMASKLEN);
+	memset(db->masks[NAMEDB_STARMASK], 0, NAMEDB_BITMASKLEN);
+	memset(db->masks[NAMEDB_DATAMASK], 0, NAMEDB_BITMASKLEN);
 
 	return db;
 }
 
 
 int 
+namedb_put (struct namedb *db, const uint8_t *dname, struct domain *d)
+{
+	/* Store the key */
+	if(write(db->fd, dname, ALIGN_UP(*dname + 1)) == -1) {
+		return -1;
+	}
+
+	/* Store the domain */
+	if(write(db->fd, d, d->size) == -1) {
+		return -1;
+	}
+
+	return 0;
+}
+
+int 
 namedb_save (struct namedb *db)
 {
-	if (write_db(db) != 0) {
+	/* Write an empty key... */
+	if(write(db->fd, "", 1) == -1) {
+		close(db->fd);
 		return -1;
-	}		
-	
+	}
+
 	/* Write the magic... */
-	if (!write_data(db->fd, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE)) {
-		fclose(db->fd);
+	if(write(db->fd, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE) == -1) {
+		close(db->fd);
+		return -1;
+	}
+
+	/* Write the bitmasks... */
+	if(write(db->fd, db->masks, NAMEDB_BITMASKLEN * 3) == -1) {
+		close(db->fd);
 		return -1;
 	}
 
 	/* Close the database */
-	fclose(db->fd);
+	close(db->fd);
 
-	region_destroy(db->region);
+	free(db->filename);
+	free(db);
+
 	return 0;
 }
 
@@ -115,174 +138,6 @@ void
 namedb_discard (struct namedb *db)
 {
 	unlink(db->filename);
-	region_destroy(db->region);
-}
-
-
-static int
-write_dname(struct namedb *db, domain_type *domain)
-{
-	const dname_type *dname = domain->dname;
-	
-	if (!write_data(db->fd, &dname->name_size, sizeof(dname->name_size)))
-		return 0;
-
-	if (!write_data(db->fd, dname_name(dname), dname->name_size))
-		return 0;
-
-	return 1;
-}
-
-static int
-write_number(struct namedb *db, uint32_t number)
-{
-	number = htonl(number);
-	return write_data(db->fd, &number, sizeof(number));
-}
-
-static int
-write_rrset(struct namedb *db, domain_type *domain, rrset_type *rrset)
-{
-	uint32_t ttl;
-	uint16_t class;
-	uint16_t type;
-	uint16_t rdcount;
-	uint16_t rrslen;
-	int i, j;
-
-	assert(db);
-	assert(domain);
-	assert(rrset);
-	
-	class = htons(rrset->class);
-	type = htons(rrset->type);
-	ttl = htonl(rrset->ttl);
-	rrslen = htons(rrset->rrslen);
-	
-	if (!write_number(db, domain->number))
-		return 0;
-
-	if (!write_number(db, rrset->zone->number))
-		return 0;
-	
-	if (!write_data(db->fd, &type, sizeof(type)))
-		return 0;
-		
-	if (!write_data(db->fd, &class, sizeof(class)))
-		return 0;
-		
-	if (!write_data(db->fd, &ttl, sizeof(ttl)))
-		return 0;
-
-	if (!write_data(db->fd, &rrslen, sizeof(rrslen)))
-		return 0;
-		
-	for (i = 0; i < rrset->rrslen; ++i) {
-		rdcount = 0;
-		for (rdcount = 0; !rdata_atom_is_terminator(rrset->rrs[i][rdcount]); ++rdcount)
-			;
-		
-		rdcount = htons(rdcount);
-		if (!write_data(db->fd, &rdcount, sizeof(rdcount)))
-			return 0;
-		
-		for (j = 0; !rdata_atom_is_terminator(rrset->rrs[i][j]); ++j) {
-			rdata_atom_type atom = rrset->rrs[i][j];
-			if (rdata_atom_is_domain(rrset->type, j)) {
-				if (!write_number(db, rdata_atom_domain(atom)->number))
-					return 0;
-			} else {
-				uint16_t size = htons(rdata_atom_size(atom));
-				if (!write_data(db->fd, &size, sizeof(size)))
-					return 0;
-				if (!write_data(db->fd,
-						rdata_atom_data(atom),
-						rdata_atom_size(atom)))
-					return 0;
-			}
-		}
-	}
-
-	return 1;
-}
-
-static void
-number_dnames_iterator(domain_type *node, void *user_data)
-{
-	uint32_t *current_number = user_data;
-
-	node->number = *current_number;
-	++*current_number;
-}
-
-static void
-write_dname_iterator(domain_type *node, void *user_data)
-{
-	struct namedb *db = user_data;
-	
-	write_dname(db, node);
-}
-
-static void
-write_domain_iterator(domain_type *node, void *user_data)
-{
-	struct namedb *db = user_data;
-	struct rrset *rrset;
-
-	for (rrset = node->rrsets; rrset; rrset = rrset->next) {
-		write_rrset(db, node, rrset);
-	}
-}
-
-/*
- * Writes databse data into open database *db
- *
- * Returns zero if success.
- */
-static int 
-write_db(namedb_type *db)
-{
-	zone_type *zone;
-	uint32_t terminator = 0;
-	uint32_t dname_count = 1;
-	uint32_t zone_count = 1;
-	int errors = 0;
-	
-	for (zone = db->zones; zone; zone = zone->next) {
-		zone->number = zone_count;
-		++zone_count;
-		
-		if (!zone->soa_rrset) {
-			fprintf(stderr, "SOA record not present in %s\n",
-				dname_to_string(zone->domain->dname));
-			++errors;
-		}
-	}
-
-	if (errors > 0)
-		return -1;
-
-	--zone_count;
-	if (!write_number(db, zone_count))
-		return -1;
-	for (zone = db->zones; zone; zone = zone->next) {
-		if (!write_dname(db, zone->domain))
-			return -1;
-	}
-	
-	domain_table_iterate(db->domains, number_dnames_iterator, &dname_count);
-	--dname_count;
-	if (!write_number(db, dname_count))
-		return -1;
-
-	DEBUG(DEBUG_ZONEC, 1,
-	      (stderr, "Storing %lu domain names\n", (unsigned long) dname_count));
-	
-	domain_table_iterate(db->domains, write_dname_iterator, db);
-		   
-	domain_table_iterate(db->domains, write_domain_iterator, db);
-	if (!write_data(db->fd, &terminator, sizeof(terminator)))
-		return -1;
-
-	return 0;
+	free(db->filename);
+	free(db);
 }

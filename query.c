@@ -55,8 +55,6 @@
 #include <unistd.h>
 #include <netdb.h>
 
-#include "answer.h"
-#include "axfr.h"
 #include "dns.h"
 #include "dname.h"
 #include "nsd.h"
@@ -71,70 +69,6 @@
 int allow_severity = LOG_INFO;
 int deny_severity = LOG_NOTICE;
 #endif /* LIBWRAP */
-
-static void add_rrset(struct query       *query,
-		      answer_type        *answer,
-		      answer_section_type section,
-		      domain_type        *owner,
-		      rrset_type         *rrset);
-
-void
-query_put_dname_offset(struct query *q, domain_type *domain, uint16_t offset)
-{
-	if (q->compressed_dname_count >= MAX_COMPRESSED_DNAMES)
-		return;
-	
-	q->compressed_dname_offsets[domain->number] = offset;
-	q->compressed_dnames[q->compressed_dname_count] = domain;
-	++q->compressed_dname_count;
-}
-
-uint16_t
-query_get_dname_offset(struct query *q, domain_type *domain)
-{
-	return q->compressed_dname_offsets[domain->number];
-}
-
-void
-query_clear_dname_offsets(struct query *q)
-{
-	uint16_t max_offset = q->iobufptr - q->iobuf;
-	
-	while (q->compressed_dname_count > 0
-	       && (q->compressed_dname_offsets[q->compressed_dnames[q->compressed_dname_count - 1]->number]
-		   >= max_offset))
-	{
-		q->compressed_dname_offsets[q->compressed_dnames[q->compressed_dname_count - 1]->number] = 0;
-		--q->compressed_dname_count;
-	}
-}
-
-void
-query_clear_compression_tables(struct query *q)
-{
-	uint16_t i;
-	
-	for (i = 0; i < q->compressed_dname_count; ++i) {
-		assert(q->compressed_dnames);
-		q->compressed_dname_offsets[q->compressed_dnames[i]->number] = 0;
-	}
-	q->compressed_dname_count = 0;
-}
-
-void
-query_add_compression_domain(struct query *q, domain_type *domain, uint16_t offset)
-{
-	while (domain->parent) {
-		DEBUG(DEBUG_NAME_COMPRESSION, 1,
-		      (stderr, "query dname: %s, number: %lu, offset: %u\n",
-		       dname_to_string(domain->dname),
-		       (unsigned long) domain->number,
-		       offset));
-		query_put_dname_offset(q, domain, offset);
-		offset += label_length(dname_name(domain->dname)) + 1;
-		domain = domain->parent;
-	}
-}
 
 /*
  * Generate an error response with the specified RCODE.
@@ -156,37 +90,128 @@ query_formerr (struct query *query)
 	query_error(query, RCODE_FORMAT);
 }
 
+int 
+query_axfr (struct query *q, struct nsd *nsd, const uint8_t *qname, const uint8_t *zname, int depth)
+{
+	/* Per AXFR... */
+	static uint8_t zone[MAXDOMAINLEN + 1];
+	static const struct answer *soa;
+	static const struct domain *d = NULL;
+
+	const struct answer *a;
+	const uint8_t *dname;
+	uint8_t *qptr;
+
+	STATUP(nsd, raxfr);
+
+	/* Is it new AXFR? */
+	if(qname) {
+		/* New AXFR... */
+		memcpy(zone, zname, *zname + 1);
+
+		/* Do we have the SOA? */
+		if(NAMEDB_TSTBITMASK(nsd->db, NAMEDB_AUTHMASK, depth)
+			&& (d = namedb_lookup(nsd->db, zname)) != NULL
+				&& (soa = namedb_answer(d, htons(TYPE_SOA))) != NULL) {
+
+			/* We'd rather have ANY than SOA to improve performance */
+			if((a = namedb_answer(d, htons(TYPE_ANY))) == NULL) {
+				a = soa;
+			}
+
+			qptr = q->iobufptr;
+			query_addanswer(q, qname, a, 0);
+
+			/* Truncate */
+			NSCOUNT(q) = 0;
+			ARCOUNT(q) = 0;
+			q->iobufptr = qptr + ANSWER_RRS(a, ntohs(ANCOUNT(q)));
+
+			/* More data... */
+			return 1;
+
+		}
+
+		/* No SOA no transfer */
+		RCODE_SET(q, RCODE_REFUSE);
+		return 0;
+	}
+
+	/* We've done everything already, let the server know... */
+	if(d == NULL) {
+		return 0;	/* Done. */
+	}
+
+	/* Let get next domain */
+	do {
+		dname = (const uint8_t *)d + d->size;
+		d = (const struct domain *)(dname + ALIGN_UP(*dname + 1));
+	} while(*dname && (DOMAIN_FLAGS(d) & NAMEDB_STEALTH));
+
+	/* End of the database or end of zone? */
+	if(*dname == 0 || namedb_answer(d, htons(TYPE_SOA)) != NULL) {
+		/* Prepare to send the terminating SOA record */
+		a = soa;
+		dname = zone;
+		d = NULL;
+	} else {
+		/* Prepare the answer */
+		if(DOMAIN_FLAGS(d) & NAMEDB_DELEGATION) {
+			a = namedb_answer(d, htons(TYPE_NS));
+		} else {
+			a = namedb_answer(d, htons(TYPE_ANY));
+		}
+	}
+
+	/* Existing AXFR, strip the question section off... */
+	q->iobufptr = q->iobuf + QHEADERSZ;
+
+	/* Is the first dname a pointer? */
+	if(ANSWER_PTRS(a, 0) == 0) {
+		/* XXX Very interesting math... Can you figure it? I cant anymore... */
+		q->iobufptr += *dname - 2;
+		QDCOUNT(q) = ANCOUNT(q) = NSCOUNT(q) = ARCOUNT(q) = 0;
+	}
+
+	qptr = q->iobufptr;
+
+	query_addanswer(q, q->iobuf + QHEADERSZ, a, 0);
+
+	if(ANSWER_PTRS(a, 0) == 0) {
+		memcpy(q->iobuf + QHEADERSZ, dname + 1, *dname);
+	}
+
+	/* Truncate */
+	if(d && DOMAIN_FLAGS(d) & NAMEDB_DELEGATION) {
+		ANCOUNT(q) = htons(ntohs(NSCOUNT(q)) + ntohs(ARCOUNT(q)));
+	} else {
+		q->iobufptr = qptr + ANSWER_RRS(a, ntohs(ANCOUNT(q)));
+	}
+
+	ARCOUNT(q) = 0;
+	NSCOUNT(q) = 0;
+
+	/* More data... */
+	return 1;
+}
+
 void 
 query_init (struct query *q)
 {
 	q->addrlen = sizeof(q->addr);
+	q->iobufsz = QIOBUFSZ;
 	q->iobufptr = q->iobuf;
-	q->overflow = 0;
 	q->maxlen = UDP_MAX_MESSAGE_LEN;
 	q->edns = 0;
 	q->tcp = 0;
-	q->name = NULL;
-	q->zone = NULL;
-	q->domain = NULL;
-	q->class = 0;
-	q->type = 0;
-	q->delegation_domain = NULL;
-	q->delegation_rrset = NULL;
-	q->compressed_dname_count = 0;
-
-	q->axfr_is_done = 0;
-	q->axfr_zone = NULL;
-	q->axfr_current_domain = NULL;
-	q->axfr_current_rrset = NULL;
-	q->axfr_current_rr = 0;
+#ifdef PLUGINS
+	q->normalized_domain_name[0] = '\0';
+	q->plugin_data = NULL;
+#endif /* PLUGINS */
 }
 
-static void 
-query_addtxt(struct query  *q,
-	     const uint8_t *dname,
-	     uint16_t       class,
-	     uint32_t       ttl,
-	     const char    *txt)
+void 
+query_addtxt (struct query *q, uint8_t *dname, int16_t class, int32_t ttl, const char *txt)
 {
 	uint16_t pointer;
 	size_t txt_length = strlen(txt);
@@ -200,19 +225,102 @@ query_addtxt(struct query  *q,
 	class = htons(class);
 
 	/* Add the dname */
-	if (dname >= q->iobuf && dname <= q->iobufptr) {
+	if(dname >= q->iobuf  && dname <= q->iobufptr) {
 		pointer = htons(0xc000 | (dname - q->iobuf));
-		query_write(q, &pointer, sizeof(pointer));
+		QUERY_WRITE(q, &pointer, sizeof(pointer));
 	} else {
-		query_write(q, dname + 1, *dname);
+		QUERY_WRITE(q, dname + 1, *dname);
 	}
 
-	query_write(q, &type, sizeof(type));
-	query_write(q, &class, sizeof(class));
-	query_write(q, &ttl, sizeof(ttl));
-	query_write(q, &rdlength, sizeof(rdlength));
-	query_write(q, &len, sizeof(len));
-	query_write(q, txt, len);
+	QUERY_WRITE(q, &type, sizeof(type));
+	QUERY_WRITE(q, &class, sizeof(class));
+	QUERY_WRITE(q, &ttl, sizeof(ttl));
+	QUERY_WRITE(q, &rdlength, sizeof(rdlength));
+	QUERY_WRITE(q, &len, sizeof(len));
+	QUERY_WRITE(q, txt, len);
+}
+
+void 
+query_addanswer (struct query *q, const uint8_t *dname, const struct answer *a, int trunc)
+{
+	uint8_t *qptr;
+	uint16_t pointer;
+	int  i, j;
+
+	/* Check that the answer fits into our query buffer... */
+	if(ANSWER_DATALEN(a) > QUERY_AVAILABLE_SIZE(q)) {
+		log_msg(LOG_ERR, "the answer in the database is larger then the query buffer");
+		RCODE_SET(q, RCODE_SERVFAIL);
+		return;
+	}
+
+	/* Copy the counters */
+	ANCOUNT(q) = ANSWER_ANCOUNT(a);
+	NSCOUNT(q) = ANSWER_NSCOUNT(a);
+	ARCOUNT(q) = ANSWER_ARCOUNT(a);
+
+	/* Then copy the data */
+	memcpy(q->iobufptr, ANSWER_DATA_PTR(a), ANSWER_DATALEN(a));
+
+	/* Walk the pointers */
+	for(j = 0; j < ANSWER_PTRSLEN(a); j++) {
+		qptr = q->iobufptr + ANSWER_PTRS(a, j);
+		memcpy(&pointer, qptr, 2);
+		switch((pointer & 0xf000)) {
+		case 0xc000:			/* This pointer is relative to the name in the query.... */
+			/* XXX Check if dname is within packet */
+			pointer = htons(0xc000 | (dname - q->iobuf + (pointer & 0x0fff)));/* dname - q->iobuf */
+			break;
+		case 0xd000:			/* This is the wildcard */
+			pointer = htons(0xc00c);
+			break;
+		default:
+			/* This pointer is relative to the answer that we have in the database... */
+			pointer = htons(0xc000 | (uint16_t)(pointer + q->iobufptr - q->iobuf));
+		}
+		memcpy(qptr, &pointer, 2);
+	}
+
+	/* If we dont need truncation, return... */
+	if(!trunc) {
+		q->iobufptr += ANSWER_DATALEN(a);
+		return;
+	}
+
+	/* Truncate if necessary */
+	if(q->maxlen < QUERY_USED_SIZE(q) + ANSWER_DATALEN(a)) {
+
+		/* Start with the additional section, record by record... */
+		for(i = ntohs(ANSWER_ARCOUNT(a)), j = ANSWER_RRSLEN(a) - 1; i > 0 && j > 0; j--, i--) {
+			if(q->maxlen >= QUERY_USED_SIZE(q) + ANSWER_RRS(a, j - 1)) {
+				/* Make sure we remove the entire RRsets... */
+				while(ANSWER_RRS_COLOR(a, j - 1) == ANSWER_RRS_COLOR(a, j - 2)) {
+					j--; i--;
+				}
+				ARCOUNT(q) = htons(i-1);
+				q->iobufptr += ANSWER_RRS(a, j - 1);
+				return;
+			}
+		}
+
+		ARCOUNT(q) = htons(0);
+		TC_SET(q);
+
+		if(q->maxlen >= QUERY_USED_SIZE(q) + ANSWER_RRS(a, j - ntohs(a->nscount) - 1)) {
+			/* Truncate the athority section */
+			NSCOUNT(q) = htons(0);
+			q->iobufptr += ANSWER_RRS(a, j - ntohs(a->nscount) - 1);
+			return;
+		}
+
+		/* Send empty message */
+		NSCOUNT(q) = 0;
+		ANCOUNT(q) = 0;
+
+		return;
+	} else {
+		q->iobufptr += ANSWER_DATALEN(a);
+	}
 }
 
 /*
@@ -228,17 +336,18 @@ query_addtxt(struct query  *q,
  * section otherwise.
  */
 static uint8_t *
-process_query_section(struct query *query)
+process_query_section(struct query *query,
+		      uint8_t *domain_name, int *label_count,
+		      uint16_t *query_type, uint16_t *query_class)
 {
-	uint8_t qnamebuf[MAXDOMAINLEN];
-
-	uint8_t *dst = qnamebuf;
+	uint8_t *dst = domain_name + 1;
 	uint8_t *query_name = query->iobuf + QHEADERSZ;
 	uint8_t *src = query_name;
 	size_t i;
 	size_t len;
 	
 	/* Lets parse the query name and convert it to lower case.  */
+	*label_count = 0;
 	while (*src) {
 		/*
 		 * If we are out of buffer limits or we have a pointer
@@ -252,6 +361,7 @@ process_query_section(struct query *query)
 			query_formerr(query);
 			return NULL;
 		}
+		++(*label_count);
 		*dst++ = *src;
 		for (i = *src++; i; i--) {
 			*dst++ = NAMEDB_NORMALIZE(*src++);
@@ -266,12 +376,10 @@ process_query_section(struct query *query)
 		return NULL;
 	}
 
-	query->name = dname_make(query->region, qnamebuf);
+	*domain_name = len;
 
-	memcpy(&query->type, src, sizeof(uint16_t));
-	memcpy(&query->class, src + sizeof(uint16_t), sizeof(uint16_t));
-	query->type = ntohs(query->type);
-	query->class = ntohs(query->class);
+	memcpy(query_type, src, sizeof(uint16_t));
+	memcpy(query_class, src + sizeof(uint16_t), sizeof(uint16_t));
 	
 	return src + 2*sizeof(uint16_t);
 }
@@ -292,22 +400,22 @@ process_edns (struct query *q, uint8_t *qptr)
 	uint16_t opt_type, opt_class, opt_rdlen;
 
 	/* Do we have an OPT record? */
-	if (ARCOUNT(q) > 0) {
+	if(ARCOUNT(q) > 0) {
 		/* Only one opt is allowed... */
-		if (ntohs(ARCOUNT(q)) != 1) {
+		if(ntohs(ARCOUNT(q)) != 1) {
 			query_formerr(q);
 			return 0;
 		}
 
 		/* Must have root owner name... */
-		if (*qptr != 0) {
+		if(*qptr != 0) {
 			query_formerr(q);
 			return 0;
 		}
 
 		/* Must be of the type OPT... */
 		memcpy(&opt_type, qptr + 1, 2);
-		if (ntohs(opt_type) != TYPE_OPT) {
+		if(ntohs(opt_type) != TYPE_OPT) {
 			query_formerr(q);
 			return 0;
 		}
@@ -320,27 +428,28 @@ process_edns (struct query *q, uint8_t *qptr)
 		opt_class = ntohs(opt_class);
 
 		/* Check the version... */
-		if (*(qptr + 6) != 0) {
+		if(*(qptr + 6) != 0) {
 			q->edns = -1;
 		} else {
 			/* Make sure there are no other options... */
 			memcpy(&opt_rdlen, qptr + 9, 2);
-			if (opt_rdlen != 0) {
+			if(opt_rdlen != 0) {
 				q->edns = -1;
 			} else {
+
 				/* Only care about UDP size larger than normal... */
-				if (!q->tcp && opt_class > UDP_MAX_MESSAGE_LEN) {
+				if (opt_class > UDP_MAX_MESSAGE_LEN) {
 					/* XXX Configuration parameter to limit the size needs to be here... */
-					if (opt_class < QIOBUFSZ) {
+					if (opt_class < q->iobufsz) {
 						q->maxlen = opt_class;
 					} else {
-						q->maxlen = QIOBUFSZ;
+						q->maxlen = q->iobufsz;
 					}
 				}
 
-#ifdef STRICT_MESSAGE_PARSE
+#ifdef	STRICT_MESSAGE_PARSE
 				/* Trailing garbage? */
-				if ((qptr + OPT_LEN) != q->iobufptr) {
+				if((qptr + OPT_LEN) != q->iobufptr) {
 					q->edns = 0;
 					query_formerr(q);
 					return 0;
@@ -350,9 +459,6 @@ process_edns (struct query *q, uint8_t *qptr)
 				/* Strip the OPT resource record off... */
 				q->iobufptr = qptr;
 				ARCOUNT(q) = 0;
-
-				DEBUG(DEBUG_QUERY, 2,
-				      (stderr, "EDNS0 maxlen = %u\n", q->maxlen));
 			}
 		}
 	}
@@ -399,180 +505,110 @@ answer_notify (struct query *query)
 }
 
 
-static void
-add_dependent_rrsets(struct query *query, answer_type *answer,
-		     answer_section_type section,
-		     rrset_type *master_rrset,
-		     size_t rdata_index, uint16_t type_of_dependent,
-		     int allow_glue)
+/*
+ * Answer if this is a delegation.
+ *
+ * Return 1 if answered, 0 otherwise.
+ */
+static int
+answer_delegation(struct query *query, struct domain *domain, const uint8_t *qname)
 {
-	size_t i;
-	
-	assert(query);
-	assert(answer);
-	assert(master_rrset);
-	assert(rdata_atom_is_domain(master_rrset->type, rdata_index));
-
-	for (i = 0; i < master_rrset->rrslen; ++i) {
-		rrset_type *rrset;
-		domain_type *additional = rdata_atom_domain(master_rrset->rrs[i][rdata_index]);
-		domain_type *match = additional;
+	if (DOMAIN_FLAGS(domain) & NAMEDB_DELEGATION) {
+		const struct answer *answer = namedb_answer(domain, htons(TYPE_NS));
 		
-		assert(additional);
-
-		if (!allow_glue && domain_is_glue(match, query->zone))
-			continue;
-		
-		/*
-		 * Check to see if we need to generate the dependent
-		 * based on a wildcard domain.
-		 */
-		while (!match->is_existing) {
-			match = match->parent;
+		if (answer) {
+			RCODE_SET(query, RCODE_OK);
+			AA_CLR(query);
+			query_addanswer(query, qname, answer, 1);
+		} else {
+			RCODE_SET(query, RCODE_SERVFAIL);
 		}
-		if (additional != match && match->wildcard_child) {
-			domain_type *temp = region_alloc(query->region, sizeof(domain_type));
-			temp->dname = additional->dname;
-			temp->number = additional->number;
-			temp->parent = match;
-			temp->wildcard_child = NULL;
-			temp->rrsets = match->wildcard_child->rrsets;
-			temp->plugin_data = match->wildcard_child->plugin_data;
-			temp->is_existing = match->wildcard_child->is_existing;
-			additional = temp;
-		}
-
-		rrset = domain_find_rrset(additional, query->zone, type_of_dependent);
-		if (rrset) {
-			add_rrset(query, answer, section, additional, rrset);
-		}
+		return 1;
 	}
-}
-
-static void
-add_rrset(struct query       *query,
-	  answer_type        *answer,
-	  answer_section_type section,
-	  domain_type        *owner,
-	  rrset_type         *rrset)
-{
-	assert(query);
-	assert(answer);
-	assert(owner);
-	assert(rrset);
-	assert(rrset->class == CLASS_IN);
-	
-	answer_add_rrset(answer, section, owner, rrset);
-	switch (rrset->type) {
-	case TYPE_NS:
-		add_dependent_rrsets(query, answer, ADDITIONAL_SECTION,
-				     rrset, 0, TYPE_A, 1);
-		add_dependent_rrsets(query, answer, ADDITIONAL_SECTION,
-				     rrset, 0, TYPE_AAAA, 1);
-		break;
-	case TYPE_MB:
-		add_dependent_rrsets(query, answer, ADDITIONAL_SECTION,
-				     rrset, 0, TYPE_A, 0);
-		add_dependent_rrsets(query, answer, ADDITIONAL_SECTION,
-				     rrset, 0, TYPE_AAAA, 0);
-		break;
-	case TYPE_MX:
-		add_dependent_rrsets(query, answer, ADDITIONAL_SECTION,
-				     rrset, 1, TYPE_A, 0);
-		add_dependent_rrsets(query, answer, ADDITIONAL_SECTION,
-				     rrset, 1, TYPE_AAAA, 0);
-		break;
-	default:
-		break;
-	}
-}
-
-/*
- * Answer delegation information.
- */
-static void
-answer_delegation(struct query *query, answer_type *answer)
-{
-	assert(answer);
-	assert(query->delegation_domain);
-	assert(query->delegation_rrset);
-	
-	AA_CLR(query);
-	add_rrset(query,
-		  answer,
-		  AUTHORITY_SECTION,
-		  query->delegation_domain,
-		  query->delegation_rrset);
-	query->domain = query->delegation_domain;
+	return 0;
 }
 
 
 /*
- * Answer SOA information.
+ * Answer if we have data for this domain and qtype (or TYPE_CNAME).
+ *
+ * Return 1 if answered, 0 otherwise.
  */
-static void
-answer_soa(struct query *query, answer_type *answer)
+static int
+answer_domain(struct query *q,
+	      struct domain *d,
+	      const uint8_t *qname,
+	      uint16_t qclass,
+	      uint16_t qtype)
 {
-	query->domain = query->zone->domain;
+	const struct answer *a;
+	uint8_t *qptr;
 	
-	if (query->class == CLASS_ANY) {
-		AA_CLR(query);
-	} else {
-		AA_SET(query);
-		add_rrset(query, answer,
-			  AUTHORITY_SECTION,
-			  query->zone->domain,
-			  query->zone->soa_rrset);
-	}
-}
-
-static void
-answer_nxtype(struct query *query, answer_type *answer, domain_type *domain)
-{
-	answer_soa(query, answer);
-}
-
-static void
-answer_nxdomain(struct query *query, answer_type *answer)
-{
-	RCODE_SET(query, RCODE_NXDOMAIN);
-	answer_soa(query, answer);
-}
-
-/*
- * Answer domain information (or SOA if we do not have an RRset for
- * the type specified by the query).
- */
-static void
-answer_domain(struct query *q, answer_type *answer, domain_type *domain)
-{
-	rrset_type *rrset;
-	
-	if (q->type == TYPE_ANY && (rrset = domain_find_any_rrset(domain, q->zone))) {
-		for (; rrset; rrset = rrset->next) {
-			if (rrset->zone == q->zone) {
-				add_rrset(q, answer, ANSWER_SECTION, domain, rrset);
-			}
+	if(((a = namedb_answer(d, qtype)) != NULL) ||	/* The query type? */
+	   ((a = namedb_answer(d, htons(TYPE_CNAME))) != NULL)) { /* Or CNAME? */
+		if(ntohs(qclass) != CLASS_ANY) {
+			query_addanswer(q, qname, a, 1);
+			AA_SET(q);
+			return 1;
 		}
-	} else if ((rrset = domain_find_rrset(domain, q->zone, q->type))) {
-		add_rrset(q, answer, ANSWER_SECTION, domain, rrset);
-	} else if ((rrset = domain_find_rrset(domain, q->zone, TYPE_CNAME))) {
-		add_rrset(q, answer, ANSWER_SECTION, domain, rrset);
-		add_dependent_rrsets(
-			q, answer, ANSWER_SECTION, rrset, 0, q->type, 0);
-	} else {
-		answer_nxtype(q, answer, domain);
-		return;
-	}
-
-	q->domain = domain;
-	
-	if (q->class == CLASS_ANY) {
+		/* Class ANY */
 		AA_CLR(q);
-	} else if (q->zone->ns_rrset) {
-		AA_SET(q);
-		add_rrset(q, answer, AUTHORITY_SECTION, q->zone->domain, q->zone->ns_rrset);
+		
+		/* Setup truncation */
+		qptr = q->iobufptr;
+		
+		query_addanswer(q, qname, a, 0);
+		
+		/* Truncate */
+		NSCOUNT(q) = 0;
+		ARCOUNT(q) = 0;
+		q->iobufptr = qptr + ANSWER_RRS(a, ntohs(ANCOUNT(q)));
+		
+		return 1;
 	}
+	return 0;
+}
+
+
+/*
+ * Answer if we have SOA data for this domain.
+ *
+ * Return 1 if answered, 0 otherwise.
+ */
+static int
+answer_soa(struct query *q,
+	   struct domain *d,
+	   const uint8_t *qname,
+	   uint16_t qclass)
+{
+	const struct answer *a;
+	uint8_t *qptr;
+	
+	/* Do we have SOA record in this domain? */
+	if((a = namedb_answer(d, htons(TYPE_SOA))) != NULL) {
+				
+		if(ntohs(qclass) != CLASS_ANY) {
+			AA_SET(q);
+					
+			/* Setup truncation */
+			qptr = q->iobufptr;
+					
+			query_addanswer(q, qname, a, 0);
+					
+			/* Truncate */
+			ANCOUNT(q) = 0;
+			NSCOUNT(q) = htons(1);
+			ARCOUNT(q) = 0;
+			if(ANSWER_RRSLEN(a) > 1)
+				q->iobufptr = qptr + ANSWER_RRS(a, 1);
+				
+		} else {
+			AA_CLR(q);
+		}
+				
+		return 1;
+	}
+	return 0;
 }
 
 
@@ -583,9 +619,13 @@ answer_domain(struct query *q, answer_type *answer, domain_type *domain)
  * Return 1 if answered, 0 otherwise.
  */
 static int
-answer_chaos(struct nsd *nsd, struct query *q)
+answer_chaos(struct nsd *nsd,
+	     struct query *q,
+	     const uint8_t *qnamelow, uint8_t qnamelen,
+	     uint16_t qclass,
+	     uint16_t qtype)
 {
-	switch (q->class) {
+	switch(ntohs(qclass)) {
 	case CLASS_IN:
 	case CLASS_ANY:
 		/* Not handled by this function. */
@@ -599,33 +639,21 @@ answer_chaos(struct nsd *nsd, struct query *q)
 	}
 
 	AA_CLR(q);
-	switch (q->type) {
+	switch(ntohs(qtype)) {
 	case TYPE_ANY:
 	case TYPE_TXT:
-		if ((q->name->name_size == 11
-		     && memcmp(dname_name(q->name), "\002id\006server", 11) == 0) || 
-		    (q->name->name_size ==  15
-		     && memcmp(dname_name(q->name), "\010hostname\004bind", 15) == 0))
+		if ((qnamelen == 11 && memcmp(qnamelow, "\002id\006server", 11) == 0) ||
+		    (qnamelen == 15 && memcmp(qnamelow, "\010hostname\004bind", 15) == 0))
 		{
 			/* Add ID */
-			query_addtxt(q,
-				     q->iobuf + QHEADERSZ,
-				     CLASS_CHAOS,
-				     0,
-				     nsd->identity);
+			query_addtxt(q, q->iobuf + 12, CLASS_CHAOS, 0, nsd->identity);
 			ANCOUNT(q) = htons(ntohs(ANCOUNT(q)) + 1);
 			return 1;
-		} else if ((q->name->name_size == 16
-			    && memcmp(dname_name(q->name), "\007version\006server", 16) == 0) ||
-			   (q->name->name_size == 14
-			    && memcmp(dname_name(q->name), "\007version\004bind", 14) == 0))
+		} else if ((qnamelen == 16 && memcmp(qnamelow, "\007version\006server", 16) == 0) ||
+			   (qnamelen == 14 && memcmp(qnamelow, "\007version\004bind", 14) == 0))
 		{
 			/* Add version */
-			query_addtxt(q,
-				     q->iobuf + QHEADERSZ,
-				     CLASS_CHAOS,
-				     0,
-				     nsd->version);
+			query_addtxt(q, q->iobuf + 12, CLASS_CHAOS, 0, nsd->version);
 			ANCOUNT(q) = htons(ntohs(ANCOUNT(q)) + 1);
 			return 1;
 		}
@@ -637,20 +665,29 @@ answer_chaos(struct nsd *nsd, struct query *q)
 
 
 /*
- * Answer if this is an AXFR or IXFR query.
+ * Answer if this is an AXFR or IXFR query.  If the query is answered
+ * the IS_AXFR variable indicates whether an AXFR has been initiated.
+ *
+ * Return 1 if answered, 0 otherwise.
  */
-static query_state_type
-answer_axfr_ixfr(struct nsd *nsd, struct query *q)
+static int
+answer_axfr_ixfr(struct nsd *nsd,
+		 struct query *q,
+		 const uint8_t *qnamelow,
+		 const uint8_t *qname,
+		 int qdepth,
+		 uint16_t qtype,
+		 int *is_axfr)
 {
 	/* Is it AXFR? */
-	switch (q->type) {
+	switch(ntohs(qtype)) {
 	case TYPE_AXFR:
 #ifndef DISABLE_AXFR		/* XXX Should be a run-time flag */
-		if (q->tcp) {
+		if(q->tcp) {
 #ifdef LIBWRAP
 			struct request_info request;
 #ifdef AXFR_DAEMON_PREFIX
-			const uint8_t *qptr = dname_name(q->name);
+			const uint8_t *qptr = qnamelow;
 			char axfr_daemon[MAXDOMAINLEN + sizeof(AXFR_DAEMON_PREFIX)];
 			char *t = axfr_daemon + sizeof(AXFR_DAEMON_PREFIX) - 1;
 
@@ -669,150 +706,158 @@ answer_axfr_ixfr(struct nsd *nsd, struct query *q)
 #endif /* AXFR_DAEMON_PREFIX */
 			request_init(&request, RQ_DAEMON, AXFR_DAEMON, RQ_CLIENT_SIN, &q->addr, 0);
 			sock_methods(&request);	/* This is to work around the bug in libwrap */
-			if (!hosts_access(&request)) {
+			if(!hosts_access(&request)) {
 #ifdef AXFR_DAEMON_PREFIX
 				request_init(&request, RQ_DAEMON, axfr_daemon, RQ_CLIENT_SIN, &q->addr, 0);
 				sock_methods(&request);	/* This is to work around the bug in libwrap */
 				log_msg(LOG_ERR, "checking %s", axfr_daemon);
-				if (!hosts_access(&request)) {
+				if(!hosts_access(&request)) {
 #endif /* AXFR_DAEMON_PREFIX */
 					RCODE_SET(q, RCODE_REFUSE);
-					return QUERY_PROCESSED;
+					return 1;
 #ifdef AXFR_DAEMON_PREFIX
 				}
 #endif /* AXFR_DAEMON_PREFIX */
 			}
 #endif /* LIBWRAP */
-			return query_axfr(nsd, q);
+			*is_axfr = query_axfr(q, nsd, qname, qnamelow - 1, qdepth);
+			return 1;
 		}
 #endif	/* DISABLE_AXFR */
 	case TYPE_IXFR:
 		RCODE_SET(q, RCODE_REFUSE);
-		return QUERY_PROCESSED;
+		return 1;
 	default:
-		return QUERY_DISCARDED;
+		return 0;
 	}
 }
 
 
-static void
-answer_query(struct nsd *nsd, struct query *q)
+static int
+answer_query(struct nsd *nsd,
+	     struct query *q,
+	     uint8_t *qnamelow,
+	     const uint8_t *qname,
+	     uint8_t qnamelen,
+	     int qdepth,
+	     uint16_t qclass,
+	     uint16_t qtype)
 {
-	domain_type *closest_match;
-	domain_type *closest_encloser;
-	domain_type *match;
-	uint16_t offset;
-	int exact;
-	answer_type answer;
-
-	exact = namedb_lookup(nsd->db, q->name, &closest_match, &closest_encloser);
-	if (!closest_encloser->is_existing) {
-		exact = 0;
-		while (!closest_encloser->is_existing)
-			closest_encloser = closest_encloser->parent;
-	}
-
-	q->domain = closest_encloser;
+	const uint8_t qstar[2] = "\001*";
+	struct domain *d;
+	int match;
 	
-	q->zone = domain_find_zone(closest_encloser);
-	if (!q->zone) {
-		RCODE_SET(q, RCODE_SERVFAIL);
-		return;
-	}
+	/* BEWARE: THE RESOLVING ALGORITHM STARTS HERE */
 
-	offset = dname_label_offsets(q->name)[closest_encloser->dname->label_count - 1] + QHEADERSZ;
-	query_add_compression_domain(q, closest_encloser, offset);
+	/* Do we have complete name? */
+	if (NAMEDB_TSTBITMASK(nsd->db, NAMEDB_DATAMASK, qdepth) &&
+	    ((d = namedb_lookup(nsd->db, qnamelow - 1)) != NULL))
+	{
+		if (answer_delegation(q, d, qname) ||
+		    answer_domain(q, d, qname, qclass, qtype) ||
+		    answer_soa(q, d, qname, qclass))
+		{
+#ifdef PLUGINS
+			q->plugin_data = d->runtime_data;
+#endif /* PLUGINS */
+			return 1;
+		}
 
-	if (exact) {
-		match = closest_encloser;
-	} else if (closest_encloser->wildcard_child) {
-		/* Generate the domain from the wildcard.  */
-		match = region_alloc(q->region, sizeof(domain_type));
-		match->dname = q->name;
-		match->parent = closest_encloser;
-		match->wildcard_child = NULL;
-		match->number = 0; /* Number 0 is always available. */
-		match->rrsets = closest_encloser->wildcard_child->rrsets;
-		match->plugin_data = closest_encloser->wildcard_child->plugin_data;
-		match->is_existing = closest_encloser->wildcard_child->is_existing;
-		query_put_dname_offset(q, match, QHEADERSZ);
+		/* We have a partial match */
+		match = 1;
 	} else {
-		match = NULL;
+		/* Set this if we find SOA later */
+		RCODE_SET(q, RCODE_NXDOMAIN);
+		match = 0;
 	}
 
-	/*
-	 * See 3.1.4.1 Responding to Queries for DS RRs in DNSSEC
-	 * protocol.
-	 */
-	if (q->type == TYPE_DS && match == q->zone->domain) {
-		/*
-		 * Type DS query at a zone cut, use the responsible
-		 * parent zone to generate the answer if we are
-		 * authoritative for the parent zone.
-		 */
-		zone_type *zone = domain_find_parent_zone(q->zone);
-		if (zone)
-			q->zone = zone;
-	}
-	
-	answer_init(&answer);
-	if (q->type == TYPE_DS && match == q->zone->domain) {
-		answer_domain(q, &answer, match);
-	} else {
-		q->delegation_domain = domain_find_ns_rrsets(
-			closest_encloser, q->zone, &q->delegation_rrset);
+	/* Start matching down label by label */
+	do {
+		/* Strip leftmost label */
+		qnamelen -= (*qname + 1);
+		qname += (*qname + 1);
+		qnamelow += (*qnamelow + 1);
 
-		if (q->delegation_domain) {
-			/* Delegation.  */
-			answer_delegation(q, &answer);
-		} else {
-			/* Authorative zone.  */
-			if (match) {
-				answer_domain(q, &answer, match);
-			} else {
-				answer_nxdomain(q, &answer);
+		qdepth--;
+		/* Only look for wildcards if we did not have any match before */
+		if(match == 0 && NAMEDB_TSTBITMASK(nsd->db, NAMEDB_STARMASK, qdepth + 1)) {
+			/* Prepend star */
+			memcpy(qnamelow - 2, qstar, 2);
+
+			/* Lookup star */
+			*(qnamelow - 3) = qnamelen + 2;
+			if((d = namedb_lookup(nsd->db, qnamelow - 3)) != NULL) {
+				/* We found a domain... */
+				RCODE_SET(q, RCODE_OK);
+
+				if (answer_domain(q, d, qname - 2, qclass, qtype)) {
+#ifdef PLUGINS
+					q->plugin_data = d->runtime_data;
+#endif /* PLUGINS */
+					return 1;
+				}
 			}
 		}
-	}
 
-	encode_answer(q, &answer);
+		/* Do we have a SOA or zone cut? */
+		*(qnamelow - 1) = qnamelen;
+		if(NAMEDB_TSTBITMASK(nsd->db, NAMEDB_AUTHMASK, qdepth) && ((d = namedb_lookup(nsd->db, qnamelow - 1)) != NULL)) {
+			if (answer_delegation(q, d, qname) ||
+			    answer_soa(q, d, qname, qclass))
+			{
+#ifdef PLUGINS
+				q->plugin_data = d->runtime_data;
+#endif /* PLUGINS */
+				return 1;
+			}
 
-	query_clear_compression_tables(q);
+			/* We found some data, so dont try to match the wildcards anymore... */
+			match = 1;
+		}
+
+	} while(*qname);
+
+	return 0;
 }
 
 
 /*
- * Processes the query.
+ * Processes the query, returns 0 if successfull, 1 if AXFR has been initiated
+ * -1 if the query has to be silently discarded.
  *
  */
-query_state_type
-query_process(struct query *q, struct nsd *nsd)
+int 
+query_process (struct query *q, struct nsd *nsd)
 {
+	uint8_t qnamebuf[MAXDOMAINLEN + 3];
+
 	/* The query... */
-	uint8_t *qname;
+	uint8_t	*qname, *qnamelow;
+	uint8_t qnamelen;
+	uint16_t qtype;
+	uint16_t qclass;
 	uint8_t *qptr;
+	int qdepth;
 	int recursion_desired;
-	query_state_type query_state;
-	
+	int axfr;
+
 	/* Sanity checks */
-	if (QR(q)) {
-		/* Not a query? Drop it on the floor. */
-		return QUERY_DISCARDED;
-	}
+	if(QR(q))
+		return -1;	/* Not a query? Drop it on the floor. */
 
 	/* Account the OPCODE */
 	STATUP2(nsd, opcode, OPCODE(q));
 
 	if (answer_notify(q)) {
-		return QUERY_PROCESSED;
+		return 0;
 	}
 
 	/* Dont bother to answer more than one question at once... */
-	if (ntohs(QDCOUNT(q)) != 1 || TC(q)) {
+	if(ntohs(QDCOUNT(q)) != 1 || TC(q)) {
 		*(uint16_t *)(q->iobuf + 2) = 0;
 
 		query_formerr(q);
-		return QUERY_PROCESSED;
+		return 0;
 	}
 
 	/* Save the RD flag (RFC1034 4.1.1).  */
@@ -829,70 +874,84 @@ query_process(struct query *q, struct nsd *nsd)
 	 * Lets parse the qname and convert it to lower case.  Leave
 	 * some space in front of the qname for the wildcard label.
 	 */
-	qptr = process_query_section(q);
+	qptr = process_query_section(q, qnamebuf + 2, &qdepth, &qtype, &qclass);
 	if (!qptr) {
-		return QUERY_PROCESSED;
+		return 0;
 	}
+	qnamelow = qnamebuf + 3;
+	qnamelen = qnamebuf[2];
+
+#ifdef PLUGINS
+	/* Save the normalized domain name for plugins.  */
+	memcpy(q->normalized_domain_name, qnamelow - 1, qnamelen + 1);
+#endif /* PLUGINS */
 
 	qname = q->iobuf + QHEADERSZ;
 	
 	/* Update the type and class */
-	STATUP2(nsd, qtype, q->type);
-	STATUP2(nsd, qclass, q->class);
+	STATUP2(nsd, qtype, ntohs(qtype));
+	STATUP2(nsd, qclass, ntohs(qclass));
 
 	/* Dont allow any records in the answer or authority section... */
-	if (ANCOUNT(q) != 0 || NSCOUNT(q) != 0) {
+	if(ANCOUNT(q) != 0 || NSCOUNT(q) != 0) {
 		query_formerr(q);
-		return QUERY_PROCESSED;
+		return 0;
 	}
 
 	if (!process_edns(q, qptr)) {
-		return QUERY_PROCESSED;
+		return 0;
 	}
 
 	/* Do we have any trailing garbage? */
-	if (qptr != q->iobufptr) {
+	if(qptr != q->iobufptr) {
 #ifdef	STRICT_MESSAGE_PARSE
 		/* If we're strict.... */
 		query_formerr(q);
-		return QUERY_PROCESSED;
+		return 0;
 #else
 		/* Otherwise, strip it... */
 		q->iobufptr = qptr;
 #endif
 	}
 
-	if (answer_chaos(nsd, q)) {
-		return QUERY_PROCESSED;
+	if (answer_chaos(nsd, q, qnamelow, qnamelen, qclass, qtype)) {
+		return 0;
 	}
 
-	query_state = answer_axfr_ixfr(nsd, q);
-	if (query_state == QUERY_PROCESSED || query_state == QUERY_IN_AXFR) {
-		return query_state;
+	if (answer_axfr_ixfr(nsd, q, qnamelow, qname, qdepth, qtype, &axfr)) {
+		return axfr;
 	}
 
-	answer_query(nsd, q);
+	if (answer_query(nsd, q, qnamelow, qname, qnamelen, qdepth, qclass, qtype)) {
+		return 0;
+	}
 
-	return QUERY_PROCESSED;
+	RCODE_SET(q, RCODE_SERVFAIL);
+
+	/* We got a query for the zone we dont have */
+	STATUP(nsd, wrongzone);
+
+	return 0;
 }
 
 void
 query_addedns(struct query *q, struct nsd *nsd) {
-	switch (q->edns) {
+	switch(q->edns) {
 	case 1:	/* EDNS(0) packet... */
-		q->maxlen += OPT_LEN;
-		query_write(q, nsd->edns.opt_ok, OPT_LEN);
-		ARCOUNT((q)) = htons(ntohs(ARCOUNT((q))) + 1);
+		if (OPT_LEN <= QUERY_AVAILABLE_SIZE(q)) {
+			QUERY_WRITE(q, nsd->edns.opt_ok, OPT_LEN);
+			ARCOUNT((q)) = htons(ntohs(ARCOUNT((q))) + 1);
+		}
 
 		STATUP(nsd, edns);
 		break;
 	case -1: /* EDNS(0) error... */
-		q->maxlen += OPT_LEN;
-		query_write(q, nsd->edns.opt_err, OPT_LEN);
-		ARCOUNT((q)) = htons(ntohs(ARCOUNT((q))) + 1);
+		if (OPT_LEN <= QUERY_AVAILABLE_SIZE(q)) {
+			QUERY_WRITE(q, nsd->edns.opt_err, OPT_LEN);
+			ARCOUNT((q)) = htons(ntohs(ARCOUNT((q))) + 1);
+		}
 
 		STATUP(nsd, ednserr);
 		break;
 	}
 }
-
