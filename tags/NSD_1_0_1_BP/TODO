@@ -1,0 +1,27 @@
+$Id: TODO,v 1.26 2002/07/01 16:49:55 alexis Exp $
+
+ZONE COMPILER
+- memory allocation optimization is needed
+- parser is too smart: should not try to continue processing if there are errors...
+- as writing the zone the order should be DNS SEC compliant (use dnameinvert())
+
+SERVER
+- in tcp the timeout should be handled different than with alarm()?
+- replace all ntohs(..) with #define .... something[i] and ntohs() it beforehand
+- make sure that we dont copy anything from the query we dont want to copy, like
+  funny headers etc
+
+SECURITY
+
+PURITY
+- some data is in network order some in host order, make it clear with prefixes
+- brush up the fuction and identifiers names
+- bzero pads so the databases can be cmp'd
+
+TESTS
+- set all the buffer sizes to ridiculously small values see if it causes
+  core dumps
+
+MISC
+- functions should be regroupped differently in .c files, so nsd-notify
+  doesnt have to be linked with all the unnecessary stuff
