@@ -1,0 +1,277 @@
+#
+# Makefile -- one file to make them all, nsd(8)
+#
+# Alexis Yushin, <alexis@nlnetlabs.nl>
+#
+# Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+#
+# This software is an open source.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#
+# Redistributions of source code must retain the above copyright notice,
+# this list of conditions and the following disclaimer.
+#
+# Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+#
+# Neither the name of the NLNET LABS nor the names of its contributors may
+# be used to endorse or promote products derived from this software without
+# specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#
+
+# Standard installation pathnames
+SHELL = @SHELL@
+srcdir = @srcdir@
+prefix	= @prefix@
+exec_prefix = @exec_prefix@
+sbindir	= @sbindir@
+mandir = @mandir@
+
+# NSD specific pathnames
+configdir = @configdir@
+pidfile = @pidfile@
+zonesfile = @zonesfile@
+dbfile = @dbfile@
+configfile = @configfile@
+zonesdir = @zonesdir@
+namedxfer = @namedxfer@
+user = @user@
+
+CC		= @CC@
+CPPFLAGS	= @CPPFLAGS@ @DEFS@ -I. -DDBFILE=\"$(dbfile)\" -DPIDFILE=\"$(pidfile)\" -DUSER=\"$(user)\"
+CFLAGS		= @CFLAGS@
+LDFLAGS		= @LDFLAGS@
+LIBS		= @LIBS@
+LIBWRAP		= @LIBWRAP@
+LIBOBJS		= @LIBOBJS@
+INSTALL		= $(srcdir)/install-sh -c
+INSTALL_PROGRAM	= $(INSTALL)
+INSTALL_DATA	= $(INSTALL) -m 644
+
+YACC		= @YACC@
+LEX		= @LEX@
+
+COMPILE		= $(CC) $(CPPFLAGS) $(CFLAGS)
+LINK		= $(CC) $(CFLAGS) $(LDFLAGS)
+EDIT		= sed \
+			-e 's,@prefix\@,$(prefix),g' \
+			-e 's,@exec_prefix\@,$(exec_prefix),g' \
+			-e 's,@sbindir\@,$(sbindir),g' \
+			-e 's,@configdir\@,$(configdir),g' \
+			-e 's,@zonesdir\@,$(zonesdir),g' \
+			-e 's,@pidfile\@,$(pidfile),g' \
+			-e 's,@zonesfile\@,$(zonesfile),g' \
+			-e 's,@dbfile\@,$(dbfile),g' \
+			-e 's,@configfile\@,$(configfile),g' \
+			-e 's,@shell\@,$(SHELL),g' \
+			-e 's,@namedxfer\@,$(namedxfer),g' \
+			-e 's,@user\@,$(user),g'
+
+TARGETS 	= nsd zonec zonec2 nsd-notify nsdc.sh nsdc.conf.sample
+
+NSD_OBJECTS	= 				\
+	dbaccess.o 				\
+	dname.o					\
+	nsd.o					\
+	plugins.o 				\
+	query.o 				\
+	rbtree.o 				\
+	region-allocator.o 			\
+	server.o 				\
+	util.o
+
+ZONEC_OBJECTS	= 				\
+	dbcreate.o 				\
+	dname.o 				\
+	rbtree.o 				\
+	region-allocator.o			\
+	util.o 					\
+	zonec.o 				\
+	zparser.o 	
+
+ZONEC2_OBJECTS	=				\
+	dbcreate.o				\
+	dname.o					\
+	rbtree.o				\
+	region-allocator.o			\
+	util.o					\
+	zonec2.o				\
+	zyparser.o 				\
+	zlparser.o				\
+	zparser2.o
+
+NSD_NOTIFY_OBJECTS	= 			\
+	nsd-notify.o 				\
+	dname.o 				\
+	rbtree.o				\
+	region-allocator.o			\
+	util.o
+
+all:	$(TARGETS)
+
+.c.o:
+	$(COMPILE) -c $<
+
+nsdc.sh:	nsdc.sh.in
+	rm -f nsdc.sh
+	$(EDIT) nsdc.sh.in > nsdc.sh
+
+nsdc.conf.sample:	nsdc.conf.sample.in
+	rm -f nsdc.conf.sample
+	$(EDIT) nsdc.conf.sample.in > nsdc.conf.sample
+
+install: all
+	$(INSTALL) -d $(sbindir)
+	$(INSTALL) -d $(configdir)
+	$(INSTALL) -d $(mandir)
+	$(INSTALL) -d $(mandir)/man8
+	$(INSTALL) nsd $(sbindir)/nsd
+	$(INSTALL) zonec $(sbindir)/zonec
+	$(INSTALL) nsdc.sh $(sbindir)/nsdc
+	$(INSTALL) nsd-notify $(sbindir)/nsd-notify
+	$(INSTALL_DATA) nsd.8 $(mandir)/man8
+	$(INSTALL_DATA) nsdc.8 $(mandir)/man8
+	$(INSTALL_DATA) zonec.8 $(mandir)/man8
+	$(INSTALL_DATA) nsd-notify.8 $(mandir)/man8/nsd-notify.8
+	$(INSTALL_DATA) nsdc.conf.sample $(configfile).sample
+	$(INSTALL_DATA) nsd.zones.sample $(zonesfile).sample
+
+uninstall:
+	@echo
+	rm -f -- $(sbindir)/nsd $(sbindir)/zonec $(sbindir)/nsdc $(sbindir)/nsd-notify
+	rm -f -- $(mandir)/man8/nsd.8 $(mandir)/man8/nsdc.8 $(mandir)/man8/zonec.8 $(mandir)/man8/nsd-notify.8
+	rm -f -- $(pidfile) $(dbfile)
+	@echo
+	@echo "You still need to remove $(configdir) directory by hand."
+
+nsd:	$(NSD_OBJECTS) $(LIBOBJS)
+	$(LINK) -o $@ $(NSD_OBJECTS) $(LIBOBJS) $(LIBWRAP) $(LIBS)
+
+zonec:	$(ZONEC_OBJECTS) $(LIBOBJS)
+	$(LINK) -o $@ $(ZONEC_OBJECTS) $(LIBOBJS) $(LIBS)
+
+zonec2:	$(ZONEC2_OBJECTS) $(LIBOBJS)
+	$(LINK) -o $@ $(ZONEC2_OBJECTS) $(LIBOBJS) $(LIBS)
+
+nsd-notify:	$(NSD_NOTIFY_OBJECTS) $(LIBOBJS)
+	$(LINK) -o $@ $(NSD_NOTIFY_OBJECTS) $(LIBOBJS) $(LIBS)
+
+clean:
+	rm -f zparser dname rbtree *.o *.so y.* *.core *.gmon
+	rm -f $(TARGETS)
+
+devclean: clean
+	rm -f zlparser.c zyparser.h zyparser.c
+
+realclean: clean
+	rm -f Makefile config.h config.h.in config.log config.status configure
+	rm -rf autom4te*
+
+basename.o:	compat/basename.c
+	$(COMPILE) -c compat/basename.c -o basename.o
+
+inet_pton.o:	compat/inet_pton.c
+	$(COMPILE) -c compat/inet_pton.c -o inet_pton.o
+
+b64_pton.o:	compat/b64_pton.c
+	$(COMPILE) -c compat/b64_pton.c -o b64_pton.o
+
+b64_ntop.o:	compat/b64_ntop.c
+	$(COMPILE) -c compat/b64_ntop.c -o b64_ntop.o
+
+snprintf.o:	compat/snprintf.c
+	$(COMPILE) -c compat/snprintf.c -o snprintf.o
+
+vsnprintf.o:	compat/vsnprintf.c
+	$(COMPILE) -c compat/vsnprintf.c -o vsnprintf.o
+
+timegm.o:	compat/timegm.c
+	$(COMPILE) -c compat/timegm.c -o timegm.o
+
+malloc.o:	compat/malloc.c
+	$(COMPILE) -c compat/malloc.c -o malloc.o
+
+pselect.o:	compat/pselect.c
+	$(COMPILE) -c compat/pselect.c -o pselect.o
+
+zlparser.c:	zlparser.lex
+	$(LEX) -i -o$@ zlparser.lex
+
+zyparser.c zyparser.h:	zyparser.y
+	$(YACC) -d -o zyparser.c zyparser.y
+
+# Test programs
+dname:	dname.c dname.h config.h rbtree.o region-allocator.o util.o
+	$(LINK) $(CPPFLAGS) -DTEST -o $@ dname.c rbtree.o region-allocator.o util.o $(LIBS)
+
+rbtree:	rbtree.c rbtree.h config.h region-allocator.o
+	$(LINK) $(CPPFLAGS) -DTEST -o $@ rbtree.c region-allocator.o $(LIBS)
+
+region-allocator: region-allocator.c region-allocator.h config.h
+	$(LINK) $(CPPFLAGS) -DTEST -o $@ region-allocator.c $(LIBS)
+
+zparser:	zparser.c dname.o util.o $(LIBOBJS)
+	$(LINK) $(CPPFLAGS) -DTEST -o $@ zparser.c dname.o util.o $(LIBOBJS) $(LIBS)
+
+# Example plugin
+example-plugin.o: contrib/example-plugin.c
+	$(COMPILE) -c contrib/example-plugin.c -o $@
+
+example-plugin.so: example-plugin.o
+	$(LINK) -shared example-plugin.o -o $@
+
+# autoconf rules
+config.h.in:	configure.ac
+	autoheader
+
+configure:	configure.ac
+	autoconf
+
+# Dependencies
+dbaccess.o: dbaccess.c config.h namedb.h dname.h heap.h rbtree.h \
+  region-allocator.h util.h
+dbcreate.o: dbcreate.c config.h namedb.h dname.h heap.h rbtree.h \
+  region-allocator.h util.h
+dname.o: dname.c config.h dns.h dname.h heap.h rbtree.h \
+  region-allocator.h namedb.h util.h
+nsd.o: nsd.c config.h dname.h heap.h rbtree.h region-allocator.h dns.h \
+  namedb.h nsd.h plugins.h nsd-plugin.h query.h util.h
+nsd-notify.o: nsd-notify.c config.h dns.h namedb.h dname.h heap.h \
+  rbtree.h region-allocator.h nsd.h query.h util.h zparser.h
+plugins.o: plugins.c config.h namedb.h dname.h heap.h rbtree.h \
+  region-allocator.h plugins.h nsd-plugin.h nsd.h query.h util.h
+query.o: query.c config.h dns.h dname.h heap.h rbtree.h \
+  region-allocator.h nsd.h namedb.h plugins.h nsd-plugin.h query.h util.h
+rbtree.o: rbtree.c config.h rbtree.h region-allocator.h
+region-allocator.o: region-allocator.c config.h region-allocator.h
+server.o: server.c config.h dns.h namedb.h dname.h heap.h rbtree.h \
+  region-allocator.h nsd.h plugins.h nsd-plugin.h query.h util.h
+util.o: util.c config.h util.h
+zlparser.o: zlparser.c config.h zparser2.h dns.h util.h dname.h heap.h \
+  rbtree.h region-allocator.h zyparser.h
+zonec2.o: zonec2.c config.h dname.h heap.h rbtree.h region-allocator.h \
+  dns.h namedb.h util.h zonec2.h zparser2.h
+zonec.o: zonec.c config.h dname.h heap.h rbtree.h region-allocator.h \
+  dns.h namedb.h util.h zonec.h zparser.h
+zparser2.o: zparser2.c config.h zparser2.h dns.h util.h dname.h heap.h \
+  rbtree.h region-allocator.h
+zparser.o: zparser.c config.h dns.h zparser.h dname.h heap.h rbtree.h \
+  region-allocator.h util.h
+zyparser.o: zyparser.c config.h dname.h heap.h rbtree.h \
+  region-allocator.h zonec2.h zparser2.h dns.h util.h
