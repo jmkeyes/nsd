@@ -62,6 +62,28 @@ static long int totalrrs = 0;
 
 extern uint8_t nsecbits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE];
 
+/* Taken from RFC 2538, section 2.1.  */
+static const lookup_table_type certificate_types[] = {
+	{ 1, "PKIX", 0 },	/* X.509 as per PKIX */
+	{ 2, "SPKI", 0 },	/* SPKI cert */
+        { 3, "PGP", 0 },	/* PGP cert */
+        { 253, "URI", 0 },	/* URI private */
+	{ 254, "OID", 0 }	/* OID private */
+};
+
+/* Taken from RFC 2535, section 7.  */
+static const lookup_table_type zalgs[] = {
+	{ 1, "RSAMD5", 0 },
+	{ 2, "DS", 0 },
+	{ 3, "DSA", 0 },
+	{ 4, "ECC", 0 },
+	{ 5, "RSASHA1", 0 },	/* XXX: Where is this specified? */
+	{ 252, "INDIRECT", 0 },
+	{ 253, "PRIVATEDNS", 0 },
+	{ 254, "PRIVATEOID", 0 },
+	{ 0, NULL, 0 }
+};
+
 /* 
  * These are parser function for generic zone file stuff.
  */
@@ -76,10 +98,10 @@ zparser_conv_hex(region_type *region, const char *hex)
 	
 	len = strlen(hex);
 	if (len % 2 != 0) {
-		zc_error_prev_line("number of hex digits must be a multiple of 2");
+		error_prev_line("number of hex digits must be a multiple of 2");
 	} else if (len > MAX_RDLENGTH * 2) {
-		zc_error_prev_line("hex data exceeds maximum rdata length (%d)",
-				   MAX_RDLENGTH);
+		error_prev_line("hex data exceeds maximum rdata length (%d)",
+				MAX_RDLENGTH);
 	} else {
 		/* the length part */
 		r = (uint16_t *) region_alloc(region,
@@ -121,7 +143,7 @@ zparser_conv_hex(region_type *region, const char *hex)
 					*t += (*hex - 'A' + 10) * i;
 					break;
 				default:
-					zc_error_prev_line("illegal hex character '%c'", (int)*hex);
+					error_prev_line("illegal hex character '%c'", (int)*hex);
 					return NULL;
 				}
 				++hex;
@@ -143,7 +165,7 @@ zparser_conv_time(region_type *region, const char *time)
 	/* Try to scan the time... */
 	/* [XXX] the cast fixes compile time warning */
 	if((char*)strptime(time, "%Y%m%d%H%M%S", &tm) == NULL) {
-		zc_error_prev_line("Date and time is expected");
+		error_prev_line("Date and time is expected");
 	} else {
 
 		r = (uint16_t *) region_alloc(
@@ -156,47 +178,47 @@ zparser_conv_time(region_type *region, const char *time)
 }
 
 uint16_t *
-zparser_conv_services(region_type *region, const char *protostr,
-		      char *servicestr)
+zparser_conv_protocol(region_type *region, const char *protostr)
+{
+	/* convert a protocol in the rdata to wireformat */
+	struct protoent *proto;
+	uint16_t *r = NULL;
+ 
+	if((proto = getprotobyname(protostr)) == NULL) {
+		error_prev_line("Unknown protocol");
+	} else {
+
+		r = (uint16_t *) region_alloc(
+			region, sizeof(uint16_t) + sizeof(uint8_t));
+		*r = sizeof(uint8_t);
+		*(uint8_t *) (r + 1) = proto->p_proto;
+	} 
+	return r;
+}
+
+uint16_t *
+zparser_conv_services(region_type *region, const char *proto, char *servicestr)
 {
 	/*
-	 * Convert a protocol and a list of service port numbers
-	 * (separated by spaces) in the rdata to wireformat
+	 * Convert a list of service port numbers (separated by
+	 * spaces) in the rdata to wireformat
 	 */
 	uint16_t *r = NULL;
-	uint8_t *p;
 	uint8_t bitmap[65536/8];
 	char sep[] = " ";
 	char *word;
 	int max_port = -8;
-	/* convert a protocol in the rdata to wireformat */
-	struct protoent *proto;
 
 	memset(bitmap, 0, sizeof(bitmap));
-
-	proto = getprotobyname(protostr);
-	if (!proto) {
-		proto = getprotobynumber(atoi(protostr));
-	}
-	if (!proto) {
-		zc_error_prev_line("Unknown protocol");
-		return NULL;
-	}
-
 	for (word = strtok(servicestr, sep);
 	     word;
 	     word = strtok(NULL, sep))
 	{
-		struct servent *service;
-
-		service = getservbyname(word, proto->p_name);
-		if (!service) {
-			service = getservbyport(atoi(word), proto->p_name);
-		}
-		if (!service) {
-			zc_error_prev_line("Unknown service");
+		struct servent *service = getservbyname(word, proto);
+		if (service == NULL) {
+			error_prev_line("Unknown service");
 		} else if (service->s_port < 0 || service->s_port > 65535) {
-			zc_error_prev_line("bad port number %d", service->s_port);
+			error_prev_line("bad port number %d", service->s_port);
 		} else {
 			set_bit(bitmap, service->s_port);
 			if (service->s_port > max_port)
@@ -204,13 +226,10 @@ zparser_conv_services(region_type *region, const char *protostr,
 		}
         }
 
-	r = (uint16_t *) region_alloc(
-		region,
-		sizeof(uint16_t) + sizeof(uint8_t) + max_port / 8 + 1);
-	*r =  sizeof(uint8_t) + max_port / 8 + 1;
-	p = (uint8_t *) (r + 1);
-	*p++ = proto->p_proto;
-	memcpy(p, bitmap, *r);
+	r = (uint16_t *) region_alloc(region,
+				      sizeof(uint16_t) + max_port / 8 + 1);
+	*r = max_port / 8 + 1;
+	memcpy(r + 1, bitmap, *r);
 	
 	return r;
 }
@@ -230,7 +249,7 @@ zparser_conv_period(region_type *region, const char *periodstr)
 	l = htonl((uint32_t)strtottl((char *)periodstr, &end));
 
         if(*end != 0) {
-		zc_error_prev_line("Time period is expected");
+		error_prev_line("Time period is expected");
         } else {
 		memcpy(r + 1, &l, sizeof(uint32_t));
 		*r = sizeof(uint32_t);
@@ -251,7 +270,7 @@ zparser_conv_short(region_type *region, const char *shortstr)
     	*(r+1)  = htons((uint16_t)strtol(shortstr, &end, 0));
             
 	if(*end != 0) {
-		zc_error_prev_line("Unsigned short value is expected");
+		error_prev_line("Unsigned short value is expected");
 	} else {
 		*r = sizeof(uint16_t);
 	}
@@ -270,7 +289,7 @@ zparser_conv_long(region_type *region, const char *longstr)
 	l = htonl((uint32_t)strtol(longstr, &end, 0));
 
 	if(*end != 0) {
-		zc_error_prev_line("Long decimal value is expected");
+		error_prev_line("Long decimal value is expected");
         } else {
 		memcpy(r + 1, &l, sizeof(uint32_t));
 		*r = sizeof(uint32_t);
@@ -292,7 +311,7 @@ zparser_conv_byte(region_type *region, const char *bytestr)
         *((uint8_t *)(r+1)) = (uint8_t)strtol(bytestr, &end, 0);
 
         if(*end != 0) {
-		zc_error_prev_line("Decimal value is expected");
+		error_prev_line("Decimal value is expected");
         } else {
 		*r = sizeof(uint8_t);
         }
@@ -306,7 +325,7 @@ zparser_conv_algorithm(region_type *region, const char *algstr)
 	uint16_t *r = NULL;
 	const lookup_table_type *alg;
 
-	alg = lookup_by_name(dns_algorithms, algstr);
+	alg = lookup_by_name(algstr, zalgs);
 
 	if (!alg) {
 		/* not a memonic */
@@ -315,7 +334,7 @@ zparser_conv_algorithm(region_type *region, const char *algstr)
 
         r = (uint16_t *) region_alloc(region,
 				      sizeof(uint16_t) + sizeof(uint8_t));
-	*((uint8_t *)(r+1)) = alg->id;
+	*((uint8_t *)(r+1)) = alg->symbol;
 	*r = sizeof(uint8_t);
 	return r;
 }
@@ -327,7 +346,7 @@ zparser_conv_certificate_type(region_type *region, const char *typestr)
 	uint16_t *r = NULL;
 	const lookup_table_type *type;
 
-	type = lookup_by_name(dns_certificate_types, typestr);
+	type = lookup_by_name(typestr, certificate_types);
 
 	if (!type) {
 		/* not a memonic */
@@ -337,7 +356,7 @@ zparser_conv_certificate_type(region_type *region, const char *typestr)
         r = (uint16_t *) region_alloc(region,
 				      sizeof(uint16_t) + sizeof(uint16_t));
 	*r = sizeof(uint16_t);
-	write_uint16(r + 1, type->id);
+	copy_uint16(r + 1, type->symbol);
 	return r;
 }
 
@@ -354,7 +373,7 @@ zparser_conv_a(region_type *region, const char *a)
 		memcpy(r + 1, &pin, sizeof(in_addr_t));
 		*r = sizeof(in_addr_t);
 	} else {
-		zc_error_prev_line("Invalid ip address");
+		error_prev_line("Invalid ip address");
 	}
 	return r;
 }
@@ -371,7 +390,7 @@ zparser_conv_text(region_type *region, const char *txt)
 	uint16_t *r = NULL;
 
 	if((i = strlen(txt)) > 255) {
-		zc_error_prev_line("Text string is longer than 255 charaters, try splitting in two");
+		error_prev_line("Text string is longer than 255 charaters, try splitting in two");
         } else {
 
 		/* Allocate required space... */
@@ -397,7 +416,7 @@ zparser_conv_a6(region_type *region, const char *a6)
 
         /* Try to convert it */
         if (inet_pton(AF_INET6, a6, pin) != 1) {
-		zc_error_prev_line("invalid IPv6 address");
+		error_prev_line("invalid IPv6 address");
         } else {
 		*r = IP6ADDRLEN;
 		memcpy(r + 1, pin, IP6ADDRLEN);
@@ -415,7 +434,7 @@ zparser_conv_b64(region_type *region, const char *b64)
 
         /* Try to convert it */
         if((i = b64_pton(b64, buffer, B64BUFSIZE)) == -1) {
-		zc_error_prev_line("Base64 encoding failed");
+		error_prev_line("Base64 encoding failed");
         } else {
 		r = (uint16_t *) region_alloc(region, i + sizeof(uint16_t));
 		*r = i;
@@ -437,7 +456,7 @@ zparser_conv_rrtype(region_type *region, const char *rr)
 	uint16_t *r;
 
 	if (type == 0) {
-		zc_error_prev_line("unrecognized type '%s'", rr);
+		error_prev_line("unrecognized type '%s'", rr);
 		return NULL;
 	}
 	
@@ -539,7 +558,7 @@ parse_int(const char *str, char **end, int *result, const char *name, int min, i
 {
 	*result = (int) strtol(str, end, 10);
 	if (*result < min || *result > max) {
-		zc_error_prev_line("%s must be within the [%d .. %d] range", name, min, max);
+		error_prev_line("%s must be within the [%d .. %d] range", name, min, max);
 		return 0;
 	} else {
 		return 1;
@@ -616,14 +635,14 @@ zparser_conv_loc(region_type *region, char *str)
 	for(;;) {
 		/* Degrees */
 		if (*str == '\0') {
-			zc_error_prev_line("Unexpected end of LOC data");
+			error_prev_line("Unexpected end of LOC data");
 			return NULL;
 		}
 
 		if (!parse_int(str, &str, &deg, "degrees", 0, 180))
 			return NULL;
 		if (!isspace(*str)) {
-			zc_error_prev_line("Space expected after degrees");
+			error_prev_line("Space expected after degrees");
 			return NULL;
 		}
 		++str;
@@ -633,7 +652,7 @@ zparser_conv_loc(region_type *region, char *str)
 			if (!parse_int(str, &str, &min, "minutes", 0, 60))
 				return NULL;
 			if (!isspace(*str)) {
-				zc_error_prev_line("Space expected after minutes");
+				error_prev_line("Space expected after minutes");
 				return NULL;
 			}
 		}
@@ -644,7 +663,7 @@ zparser_conv_loc(region_type *region, char *str)
 			if (!parse_int(str, &str, &secs, "seconds", 0, 60))
 				return NULL;
 			if (!isspace(*str) && *str != '.') {
-				zc_error_prev_line("Space expected after seconds");
+				error_prev_line("Space expected after seconds");
 				return NULL;
 			}
 		}
@@ -652,7 +671,7 @@ zparser_conv_loc(region_type *region, char *str)
 		if (*str == '.') {
 			secfraq = (int) strtol(str + 1, &str, 10);
 			if (!isspace(*str)) {
-				zc_error_prev_line("Space expected after seconds");
+				error_prev_line("Space expected after seconds");
 				return NULL;
 			}
 		}
@@ -684,7 +703,7 @@ zparser_conv_loc(region_type *region, char *str)
 			deg = min = secs = secfraq = 0;
 			break;
 		default:
-			zc_error_prev_line("Invalid latitude/longtitude");
+			error_prev_line("Invalid latitude/longtitude");
 			return NULL;
 		}
 		++str;
@@ -693,7 +712,7 @@ zparser_conv_loc(region_type *region, char *str)
 			break;
 
 		if (!isspace(*str)) {
-			zc_error_prev_line("Space expected after latitude/longitude");
+			error_prev_line("Space expected after latitude/longitude");
 			return NULL;
 		}
 		++str;
@@ -701,7 +720,7 @@ zparser_conv_loc(region_type *region, char *str)
 
 	/* Altitude */
 	if (*str == '\0') {
-		zc_error_prev_line("Unexpected end of LOC data");
+		error_prev_line("Unexpected end of LOC data");
 		return NULL;
 	}
 
@@ -725,12 +744,12 @@ zparser_conv_loc(region_type *region, char *str)
 		++str;
 		altfraq = strtol(str + 1, &str, 10);
 		if (!isspace(*str) && *str != 0 && *str != 'm') {
-			zc_error_prev_line("Altitude fraction must be a number");
+			error_prev_line("Altitude fraction must be a number");
 			return NULL;
 		}
 		break;
 	default:
-		zc_error_prev_line("Altitude must be expressed in meters");
+		error_prev_line("Altitude must be expressed in meters");
 		return NULL;
 	}
 	if (!isspace(*str) && *str != '\0')
@@ -739,7 +758,7 @@ zparser_conv_loc(region_type *region, char *str)
 	alt = (10000000 + (altsign * (altmeters * 100 + altfraq)));
 
 	if (!isspace(*str) && *str != '\0') {
-		zc_error_prev_line("Unexpected character after altitude");
+		error_prev_line("Unexpected character after altitude");
 		return NULL;
 	}
 
@@ -748,7 +767,7 @@ zparser_conv_loc(region_type *region, char *str)
 		vszhpvp[i] = precsize_aton(str + 1, &str);
 
 		if (!isspace(*str) && *str != '\0') {
-			zc_error_prev_line("Invalid size or precision");
+			error_prev_line("Invalid size or precision");
 			return NULL;
 		}
 	}
@@ -759,9 +778,9 @@ zparser_conv_loc(region_type *region, char *str)
 
 	memcpy(r + 1, vszhpvp, 4);
 
-	write_uint32(r + 3, lat);
-	write_uint32(r + 5, lon);
-	write_uint32(r + 7, alt);
+	copy_uint32(r + 3, lat);
+	copy_uint32(r + 5, lon);
+	copy_uint32(r + 7, alt);
 
 	return r;
 }
@@ -789,11 +808,11 @@ zparser_conv_apl_rdata(region_type *region, char *str)
 	long p;
 	
 	if (!colon) {
-		zc_error("address family separator is missing");
+		error("address family separator is missing");
 		return NULL;
 	}
 	if (!slash) {
-		zc_error("prefix separator is missing");
+		error("prefix separator is missing");
 		return NULL;
 	}
 
@@ -816,15 +835,16 @@ zparser_conv_apl_rdata(region_type *region, char *str)
 		length = IP6ADDRLEN;
 		maximum_prefix = length * 8;
 	} else {
-		zc_error("invalid address family '%s'", str);
+		error("invalid address family '%s'", str);
 		return NULL;
 	}
 
 	rc = inet_pton(af, colon + 1, address);
 	if (rc == 0) {
-		zc_error("invalid address '%s'", colon + 1);
+		error("invalid address '%s'",
+		      colon + 1, (int) address_family);
 	} else if (rc == -1) {
-		zc_error("inet_pton failed: %s", strerror(errno));
+		error("inet_pton failed: %s", strerror(errno));
 	}
 
 	/* Strip trailing zero octets.  */
@@ -834,9 +854,9 @@ zparser_conv_apl_rdata(region_type *region, char *str)
 	
 	p = strtol(slash + 1, &end, 10);
 	if (p < 0 || p > maximum_prefix) {
-		zc_error("prefix not in the range 0 .. %d", maximum_prefix);
+		error("prefix not in the range 0 .. %ld", maximum_prefix);
 	} else if (*end != '\0') {
-		zc_error("invalid prefix '%s'", slash + 1);
+		error("invalid prefix '%s'", slash + 1);
 	}
 	prefix = (uint8_t) p;
 
@@ -877,7 +897,7 @@ zparser_ttl2int(char *ttlstr)
 
 	ttl = strtottl(ttlstr, &t);
 	if(*t != 0) {
-		zc_error_prev_line("Invalid ttl value: %s",ttlstr);
+		error_prev_line("Invalid ttl value: %s",ttlstr);
 		ttl = -1;
 	}
     
@@ -889,7 +909,7 @@ void
 zadd_rdata_wireformat(uint16_t *data)
 {
 	if (parser->current_rr.rrdata->rdata_count > MAXRDATALEN) {
-		zc_error_prev_line("too many rdata elements");
+		error_prev_line("too many rdata elements");
 	} else {
 		parser->current_rr.rrdata
 			->rdata[parser->current_rr.rrdata->rdata_count].data = data;
@@ -901,7 +921,7 @@ void
 zadd_rdata_domain(domain_type *domain)
 {
 	if (parser->current_rr.rrdata->rdata_count > MAXRDATALEN) {
-		zc_error_prev_line("too many rdata elements");
+		error_prev_line("too many rdata elements");
 	} else {
 		parser->current_rr.rrdata
 			->rdata[parser->current_rr.rrdata->rdata_count].domain = domain;
@@ -916,17 +936,17 @@ parse_dname(uint8_t *data, uint8_t *end)
 
 	while (1) {
 		if (label_is_pointer(current)) {
-			zc_error_prev_line("unknown RDATA contains domain name with compression pointer.");
+			error_prev_line("unknown RDATA contains domain name with compression pointer.");
 			return NULL;
 		}
 
 		if (label_length(current) > MAXLABELLEN) {
-			zc_error_prev_line("unknown RDATA contains domain name with label exceeding %d octets.", MAXLABELLEN);
+			error_prev_line("unknown RDATA contains domain name with label exceeding %d octets.", MAXLABELLEN);
 			return NULL;
 		}
 
 		if (current + label_length(current) + 1 > end) {
-			zc_error_prev_line("unknown RDATA contains unterminated domain name.");
+			error_prev_line("unknown RDATA contains unterminated domain name.");
 			return NULL;
 		}
 
@@ -955,7 +975,7 @@ parse_unknown_rdata(uint16_t type, uint16_t *wireformat)
 
 		if (data == end) {
 			if (i < descriptor->minimum) {
-				zc_error_prev_line("unknown RDATA is not complete");
+				error_prev_line("unknown RDATA is not complete");
 				return;
 			} else {
 				break;
@@ -1013,7 +1033,7 @@ parse_unknown_rdata(uint16_t type, uint16_t *wireformat)
 			uint16_t *rdata;
 
 			if (data + length > end) {
-				zc_error_prev_line("unknown RDATA is truncated");
+				error_prev_line("unknown RDATA is truncated");
 				return;
 			}
 			
@@ -1028,7 +1048,7 @@ parse_unknown_rdata(uint16_t type, uint16_t *wireformat)
 	}
 
 	if (data < end) {
-		zc_error_prev_line("unknown RDATA has trailing garbage");
+		error_prev_line("unknown RDATA has trailing garbage");
 		return;
 	}
 }
@@ -1061,6 +1081,34 @@ intbytypexx(const char *str)
 		return 0;
 	
         return (uint16_t) type;
+}
+
+/*
+ * Looks up the table entry by name, returns NULL if not found.
+ */
+const lookup_table_type *
+lookup_by_name(const char *name, const lookup_table_type *table)
+{
+	while (table->name != NULL) {
+		if (strcasecmp(name, table->name) == 0)
+			return table;
+		table++;
+	}
+	return NULL;
+}
+
+/*
+ * Looks up the table entry by symbol, returns NULL if not found.
+ */
+const lookup_table_type *
+lookup_by_symbol(uint16_t symbol, const lookup_table_type *table)
+{
+	while (table->name != NULL) {
+		if (table->symbol == symbol)
+			return table;
+		table++;
+	}
+	return NULL;
 }
 
 /*
@@ -1249,6 +1297,16 @@ zone_open(const char *filename, uint32_t ttl, uint16_t klass,
 
 
 void 
+set_bit(uint8_t bits[], uint16_t index)
+{
+	/*
+	 * The bits are counted from left to right, so bit #0 is the
+	 * left most bit.
+	 */
+	bits[index / 8] |= (1 << (7 - index % 8));
+}
+
+void 
 set_bitnsec(uint8_t bits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE],
 	    uint16_t index)
 {
@@ -1283,7 +1341,7 @@ process_rr()
 	
 	/* We only support IN class */
 	if (rr->klass != CLASS_IN) {
-		zc_error_prev_line("only class IN is supported");
+		error_prev_line("only class IN is supported");
 		return 0;
 	}
 
@@ -1298,7 +1356,7 @@ process_rr()
 	}
 
 	if (max_rdlength > MAX_RDLENGTH) {
-		zc_error_prev_line("maximum rdata length exceeds %d octets", MAX_RDLENGTH);
+		error_prev_line("maximum rdata length exceeds %d octets", MAX_RDLENGTH);
 		return 0;
 	}
 		     
@@ -1329,7 +1387,7 @@ process_rr()
 	if (!dname_is_subdomain(domain_dname(rr->owner),
 				domain_dname(zone->apex)))
 	{
-		zc_error_prev_line("out of zone data");
+		error_prev_line("out of zone data");
 		return 0;
 	}
 
@@ -1353,7 +1411,7 @@ process_rr()
 		domain_add_rrset(rr->owner, rrset);
 	} else {
 		if (rrset->type != TYPE_RRSIG && rrset->rrs[0]->ttl != rr->rrdata->ttl) {
-			zc_warning_prev_line("TTL doesn't match the TTL of the RRset");
+			warning_prev_line("TTL doesn't match the TTL of the RRset");
 		}
 
 		/* Search for possible duplicates... */
@@ -1386,14 +1444,14 @@ process_rr()
 	/* [XXX] this is dead code */
 	if (zone->soa_rrset == NULL) {
 		if (rr->type != TYPE_SOA) {
-			zc_error_prev_line("Missing SOA record on top of the zone");
+			error_prev_line("Missing SOA record on top of the zone");
 		} else if (rr->owner != zone->apex) {
-			zc_error_prev_line( "SOA record with invalid domain name");
+			error_prev_line( "SOA record with invalid domain name");
 		} else {
 			zone->soa_rrset = rrset;
 		}
 	} else if (rr->type == TYPE_SOA) {
-		zc_error_prev_line("Duplicate SOA record discarded");
+		error_prev_line("Duplicate SOA record discarded");
 		--rrset->rrslen;
 	}
 
@@ -1419,14 +1477,14 @@ zone_read (const char *name, const char *zonefile)
 
 	dname = dname_parse(parser->region, name, NULL);
 	if (!dname) {
-		zc_error_prev_line("Cannot parse zone name '%s'", name);
+		error_prev_line("Cannot parse zone name '%s'", name);
 		return;
 	}
 	
 #ifndef ROOT_SERVER
 	/* Is it a root zone? Are we a root server then? Idiot proof. */
 	if (dname->label_count == 1) {
-		zc_error("Not configured as a root server.");
+		fprintf(stderr, " ERR: Not configured as a root server.");
 		return;
 	}
 #endif
@@ -1639,9 +1697,14 @@ main (int argc, char **argv)
 	}
 
 	/* Print the total number of errors */
-	if (vflag > 0 || totalerrors > 0) {
+	if (vflag > 0) {
 		fprintf(stderr, "\n");
 		fprintf(stderr, "zonec: done with %ld errors.\n", totalerrors);
+	} else {
+		if (totalerrors > 0) {
+			fprintf(stderr, "\n");
+			fprintf(stderr, "zonec: done with %ld errors.\n", totalerrors);
+		}
 	}
 	
 	/* Disable this to save some time.  */

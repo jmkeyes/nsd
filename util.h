@@ -102,38 +102,6 @@ void log_msg(int priority, const char *format, ...)
 void log_vmsg(int priority, const char *format, va_list args);
 
 /*
- * Set the INDEXth bit of BITS to 1.
- */
-void set_bit(uint8_t bits[], size_t index);
-
-/*
- * Set the INDEXth bit of BITS to 0.
- */
-void clear_bit(uint8_t bits[], size_t index);
-
-/*
- * Return the value of the INDEXth bit of BITS.
- */
-int get_bit(uint8_t bits[], size_t index);
-
-/* A general purpose lookup table */
-typedef struct lookup_table lookup_table_type;
-struct lookup_table {
-	int id;
-	const char *name;
-};
-
-/*
- * Looks up the table entry by name, returns NULL if not found.
- */
-lookup_table_type *lookup_by_name(lookup_table_type table[], const char *name);
-
-/*
- * Looks up the table entry by id, returns NULL if not found.
- */
-lookup_table_type *lookup_by_id(lookup_table_type table[], int id);
-
-/*
  * (Re-)allocate SIZE bytes of memory.  Report an error if the memory
  * could not be allocated and exit the program.  These functions never
  * returns NULL.
@@ -155,7 +123,7 @@ int write_data(FILE * file, const void *data, size_t size);
  * (big endian).
  */
 static inline void
-write_uint16(void *dst, uint16_t data)
+copy_uint16(void *dst, uint16_t data)
 {
 #ifdef ALLOW_UNALIGNED_ACCESSES
 	* (uint16_t *) dst = htons(data);
@@ -167,7 +135,7 @@ write_uint16(void *dst, uint16_t data)
 }
 
 static inline void
-write_uint32(void *dst, uint32_t data)
+copy_uint32(void *dst, uint32_t data)
 {
 #ifdef ALLOW_UNALIGNED_ACCESSES
 	* (uint32_t *) dst = htonl(data);
@@ -177,32 +145,6 @@ write_uint32(void *dst, uint32_t data)
 	p[1] = (uint8_t) ((data >> 16) & 0xff);
 	p[2] = (uint8_t) ((data >> 8) & 0xff);
 	p[3] = (uint8_t) (data & 0xff);
-#endif
-}
-
-/*
- * Copy data allowing for unaligned accesses in network byte order
- * (big endian).
- */
-static inline uint16_t
-read_uint16(const void *src)
-{
-#ifdef ALLOW_UNALIGNED_ACCESSES
-	return ntohs(* (uint16_t *) src);
-#else
-	uint8_t *p = (uint8_t *) src;
-	return (p[0] << 8) | p[1];
-#endif
-}
-
-static inline uint32_t
-read_uint32(const void *src)
-{
-#ifdef ALLOW_UNALIGNED_ACCESSES
-	return ntohl(* (uint32_t *) src);
-#else
-	uint8_t *p = (uint8_t *) src;
-	return (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
 #endif
 }
 

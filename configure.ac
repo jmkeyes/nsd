@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,2.2.0,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,2.1.3,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -164,7 +164,7 @@ AC_CHECK_UNUSED_ATTRIBUTE
 # Checks for header files.
 AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS([arpa/inet.h signal.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h dlfcn.h tcpd.h openssl/hmac.h])
+AC_CHECK_HEADERS([arpa/inet.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h dlfcn.h tcpd.h])
 
 AC_SEARCH_LIBS(inet_pton, [nsl])
 AC_SEARCH_LIBS(socket, [socket])
@@ -204,10 +204,6 @@ changequote([,]), [
 #include <arpa/inet.h>
 #endif
 
-#ifdef HAVE_SIGNAL_H
-#include <signal.h>
-#endif
-
 /* For Tru64 */
 #ifdef HAVE_SYS_BITYPES_H
 #include <sys/bitypes.h>
@@ -226,7 +222,6 @@ AC_LIBGTOP_CHECK_TYPE(uint8_t, unsigned char)
 AC_LIBGTOP_CHECK_TYPE(uint16_t, unsigned short)
 AC_LIBGTOP_CHECK_TYPE(uint32_t, unsigned int)
 AC_LIBGTOP_CHECK_TYPE(socklen_t, int)
-AC_LIBGTOP_CHECK_TYPE(sig_atomic_t, int)
 
 AC_CHECK_TYPE(in_addr_t, [], [AC_DEFINE([in_addr_t], [uint32_t], [in_addr_t])], [
 #if HAVE_SYS_TYPES_H
@@ -286,6 +281,7 @@ case "$withval" in
 esac
 AC_SUBST(LIBWRAP)
 
+
 dnl
 dnl Some random defines's
 dnl
@@ -336,11 +332,11 @@ esac
 
 AC_ARG_ENABLE(dnssec, AC_HELP_STRING([--enable-dnssec], [Enable experimental DNSSEC support according to the latest drafts.]))
 case "$enable_dnssec" in
-        no)
-                ;;
-        yes|*)
+        yes)
 		AC_DEFINE_UNQUOTED([DNSSEC], [], [Define this enable experimental DNSSEC support.])
 		;;
+        no|*)
+                ;;
 esac
 
 AC_ARG_ENABLE(axfr, AC_HELP_STRING([--disable-axfr], [Disables AXFR]))
@@ -377,16 +373,6 @@ case "$enable_checking" in
 		;;
         no|*)
                 AC_DEFINE([NDEBUG], [], [Undefine this to enable internal runtime checks.])
-                ;;
-esac
-
-AC_ARG_ENABLE(tsig, AC_HELP_STRING([--enable-tsig], [Enable TSIG support]))
-case "$enable_tsig" in
-        yes)
-                AC_CHECK_LIB(crypto, HMAC_CTX_init,, [AC_MSG_ERROR(TSIG requires OpenSSL crypto libraries.)])
-                AC_DEFINE([TSIG], [], [Define this to enable TSIG support.])
-		;;
-        no|*)
                 ;;
 esac
 
@@ -448,11 +434,7 @@ AH_BOTTOM([
 AH_BOTTOM([
 #ifndef IPV6_MIN_MTU
 #define IPV6_MIN_MTU 1280
-#endif /* IPV6_MIN_MTU */
-
-#ifndef AF_INET6
-#define AF_INET6	28
-#endif /* AF_INET6 */
+#endif
 ])
 
 AC_CONFIG_FILES([Makefile])
