@@ -1,5 +1,5 @@
 /*
- * $Id: query.c,v 1.99 2003/06/17 14:50:29 erik Exp $
+ * $Id: query.c,v 1.95.2.4 2003/06/18 09:11:25 erik Exp $
  *
  * query.c -- nsd(8) the resolver.
  *
@@ -46,7 +46,6 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <netdb.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,6 +53,7 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+#include <netdb.h>
 
 #include <dns.h>
 #include <dname.h>
@@ -204,7 +204,7 @@ query_init (struct query *q)
 }
 
 void 
-query_addtxt (struct query *q, u_char *dname, int class, int32_t ttl, const char *txt)
+query_addtxt (struct query *q, u_char *dname, int class, int32_t ttl, char *txt)
 {
 	u_int16_t pointer;
 	u_int16_t len = strlen(txt);
@@ -365,15 +365,14 @@ query_process (struct query *q, struct nsd *nsd)
 		QR_SET(q);		/* This is an answer */
 
 		if(OPCODE(q) == OPCODE_NOTIFY) {
-			char host[INET6_ADDRSTRLEN];
-			if (getnameinfo((struct sockaddr *) &q->addr,
-					q->addrlen,
-					host, sizeof(host),
-					NULL, 0,
-					NI_NUMERICHOST) == 0)
-			{
-				syslog(LOG_INFO, "notify from %s", host);
-			}
+			char namebuf[BUFSIZ];
+
+			if ( getnameinfo( (struct sockaddr *) &(q->addr), q->addrlen, namebuf, sizeof(namebuf), 
+					NULL, 0, NI_NUMERICHOST) != 0)
+
+				syslog(LOG_INFO, "notify from unknown remote address");
+			else
+				syslog(LOG_INFO, "notify from %s", namebuf);
 		}
 
 		RCODE_SET(q, RCODE_IMPL);

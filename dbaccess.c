@@ -1,5 +1,5 @@
 /*
- * $Id: dbaccess.c,v 1.33 2003/06/16 15:13:16 erik Exp $
+ * $Id: dbaccess.c,v 1.31.2.1 2003/06/12 09:27:28 erik Exp $
  *
  * dbaccess.c -- access methods for nsd(8) database
  *
@@ -56,14 +56,14 @@
 
 #include "namedb.h"
 
+#ifndef	USE_BERKELEY_DB
+
 int 
-domaincmp (const void *left, const void *right)
+domaincmp (register u_char *a, register u_char *b)
 {
-	int r;
-	const u_char *a = left;
-	const u_char *b = right;
-	int alen = (int)*a;
-	int blen = (int)*b;
+	register int r;
+	register int alen = (int)*a;
+	register int blen = (int)*b;
 
 	while(alen && blen) {
 		a++; b++;
@@ -73,10 +73,52 @@ domaincmp (const void *left, const void *right)
 	return alen - blen;
 }
 
-struct domain *
-namedb_lookup (struct namedb *db, const u_char *dname)
+#ifdef	USE_HEAP_HASH
+
+unsigned long 
+domainhash (register u_char *dname)
 {
+        register unsigned long hash = 0;
+	register u_char *p = dname;
+
+	dname += *dname + 1;
+
+        while (p < dname)
+                hash = hash * 31 + *p++;
+        return hash;
+}
+
+#endif
+
+#endif
+
+struct domain *
+namedb_lookup (struct namedb *db, u_char *dname)
+{
+#ifdef USE_BERKELEY_DB
+	DBT key, data;
+
+	memset(&key, 0, sizeof(key));
+	memset(&data, 0, sizeof(data));
+	key.size = (size_t)*dname;
+	key.data = dname + 1;
+
+	switch(db->db->get(db->db, NULL, &key, &data, 0)) {
+	case -1:
+		syslog(LOG_ERR, "database lookup failed: %m");
+		return NULL;
+	case DB_NOTFOUND:
+		return NULL;
+	case 0:
+		return data.data;
+	}
+
+	return NULL;
+
+#else 
 	return (struct domain *)heap_search(db->heap, dname);
+
+#endif /* USE_BERKELEY_DB */
 }
 
 struct answer *
@@ -93,13 +135,17 @@ namedb_answer (struct domain *d, int type)
 }
 
 struct namedb *
-namedb_open (const char *filename)
+namedb_open (char *filename)
 {
 	struct namedb *db;
 	char magic[NAMEDB_MAGIC_SIZE] = NAMEDB_MAGIC;
 
+#ifdef	USE_BERKELEY_DB
+	DBT key, data;
+#else
 	char *p;
 	struct stat st;
+#endif
 
 	/* Allocate memory for it... */
 	if((db = xalloc(sizeof(struct namedb))) == NULL) {
@@ -111,6 +157,44 @@ namedb_open (const char *filename)
 		free(db);
 		return NULL;
 	}
+
+#ifdef USE_BERKELEY_DB
+	/* Setup the name database... */
+	if(db_create(&db->db, NULL, 0) != 0) {
+		free(db->filename);
+		free(db);
+		return NULL;
+	}
+
+	/* Open the database... */
+	if(db->db->open(db->db, db->filename, NULL, DB_UNKNOWN, DB_RDONLY, 0664) != 0) {
+		namedb_close(db);
+		return NULL;
+	}
+
+	/* Read the bitmasks... */
+	memset(&key, 0, sizeof(key));
+	memset(&data, 0, sizeof(data));
+
+	key.size = 0;
+	key.data = NULL;
+	if(db->db->get(db->db, NULL, &key, &data, 0) != 0) {
+		namedb_close(db);
+		return NULL;
+	}
+
+	if((data.size != (NAMEDB_BITMASKLEN * 3 + NAMEDB_MAGIC_SIZE)) ||
+		memcmp(data.data, magic, NAMEDB_MAGIC_SIZE)) {
+		syslog(LOG_ERR, "corrupted superblock in %s", db->filename);
+		namedb_close(db);
+		return NULL;
+	}
+
+	memcpy(db->masks[NAMEDB_AUTHMASK], data.data + NAMEDB_MAGIC_SIZE, NAMEDB_BITMASKLEN);
+	memcpy(db->masks[NAMEDB_STARMASK], data.data + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN, NAMEDB_BITMASKLEN);
+	memcpy(db->masks[NAMEDB_DATAMASK], data.data + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN * 2, NAMEDB_BITMASKLEN);
+
+#else
 
 	/* Open it... */
 	if((db->fd = open(db->filename, O_RDONLY)) == -1) {
@@ -153,7 +237,13 @@ namedb_open (const char *filename)
 
 	(void)close(db->fd);
 
-	if((db->heap = heap_create(malloc, domaincmp)) == NULL) {
+#ifdef USE_HEAP_RBTREE
+	if((db->heap = heap_create(malloc, (int (*)(void *, void *))domaincmp)) == NULL) {
+#else
+# ifdef USE_HEAP_HASH
+	if((db->heap = heap_create(malloc, (int (*)(void *, void *))domaincmp, domainhash, NAMEDB_HASH_SIZE)) == NULL) {
+# endif
+#endif
 		free(db->mpool);
 		free(db->filename);
 		free(db);
@@ -199,8 +289,18 @@ namedb_open (const char *filename)
 	memcpy(db->masks[NAMEDB_STARMASK], p + NAMEDB_BITMASKLEN, NAMEDB_BITMASKLEN);
 	memcpy(db->masks[NAMEDB_DATAMASK], p + NAMEDB_BITMASKLEN * 2, NAMEDB_BITMASKLEN);
 
-	syslog(LOG_WARNING, "loaded %s, %lu entries", db->filename, db->heap->count);
+#endif
 
+#if !defined(USE_BERKELEY_DB)
+#if defined(USE_HEAP_HASH)
+	syslog(LOG_WARNING, "loaded %s, %lu entries %lu hash collisions", db->filename,
+		db->heap->count, db->heap->collisions);
+#else 
+	syslog(LOG_WARNING, "loaded %s, %lu entries", db->filename, db->heap->count);
+#endif
+#else
+	syslog(LOG_WARNING, "loaded %s", db->filename);
+#endif
 	return db;
 }
 
@@ -210,12 +310,16 @@ namedb_close (struct namedb *db)
 	/* If it is already closed... */
 	if(db == NULL)
 		return;
+#ifdef	USE_BERKELEY_DB
+	db->db->close(db->db, 0);
+#else
 	heap_destroy(db->heap, 0, 0);
 #ifdef	USE_MMAP
 	munmap(db->mpool, db->mpoolsz);
 #else
 	free(db->mpool);
 #endif	/* USE_MMAP */
+#endif
 	if(db->filename)
 		free(db->filename);
 	free(db);

@@ -1,5 +1,5 @@
 /*
- * $Id: server.c,v 1.71 2003/06/17 14:50:31 erik Exp $
+ * $Id: server.c,v 1.69.2.5 2003/06/18 09:19:04 erik Exp $
  *
  * server.c -- nsd(8) network input/output
  *
@@ -96,10 +96,18 @@ restart_tcp_child_servers(struct nsd *nsd)
 {
 	int i;
 
+	if (nsd->debug) {
+		/*
+		 * NSD doesn't handle TCP connecties yet in debug mode
+		 * (forking interferes with profiling).
+		 */
+		return 0;
+	}
+	
 	/* Pre-fork the tcp processes... */
 	for (i = 1; i <= nsd->tcp_open_conn; ++i) {
 		if (nsd->pid[i] == 0) {
-			nsd->pid[i] = nsd->debug ? 0 : fork();
+			nsd->pid[i] = fork();
 			switch (nsd->pid[i]) {
 			case 0: /* CHILD */
 				nsd->pid[0] = 0;
@@ -124,7 +132,7 @@ int
 server_init(struct nsd *nsd)
 {
 	int i;
-#if defined(SO_REUSEADDR) || (defined(INET6) && defined(IPV6_V6ONLY))
+#if defined(SO_REUSEADDR)
 	int on = 1;
 #endif
 
@@ -136,15 +144,6 @@ server_init(struct nsd *nsd)
 			syslog(LOG_ERR, "cant create a socket: %m");
 			return -1;
 		}
-
-#if defined(INET6) && defined(IPV6_V6ONLY)
-		if (nsd->udp[i].addr->ai_family == PF_INET6 &&
-		    setsockopt(nsd->udp[i].s, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on)) < 0)
-		{
-			syslog(LOG_ERR, "setsockopt(..., IPV6_V6ONLY, ...) failed: %m");
-			return -1;
-		}
-#endif
 
 		/* Bind it... */
 		if(bind(nsd->udp[i].s, (struct sockaddr *) nsd->udp[i].addr->ai_addr, nsd->udp[i].addr->ai_addrlen) != 0) {
@@ -163,20 +162,11 @@ server_init(struct nsd *nsd)
 		}
 
 #ifdef	SO_REUSEADDR
-		if(setsockopt(nsd->tcp[i].s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0) {
+		if(setsockopt(nsd->tcp[i].s, SOL_SOCKET, SO_REUSEADDR, (void *)&on, sizeof(on)) < 0) {
 			syslog(LOG_ERR, "setsockopt(..., SO_REUSEADDR, ...) failed: %m");
 			return -1;
 		}
 #endif /* SO_REUSEADDR */
-
-#if defined(INET6) && defined(IPV6_V6ONLY)
-		if (nsd->tcp[i].addr->ai_family == PF_INET6 &&
-		    setsockopt(nsd->tcp[i].s, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on)) < 0)
-		{
-			syslog(LOG_ERR, "setsockopt(..., IPV6_V6ONLY, ...) failed: %m");
-			return -1;
-		}
-#endif
 
 		/* Bind it... */
 		if(bind(nsd->tcp[i].s, (struct sockaddr *) nsd->tcp[i].addr->ai_addr, nsd->tcp[i].addr->ai_addrlen) != 0) {
@@ -264,6 +254,7 @@ void
 server_shutdown(struct nsd *nsd)
 {
 	int i;
+	
 #ifdef	BIND8_STATS
 	bind8_stats(nsd);
 #endif /* BIND8_STATS */

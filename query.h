@@ -1,5 +1,5 @@
 /*
- * $Id: query.h,v 1.31 2003/06/16 15:13:16 erik Exp $
+ * $Id: query.h,v 1.29.2.1 2003/06/18 09:11:26 erik Exp $
  *
  * query.h -- manipulation with the queries
  *
@@ -71,50 +71,50 @@
 #define	QHEADERSZ	12
 
 /* First octet of flags */
-#define	RD_MASK		0x01U
+#define	RD_MASK		0x01
 #define	RD_SHIFT	0
 #define	RD(query)	(*(query->iobuf+2) & RD_MASK)
 #define	RD_SET(query)	*(query->iobuf+2) |= RD_MASK
 #define	RD_CLR(query)	*(query->iobuf+2) &= ~RD_MASK
 
-#define TC_MASK		0x02U
+#define TC_MASK		0x02
 #define TC_SHIFT	1
 #define	TC(query)	(*(query->iobuf+2) & TC_MASK)
 #define	TC_SET(query)	*(query->iobuf+2) |= TC_MASK
 #define	TC_CLR(query)	*(query->iobuf+2) &= ~TC_MASK
 
-#define	AA_MASK		0x04U
+#define	AA_MASK		0x04
 #define	AA_SHIFT	2
 #define	AA(query)	(*(query->iobuf+2) & AA_MASK)
 #define	AA_SET(query)	*(query->iobuf+2) |= AA_MASK
 #define	AA_CLR(query)	*(query->iobuf+2) &= ~AA_MASK
 
-#define	OPCODE_MASK	0x78U
+#define	OPCODE_MASK	0x78
 #define	OPCODE_SHIFT	3
 #define	OPCODE(query)	((*(query->iobuf+2) & OPCODE_MASK) >> OPCODE_SHIFT)
 #define	OPCODE_SET(query, opcode) \
 	*(query->iobuf+2) = ((*(query->iobuf+2)) & ~OPCODE_MASK) | (opcode << OPCODE_SHIFT)
 
-#define	QR_MASK		0x80U
+#define	QR_MASK		0x80
 #define	QR_SHIFT	7
 #define	QR(query)	(*(query->iobuf+2) & QR_MASK)
 #define	QR_SET(query)	*(query->iobuf+2) |= QR_MASK
 #define	QR_CLR(query)	*(query->iobuf+2) &= ~QR_MASK
 
-#define	RCODE_MASK	0x0fU
+#define	RCODE_MASK	0x0f
 #define	RCODE_SHIFT	0
 #define	RCODE(query)	(*(query->iobuf+3) & RCODE_MASK)
 #define	RCODE_SET(query, rcode) \
 	*(query->iobuf+3) = ((*(query->iobuf+3)) & ~RCODE_MASK) | rcode
 
-#define	Z_MASK		0x70U
+#define	Z_MASK		0x70
 #define	Z_SHIFT		4
 #define	Z(query)	(*(query->iobuf+3) & Z_MASK)
 #define	Z_SET(query, z) \
 	*(query->iobuf+3) = ((*(query->iobuf+3)) & ~Z_MASK) | z
 
 /* Second octet of flags */
-#define	RA_MASK		0x80U
+#define	RA_MASK		0x80
 #define	RA_SHIFT	7
 #define	RA(query)	(*(query->iobuf+3) & RA_MASK)
 #define	RA_SET(query)	*(query->iobuf+3) |= RA_MASK
@@ -158,7 +158,7 @@
 #define	IP6ADDRLEN		128/8
 
 /* Miscelaneous limits */
-#define	QIOBUFSZ	65536+20	/* XXX: Is it too big now?? Input output buffer for queries */
+#define	QIOBUFSZ	65536	/* XXX: Is it too big now?? Input output buffer for queries */
 #define	MAXLABELLEN	63
 #define	MAXDOMAINLEN	255
 #define	MAXRRSPP	1024	/* Maximum number of rr's per packet */
@@ -167,15 +167,11 @@
 
 /* Query as we pass it around */
 struct query {
-#ifdef INET6
 	struct sockaddr_storage addr;
-#else
-	struct sockaddr_in addr;
-#endif
 	size_t addrlen;
 	size_t maxlen;
 	u_char *iobufptr;
-	size_t iobufsz;
+	int  iobufsz;
 	int  edns;
 	int tcp;
 	u_char iobuf[QIOBUFSZ];
@@ -185,7 +181,7 @@ struct query {
 int query_axfr(struct query *q, struct nsd *nsd, u_char *qname, u_char *zname, int depth);
 void query_formerr(struct query *q);
 void query_init(struct query *q);
-void query_addtxt(struct query *q, u_char *dname, int class, int32_t ttl, const char *txt);
+void query_addtxt(struct query *q, u_char *dname, int class, int32_t ttl, char *txt);
 void query_addanswer(struct query *q, u_char *dname, struct answer *a, int trunc);
 int query_process(struct query *q, struct nsd *nsd);
 void query_addedns(struct query *q, struct nsd *nsd);

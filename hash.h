@@ -1,7 +1,7 @@
 /*
- * $Id: rbtree.h,v 1.12 2003/03/20 10:31:25 alexis Exp $
+ * $Id: hash.h,v 1.10 2003/03/20 10:31:25 alexis Exp $
  *
- * rbtree.h -- generic red-black tree
+ * hash.h -- generic non-dynamic hash
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
@@ -38,8 +38,8 @@
  *
  */
 
-#ifndef _RBTREE_H_
-#define	_RBTREE_H_
+#ifndef _HASH_H_
+#define	_HASH_H_
 
 #if !defined(__P)
 #	if defined(__STDC__)
@@ -53,47 +53,49 @@
 #define	NULL	(void *)0
 #endif
 
-typedef struct rbnode_t rbnode_t;
-struct rbnode_t {
-	rbnode_t *parent;
-	rbnode_t *left;
-	rbnode_t *right;
-	int	color;
+#define	MIN_HASH_SIZE	16
+
+typedef struct hnode_t hnode_t;
+struct hnode_t {
+	hnode_t *next;
 	void	*key;
 	void	*data;
 };
 
-#define	RBTREE_NULL &rbtree_null_node
-extern	rbnode_t	rbtree_null_node;
+typedef struct hash_t hash_t;
+struct hash_t {
+	unsigned long size;		/* The size of the table. */
+	unsigned long count;		/* The number of the nodes in the tree */
+	unsigned long collisions;	/* Number of collisions */
+	
+	/* Private elements for iterating the table */
+	hnode_t *_node;
+	unsigned _i;
 
-typedef struct rbtree_t rbtree_t;
-struct rbtree_t {
-	/* The root of the red-black tree */
-	rbnode_t	*root;
+	void *(*mallocf)(size_t);		/* Malloc function */
+	int (*cmp) (void *, void *);			/* Compare function */
+	unsigned long (*hash)(void *);	/* The hash function */
 
-	/* The number of the nodes in the tree */
-	unsigned long count;
-
-	/* Current node for walks... */
-	rbnode_t	*_node;
-
-	/* Free and compare functions */
-	void *(*mallocf)(size_t);
-	int (*cmp) (void *, void *);
+	/* The hash table */
+	hnode_t	*table;
 };
 
-#define	rbtree_last() RBTREE_NULL
-/* rbtree.c */
-rbtree_t *rbtree_create(void *(*mallocf)(size_t), int (*cmpf)(void *, void *));
-void *rbtree_insert(rbtree_t *rbtree, void *key, void *data, int overwrite);
-void *rbtree_search(rbtree_t *rbtree, void *key);
-void rbtree_destroy(rbtree_t *rbtree, int freekeys, int freedata);
-rbnode_t *rbtree_first(rbtree_t *rbtree);
-rbnode_t *rbtree_next(rbnode_t *rbtree);
+#define	HASH_WALK(hash, k, d) \
+	for((hash)->_node = hash_first(hash);\
+		(hash)->_node != hash_last(hash) && \
+		((k) = (hash)->_node->key) && ((d) = (hash)->_node->data); \
+		(hash)->_node = hash_next(hash))
 
-#define	RBTREE_WALK(rbtree, k, d) \
-	for((rbtree)->_node = rbtree_first(rbtree);\
-		(rbtree)->_node != rbtree_last() && ((k) = (rbtree)->_node->key) && \
-		((d) = (rbtree)->_node->data); (rbtree)->_node = rbtree_next((rbtree)->_node))
+#define	hash_last(h) NULL
 
-#endif /* _RBTREE_H_ */
+/* hash.c */
+hash_t *hash_create(void *(*mallocf)(size_t), int (*cmpf)(void *, void *), unsigned long (*hashf)(void *), unsigned long size);
+void *hash_insert(hash_t *hash, void *key, void *data, int overwrite);
+void *hash_search(hash_t *hash, void *key);
+void hash_destroy(hash_t *hash, int freekeys, int freedata);
+unsigned long hashf(char *key);
+hnode_t *hash_first(hash_t *hash);
+hnode_t *hash_next(hash_t *hash);
+
+
+#endif /* _HASH_H_ */
