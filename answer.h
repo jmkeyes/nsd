@@ -1,9 +1,38 @@
 /*
  * answer.h -- manipulating query answers and encoding them.
  *
+ * Erik Rozendaal, <erik@nlnetlabs.nl>
+ *
  * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
- * See LICENSE for the license.
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -12,9 +41,30 @@
 
 #include <sys/types.h>
 
-#include "dns.h"
 #include "namedb.h"
 #include "query.h"
+#include "util.h"
+
+enum rr_section {
+	QUESTION_SECTION,
+	ANSWER_SECTION,
+	AUTHORITY_SECTION,
+	/*
+	 * Use a split additional section to ensure A records appear
+	 * before any AAAA records (this is recommended practice to
+	 * avoid truncating the additional section for IPv4 clients
+	 * that do not specify EDNS0), and AAAA records before other
+	 * types of additional records (such as X25 and ISDN).
+	 * Encode_answer sets the ARCOUNT field of the response packet
+	 * correctly.
+	 */
+	ADDITIONAL_A_SECTION,
+	ADDITIONAL_AAAA_SECTION,
+	ADDITIONAL_OTHER_SECTION,
+	
+	RR_SECTION_COUNT
+};
+typedef enum rr_section rr_section_type;
 
 /*
  * Structure used to keep track of RRsets that need to be stored in
@@ -29,8 +79,11 @@ struct answer {
 };
 
 
-int encode_rr(query_type *query, domain_type *owner, rr_type *rr);
-void encode_answer(query_type *q, const answer_type *answer);
+int encode_rr(struct query *query,
+	      domain_type  *owner,
+	      rrset_type   *rrset,
+	      uint16_t      rr);
+void encode_answer(struct query *q, const answer_type *answer);
 
 
 void answer_init(answer_type *answer);
@@ -43,5 +96,14 @@ void answer_init(answer_type *answer);
 int answer_add_rrset(answer_type *answer, rr_section_type section,
 		     domain_type *domain, rrset_type *rrset);
 
+
+#ifdef __cplusplus
+inline rr_section_type
+operator++(rr_section_type &lhs)
+{
+	lhs = (rr_section_type) ((int) lhs + 1);
+	return lhs;
+}
+#endif /* __cplusplus */
 
 #endif /* _ANSWER_H_ */

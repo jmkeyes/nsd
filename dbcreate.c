@@ -1,9 +1,38 @@
 /*
- * dbcreate.c -- routines to create an nsd(8) name database 
+ * namedb_create.c -- routines to create an nsd(8) name database 
+ *
+ * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
  * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
- * See LICENSE for the license.
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -17,6 +46,7 @@
 #include <unistd.h>
 
 #include "namedb.h"
+#include "util.h"
 
 static int write_db (namedb_type *db);
 
@@ -113,16 +143,20 @@ write_number(struct namedb *db, uint32_t number)
 static int
 write_rrset(struct namedb *db, domain_type *domain, rrset_type *rrset)
 {
-	uint16_t rr_count;
-	int i, j;
-	uint16_t type;
+	uint32_t ttl;
 	uint16_t klass;
+	uint16_t type;
+	uint16_t rdcount;
+	uint16_t rrslen;
+	int i, j;
 
 	assert(db);
 	assert(domain);
 	assert(rrset);
 	
-	rr_count = htons(rrset->rr_count);
+	klass = htons(rrset->klass);
+	type = htons(rrset->type);
+	rrslen = htons(rrset->rrslen);
 	
 	if (!write_number(db, domain->number))
 		return 0;
@@ -130,33 +164,27 @@ write_rrset(struct namedb *db, domain_type *domain, rrset_type *rrset)
 	if (!write_number(db, rrset->zone->number))
 		return 0;
 	
-	type = htons(rrset->rrs[0].type);
 	if (!write_data(db->fd, &type, sizeof(type)))
 		return 0;
-
-	klass = htons(rrset->rrs[0].klass);
+		
 	if (!write_data(db->fd, &klass, sizeof(klass)))
 		return 0;
-
-	if (!write_data(db->fd, &rr_count, sizeof(rr_count)))
+		
+	if (!write_data(db->fd, &rrslen, sizeof(rrslen)))
 		return 0;
 		
-	for (i = 0; i < rrset->rr_count; ++i) {
-		rr_type *rr = &rrset->rrs[i];
-		uint32_t ttl;
-		uint16_t rdata_count;
-		
-		rdata_count = htons(rr->rdata_count);
-		if (!write_data(db->fd, &rdata_count, sizeof(rdata_count)))
+	for (i = 0; i < rrset->rrslen; ++i) {
+		rdcount = htons(rrset->rrs[i]->rdata_count);
+		if (!write_data(db->fd, &rdcount, sizeof(rdcount)))
 			return 0;
 
-		ttl = htonl(rr->ttl);
+		ttl = htonl(rrset->rrs[i]->ttl);
 		if (!write_data(db->fd, &ttl, sizeof(ttl)))
 			return 0;
 
-		for (j = 0; j < rr->rdata_count; ++j) {
-			rdata_atom_type atom = rr->rdatas[j];
-			if (rdata_atom_is_domain(rr->type, j)) {
+		for (j = 0; j < rrset->rrs[i]->rdata_count; ++j) {
+			rdata_atom_type atom = rrset->rrs[i]->rdata[j];
+			if (rdata_atom_is_domain(rrset->type, j)) {
 				if (!write_number(db, rdata_atom_domain(atom)->number))
 					return 0;
 			} else {
@@ -222,8 +250,7 @@ write_db(namedb_type *db)
 		
 		if (!zone->soa_rrset) {
 			fprintf(stderr, "SOA record not present in %s\n",
-				dname_to_string(domain_dname(zone->apex),
-						NULL));
+				dname_to_string(domain_dname(zone->apex)));
 			++errors;
 		}
 	}
