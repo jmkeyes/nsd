@@ -141,43 +141,61 @@ typedef enum nsd_rc nsd_rc_type;
 #define IP6ADDRLEN	(128/8)
 
 /*
+ * The different types of RDATA wireformat data.
+ */
+enum rdata_wireformat
+{
+	RDATA_WF_COMPRESSED_DNAME,   /* Possibly compressed domain name.  */
+	RDATA_WF_UNCOMPRESSED_DNAME, /* Uncompressed domain name.  */
+	RDATA_WF_BYTE,		     /* 8-bit integer.  */
+	RDATA_WF_SHORT,		     /* 16-bit integer.  */
+	RDATA_WF_LONG,		     /* 32-bit integer.  */
+	RDATA_WF_TEXT,		     /* Text string.  */
+	RDATA_WF_A,		     /* 32-bit IPv4 address.  */
+	RDATA_WF_AAAA,		     /* 128-bit IPv6 address.  */
+	RDATA_WF_BINARY, 	     /* Binary data (unknown length).  */
+	RDATA_WF_APL		     /* APL data.  */
+};
+typedef enum rdata_wireformat rdata_wireformat_type;
+
+/*
  * The different types of RDATA that can appear in the zone file.
  */
-enum rdata_kind
+enum rdata_zoneformat
 {
-	RDATA_KIND_DNAME,	/* Domain name.  */
-	RDATA_KIND_TEXT,	/* Text string.  */
-	RDATA_KIND_BYTE,	/* 8-bit integer.  */
-	RDATA_KIND_SHORT,	/* 16-bit integer.  */
-	RDATA_KIND_LONG,	/* 32-bit integer.  */
-	RDATA_KIND_A,		/* 32-bit IPv4 address.  */
-	RDATA_KIND_AAAA,	/* 128-bit IPv6 address.  */
-	RDATA_KIND_RRTYPE,	/* RR type.  */
-	RDATA_KIND_ALGORITHM,	/* Cryptographic algorithm.  */
-	RDATA_KIND_CERTIFICATE_TYPE,
-	RDATA_KIND_PERIOD,	/* Time period (32-bits).  */
-	RDATA_KIND_TIME,	/* Time (32-bits).  */
-	RDATA_KIND_BASE64,	/* Base-64 binary data.  */
-	RDATA_KIND_HEX,		/* Hexadecimal binary data.  */
-	RDATA_KIND_NSAP,	/* NSAP.  */
-	RDATA_KIND_APL,		/* APL.  */
-	RDATA_KIND_SERVICES,	/* Protocol and port number bitmap.  */
-	RDATA_KIND_NXT,		/* NXT type bitmap.  */
-	RDATA_KIND_NSEC,	/* NSEC type bitmap.  */
-	RDATA_KIND_LOC,		/* Location data.  */
-	RDATA_KIND_UNKNOWN	/* Unknown data.  */
+	RDATA_ZF_DNAME,		/* Domain name.  */
+	RDATA_ZF_TEXT,		/* Text string.  */
+	RDATA_ZF_BYTE,		/* 8-bit integer.  */
+	RDATA_ZF_SHORT,		/* 16-bit integer.  */
+	RDATA_ZF_LONG,		/* 32-bit integer.  */
+	RDATA_ZF_A,		/* 32-bit IPv4 address.  */
+	RDATA_ZF_AAAA,		/* 128-bit IPv6 address.  */
+	RDATA_ZF_RRTYPE,	/* RR type.  */
+	RDATA_ZF_ALGORITHM,	/* Cryptographic algorithm.  */
+	RDATA_ZF_CERTIFICATE_TYPE,
+	RDATA_ZF_PERIOD,	/* Time period.  */
+	RDATA_ZF_TIME,
+	RDATA_ZF_BASE64,	/* Base-64 binary data.  */
+	RDATA_ZF_HEX,		/* Hexadecimal binary data.  */
+	RDATA_ZF_NSAP,		/* NSAP.  */
+	RDATA_ZF_APL,		/* APL.  */
+	RDATA_ZF_SERVICES,	/* Protocol and port number bitmap.  */
+	RDATA_ZF_NXT,		/* NXT type bitmap.  */
+	RDATA_ZF_NSEC,		/* NSEC type bitmap.  */
+	RDATA_ZF_LOC,		/* Location data.  */
+	RDATA_ZF_UNKNOWN	/* Unknown data.  */
 };
-typedef enum rdata_kind rdata_kind_type;
+typedef enum rdata_zoneformat rdata_zoneformat_type;
 
 struct rrtype_descriptor
 {
 	uint16_t    type;	/* RR type */
 	const char *name;	/* Textual name.  */
 	int         token;	/* Parser token.  */
-	int         allow_compression; /* Allow dname compression.  */
 	uint8_t     minimum;	/* Minimum number of RDATAs.  */
 	uint8_t     maximum;	/* Maximum number of RDATAs.  */
-	uint8_t     rdata_kinds[MAXRDATALEN]; /* rdata_kind_type  */
+	uint8_t     wireformat[MAXRDATALEN]; /* rdata_wireformat_type */
+	uint8_t     zoneformat[MAXRDATALEN]; /* rdata_zoneformat_type  */
 };
 typedef struct rrtype_descriptor rrtype_descriptor_type;
 

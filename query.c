@@ -255,7 +255,7 @@ process_query_section(query_type *query)
 	}
 	buffer_set_position(query->packet, src - buffer_begin(query->packet));
 
-	query->qname = dname_make(query->region, qnamebuf);
+	query->qname = dname_make(query->region, qnamebuf, 1);
 	query->qtype = buffer_read_u16(query->packet);
 	query->qclass = buffer_read_u16(query->packet);
 	query->opcode = OPCODE(query->packet);
@@ -346,12 +346,10 @@ answer_chaos(struct nsd *nsd, query_type *q)
 	switch (q->qtype) {
 	case TYPE_ANY:
 	case TYPE_TXT:
-		if ((dname_length(q->qname) == 11
-		     && memcmp(dname_canonical_name(q->qname),
-			       "\006server\002id", 11) == 0) || 
-		    (dname_length(q->qname) == 15
-		     && memcmp(dname_canonical_name(q->qname),
-			       "\004bind\010hostname", 15) == 0))
+		if ((q->qname->name_size == 11
+		     && memcmp(dname_name(q->qname), "\002id\006server", 11) == 0) || 
+		    (q->qname->name_size ==  15
+		     && memcmp(dname_name(q->qname), "\010hostname\004bind", 15) == 0))
 		{
 			/* Add ID */
 			query_addtxt(q,
@@ -360,12 +358,10 @@ answer_chaos(struct nsd *nsd, query_type *q)
 				     0,
 				     nsd->identity);
 			ANCOUNT_SET(q->packet, ANCOUNT(q->packet) + 1);
-		} else if ((dname_length(q->qname) == 16
-			    && memcmp(dname_canonical_name(q->qname),
-				      "\006server\007version", 16) == 0) ||
-			   (dname_length(q->qname) == 14
-			    && memcmp(dname_canonical_name(q->qname),
-				      "\004bind\007version", 14) == 0))
+		} else if ((q->qname->name_size == 16
+			    && memcmp(dname_name(q->qname), "\007version\006server", 16) == 0) ||
+			   (q->qname->name_size == 14
+			    && memcmp(dname_name(q->qname), "\007version\004bind", 14) == 0))
 		{
 			/* Add version */
 			query_addtxt(q,
@@ -400,7 +396,7 @@ find_covering_nsec(domain_type *closest_match,
 	assert(nsec_rrset);
 
 	while (closest_match) {
-		*nsec_rrset = domain_find_rrset(closest_match, TYPE_NSEC);
+		*nsec_rrset = domain_find_rrset(closest_match, zone, TYPE_NSEC);
 		if (*nsec_rrset) {
 			return closest_match;
 		}
@@ -453,7 +449,7 @@ add_additional_rrsets(struct query *query, answer_type *answer,
 		
 		assert(additional);
 
-		if (!allow_glue && domain_is_glue(match))
+		if (!allow_glue && domain_is_glue(match, query->zone))
 			continue;
 		
 		/*
@@ -481,7 +477,7 @@ add_additional_rrsets(struct query *query, answer_type *answer,
 
 		for (j = 0; types[j].rr_type != 0; ++j) {
 			rrset_type *rrset = domain_find_rrset(
-				additional, types[j].rr_type);
+				additional, query->zone, types[j].rr_type);
 			if (rrset) {
 				answer_add_rrset(answer, types[j].rr_section,
 						 additional, rrset);
@@ -553,10 +549,10 @@ answer_delegation(query_type *query, answer_type *answer)
 		  query->delegation_rrset);
 	if (query->edns.dnssec_ok && zone_is_secure(query->zone)) {
 		rrset_type *rrset;
-		if ((rrset = domain_find_rrset(query->delegation_domain, TYPE_DS))) {
+		if ((rrset = domain_find_rrset(query->delegation_domain, query->zone, TYPE_DS))) {
 			add_rrset(query, answer, AUTHORITY_SECTION,
 				  query->delegation_domain, rrset);
-		} else if ((rrset = domain_find_rrset(query->delegation_domain, TYPE_NSEC))) {
+		} else if ((rrset = domain_find_rrset(query->delegation_domain, query->zone, TYPE_NSEC))) {
 			add_rrset(query, answer, AUTHORITY_SECTION,
 				  query->delegation_domain, rrset);
 		}
@@ -631,16 +627,17 @@ answer_domain(struct query *q, answer_type *answer,
 	
 	if (q->qtype == TYPE_ANY) {
 		int added = 0;
-		for (rrset = domain->rrsets; rrset; rrset = rrset->next) {
-			if (!(q->edns.dnssec_ok
-			      && zone_is_secure(q->zone)
-			      && rrset_rrtype(rrset) == TYPE_RRSIG))
+		for (rrset = domain_find_any_rrset(domain, q->zone); rrset; rrset = rrset->next) {
+			if (rrset->zone == q->zone
+			    /*
+			     * Don't include the RRSIG RRset when
+			     * DNSSEC is used, because it is added
+			     * automatically on an per-RRset basis.
+			     */
+			    && !(q->edns.dnssec_ok
+				 && zone_is_secure(q->zone)
+				 && rrset_rrtype(rrset) == TYPE_RRSIG))
 			{
-				/*
-				 * Don't include the RRSIG RRset when
-				 * DNSSEC is used, because it is added
-				 * automatically on a per-RRset basis.
-				 */
 				add_rrset(q, answer, ANSWER_SECTION, domain, rrset);
 				++added;
 			}
@@ -649,9 +646,9 @@ answer_domain(struct query *q, answer_type *answer,
 			answer_nodata(q, answer, original);
 			return;
 		}
-	} else if ((rrset = domain_find_rrset(domain, q->qtype))) {
+	} else if ((rrset = domain_find_rrset(domain, q->zone, q->qtype))) {
 		add_rrset(q, answer, ANSWER_SECTION, domain, rrset);
-	} else if ((rrset = domain_find_rrset(domain, TYPE_CNAME))) {
+	} else if ((rrset = domain_find_rrset(domain, q->zone, TYPE_CNAME))) {
 		size_t i;
 		int added;
 
@@ -783,51 +780,43 @@ answer_query(struct nsd *nsd, struct query *q)
 	uint16_t offset;
 	int exact;
 	answer_type answer;
-	int ds_query_at_apex;
+
+	exact = namedb_lookup(nsd->db, q->qname, &closest_match, &closest_encloser);
+	if (!closest_encloser->is_existing) {
+		exact = 0;
+		while (closest_encloser != NULL && !closest_encloser->is_existing)
+			closest_encloser = closest_encloser->parent;
+	}
+
+	q->domain = closest_encloser;
 	
-	q->zone = namedb_find_authoritative_zone(nsd->db, q->qname);
+	q->zone = domain_find_zone(closest_encloser);
 	if (!q->zone) {
 		RCODE_SET(q->packet, RCODE_SERVFAIL);
 		return;
 	}
 
-	
-	exact = zone_lookup(q->zone, q->qname, &closest_match, &closest_encloser);
-	if (!closest_encloser->is_existing) {
-		exact = 0;
-		while (closest_encloser && !closest_encloser->is_existing) {
-			closest_encloser = closest_encloser->parent;
-		}
-	}
-
-	q->domain = closest_encloser;
-	DEBUG(DEBUG_QUERY, 1,
-	      (stderr, "query: closest_encloser = %s\n",
-	       dname_to_string(domain_dname(closest_encloser), NULL)));
-	
 	answer_init(&answer);
 
 	/*
 	 * See 3.1.4.1 Responding to Queries for DS RRs in DNSSEC
 	 * protocol.
 	 */
-	ds_query_at_apex = (exact
-			    && q->qtype == TYPE_DS
-			    && closest_encloser == q->zone->apex);
-	if (ds_query_at_apex && q->zone->parent) {
+	if (exact && q->qtype == TYPE_DS && closest_encloser == q->zone->apex) {
 		/*
-		 * Type DS query at a zone cut, use the parent zone to
-		 * generate the answer.
+		 * Type DS query at a zone cut, use the responsible
+		 * parent zone to generate the answer if we are
+		 * authoritative for the parent zone.
 		 */
-		q->zone = q->zone->parent;
-		ds_query_at_apex = 0;
+		zone_type *zone = domain_find_parent_zone(q->zone);
+		if (zone)
+			q->zone = zone;
 	}
 
-	if (ds_query_at_apex) {
+	if (exact && q->qtype == TYPE_DS && closest_encloser == q->zone->apex) {
 		/*
-		 * Type DS query at the zone apex and the server is
-		 * not authoratitive for the parent zone, so answer
-		 * with NODATA.
+		 * Type DS query at the zone apex (and the server is
+		 * not authoratitive for the parent zone).
 		 */
 		if (q->qclass == CLASS_ANY) {
 			AA_CLR(q->packet);
@@ -836,17 +825,11 @@ answer_query(struct nsd *nsd, struct query *q)
 		}
 		answer_nodata(q, &answer, closest_encloser);
 	} else {
-		q->delegation_domain = domain_find_enclosing_rrset(
-			closest_encloser, TYPE_NS, &q->delegation_rrset);
-		if (q->delegation_domain == q->zone->apex) {
-			q->delegation_domain = NULL;
-			q->delegation_rrset = NULL;
-		}
-		
+		q->delegation_domain = domain_find_ns_rrsets(
+			closest_encloser, q->zone, &q->delegation_rrset);
+
 		if (!q->delegation_domain
-		    || (exact
-			&& q->qtype == TYPE_DS
-			&& closest_encloser == q->delegation_domain))
+		    || (exact && q->qtype == TYPE_DS && closest_encloser == q->delegation_domain))
 		{
 			if (q->qclass == CLASS_ANY) {
 				AA_CLR(q->packet);
@@ -855,14 +838,13 @@ answer_query(struct nsd *nsd, struct query *q)
 			}
 			answer_authoritative(q, &answer, 0, exact,
 					     closest_match, closest_encloser);
-		} else {
+		}
+		else {
 			answer_delegation(q, &answer);
 		}
 	}
 
-	offset = (QHEADERSZ
-		  + dname_length(q->qname)
-		  - dname_length(domain_dname(closest_encloser)));
+	offset = dname_label_offsets(q->qname)[domain_dname(closest_encloser)->label_count - 1] + QHEADERSZ;
 	query_add_compression_domain(q, closest_encloser, offset);
 
 	encode_answer(q, &answer);
