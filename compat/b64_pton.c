@@ -53,6 +53,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <zparser.h>
+
 #define Assert(Cond) if (!(Cond)) abort()
 
 static const char Base64[] =
@@ -148,10 +150,8 @@ b64_pton(src, target, targsize)
 			break;
 
 		pos = strchr(Base64, ch);
-		if (pos == 0) {
-			/* A non-base64 character. */
+		if (pos == 0) 		/* A non-base64 character. */
 			return (-1);
-		}
 
 		switch (state) {
 		case 0:

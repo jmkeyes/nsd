@@ -82,7 +82,7 @@ static void
 usage (void)
 {
 	fprintf(stderr, "Usage: nsd [OPTION]...\n");
-	fprintf(stderr, "Name Server Daemon.\n\n");
+	fprintf(stderr, "Start the NSD name server daemon.\n\n");
 	fprintf(stderr,
 		"Supported options:\n"
 		"  -4              Only listen to IPv4 connections.\n"
@@ -140,11 +140,11 @@ readpid (const char *file)
 	char *t;
 	int l;
 
-	if ((fd = open(file, O_RDONLY)) == -1) {
+	if((fd = open(file, O_RDONLY)) == -1) {
 		return -1;
 	}
 
-	if (((l = read(fd, pidbuf, sizeof(pidbuf)))) == -1) {
+	if(((l = read(fd, pidbuf, sizeof(pidbuf)))) == -1) {
 		close(fd);
 		return -1;
 	}
@@ -152,14 +152,14 @@ readpid (const char *file)
 	close(fd);
 
 	/* Empty pidfile means no pidfile... */
-	if (l == 0) {
+	if(l == 0) {
 		errno = ENOENT;
 		return -1;
 	}
 
 	pid = strtol(pidbuf, &t, 10);
 
-	if (*t && *t != '\n') {
+	if(*t && *t != '\n') {
 		return -1;
 	}
 	return pid;
@@ -168,25 +168,24 @@ readpid (const char *file)
 int 
 writepid (struct nsd *nsd)
 {
-	FILE * fd;
+	int fd;
 	char pidbuf[16];
 
 	snprintf(pidbuf, sizeof(pidbuf), "%lu\n", (unsigned long) nsd->pid);
 
-	if ((fd = fopen(nsd->pidfile, "w")) ==  NULL ) {
+	if((fd = open(nsd->pidfile, O_WRONLY | O_TRUNC | O_CREAT, 0644)) == -1) {
 		return -1;
 	}
 
-	if (!write_data(fd, pidbuf, strlen(pidbuf))) {
-		fclose(fd);
+	if((write(fd, pidbuf, strlen(pidbuf))) == -1) {
+		close(fd);
 		return -1;
 	}
-	fclose(fd);
+	close(fd);
 
-	if (chown(nsd->pidfile, nsd->uid, nsd->gid) == -1) {
+	if(chown(nsd->pidfile, nsd->uid, nsd->gid) == -1) {
 		log_msg(LOG_ERR, "cannot chown %u.%u %s: %s",
-			(unsigned) nsd->uid, (unsigned) nsd->gid,
-			nsd->pidfile, strerror(errno));
+			nsd->uid, nsd->gid, nsd->pidfile, strerror(errno));
 		return -1;
 	}
 
@@ -201,7 +200,7 @@ sig_handler (int sig)
 	
 	/* Are we a child server? */
 	if (nsd.server_kind != NSD_SERVER_MAIN) {
-		switch (sig) {
+		switch(sig) {
 		case SIGCHLD:
 			/* Plugins may fork, reap all terminated children.  */
 			while (waitpid(0, NULL, WNOHANG) > 0)
@@ -223,7 +222,7 @@ sig_handler (int sig)
 		return;
 	}
 
-	switch (sig) {
+	switch(sig) {
 	case SIGCHLD:
 		return;
 	case SIGHUP:
@@ -252,7 +251,7 @@ sig_handler (int sig)
 	for (i = 0; i < nsd.child_count; ++i) {
 		if (nsd.children[i].pid > 0 && kill(nsd.children[i].pid, sig) == -1) {
 			log_msg(LOG_ERR, "problems killing %d: %s",
-				(int) nsd.children[i].pid, strerror(errno));
+				nsd.children[i].pid, strerror(errno));
 		}
 	}
 }
@@ -276,7 +275,7 @@ bind8_stats (struct nsd *nsd)
 		"RP", "AFSDB", "X25", "ISDN", "RT", "NSAP", "NSAP_PTR", "SIG",		/* 24 */
 		"KEY", "PX", "GPOS", "AAAA", "LOC", "NXT", "EID", "NIMLOC",		/* 32 */
 		"SRV", "ATMA", "NAPTR", "KX", "CERT", "A6", "DNAME", "SINK",		/* 40 */
-		"OPT", NULL, "DS", NULL, NULL, "RRSIG", "NSEC", "DNSKEY",		/* 48 */
+		"OPT", NULL, NULL, NULL, NULL, NULL, NULL, NULL,			/* 48 */
 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 56 */
 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 64 */
 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 72 */
@@ -313,23 +312,23 @@ bind8_stats (struct nsd *nsd)
 	/* NSTATS */
 	t = msg = buf + snprintf(buf, MAXSYSLOGMSGLEN, "NSTATS %lu %lu",
 				 (unsigned long) now, (unsigned long) nsd->st.boot);
-	for (i = 0; i <= 255; i++) {
+	for(i = 0; i <= 255; i++) {
 		/* How much space left? */
-		if ((len = buf + MAXSYSLOGMSGLEN - t) < 32) {
+		if((len = buf + MAXSYSLOGMSGLEN - t) < 32) {
 			log_msg(LOG_INFO, "%s", buf);
 			t = msg;
 			len = buf + MAXSYSLOGMSGLEN - t;
 		}
 
-		if (nsd->st.qtype[i] != 0) {
-			if (types[i] == NULL) {
+		if(nsd->st.qtype[i] != 0) {
+			if(types[i] == NULL) {
 				t += snprintf(t, len, " TYPE%d=%lu", i, nsd->st.qtype[i]);
 			} else {
 				t += snprintf(t, len, " %s=%lu", types[i], nsd->st.qtype[i]);
 			}
 		}
 	}
-	if (t > msg)
+	if(t > msg)
 		log_msg(LOG_INFO, "%s", buf);
 
 	/* XSTATS */
@@ -393,7 +392,6 @@ main (int argc, char *argv[])
 	
 	/* Initialize the server handler... */
 	memset(&nsd, 0, sizeof(struct nsd));
-	nsd.region      = region_create(xalloc, free);
 	nsd.dbfile	= DBFILE;
 	nsd.pidfile	= PIDFILE;
 	nsd.server_kind = NSD_SERVER_MAIN;
@@ -429,7 +427,7 @@ main (int argc, char *argv[])
 	nsd.edns.opt_err[5] = 1;			/* XXX Extended RCODE=BAD VERS */
 
 	/* Set up our default identity to gethostname(2) */
-	if (gethostname(hostname, MAXHOSTNAMELEN) == 0) {
+	if(gethostname(hostname, MAXHOSTNAMELEN) == 0) {
 		nsd.identity = hostname;
 	} else {
 		log_msg(LOG_ERR,
@@ -439,7 +437,7 @@ main (int argc, char *argv[])
 
 
 	/* Parse the command line... */
-	while ((c = getopt(argc, argv, "46a:df:hi:l:N:n:p:s:u:t:X:vF:L:")) != -1) {
+	while((c = getopt(argc, argv, "46a:df:hi:l:N:n:p:s:u:t:X:v")) != -1) {
 		switch (c) {
 		case '4':
 			for (i = 0; i < MAX_INTERFACES; ++i) {
@@ -526,14 +524,6 @@ main (int argc, char *argv[])
 		case 'v':
 			version();
 			break;
-#ifndef NDEBUG
-		case 'F':
-			sscanf(optarg, "%x", &nsd_debug_facilities);
-			break;
-		case 'L':
-			sscanf(optarg, "%d", &nsd_debug_level);
-			break;
-#endif /* NDEBUG */
 		case '?':
 		default:
 			usage();
@@ -542,7 +532,7 @@ main (int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (argc != 0)
+	if(argc != 0)
 		usage();
 
 	if (strlen(nsd.identity) > UCHAR_MAX) {
@@ -552,8 +542,7 @@ main (int argc, char *argv[])
 	
 	/* Number of child servers to fork.  */
 	nsd.child_count = udp_children + tcp_children;
-	nsd.children = region_alloc(
-		nsd.region, nsd.child_count * sizeof(struct nsd_child));
+	nsd.children = xalloc(nsd.child_count * sizeof(struct nsd_child));
 	for (i = 0; i < udp_children; ++i) {
 		nsd.children[i].kind = NSD_SERVER_UDP;
 	}
@@ -562,7 +551,7 @@ main (int argc, char *argv[])
 	}
 	
 	/* We need at least one active interface */
-	if (nsd.ifs == 0) {
+	if(nsd.ifs == 0) {
 		nsd.ifs = 1;
 
 		/*
@@ -591,39 +580,39 @@ main (int argc, char *argv[])
 	}
 
 	/* Set up the address info structures with real interface/port data */
-	for (i = 0; i < nsd.ifs; ++i) {
+	for (i = 0; i < nsd.ifs; ++i)
+	{
 		/* We don't perform name-lookups */
 		if (nodes[i] != NULL)
 			hints[i].ai_flags |= AI_NUMERICHOST;
 		
 		hints[i].ai_socktype = SOCK_DGRAM;
-		if (getaddrinfo(nodes[i], udp_port, &hints[i], &nsd.udp[i].addr) != 0) {
-			error("cannot parse address '%s'", nodes[i]);
-		}
+		if ( getaddrinfo(nodes[i], udp_port, &hints[i], &nsd.udp[i].addr) != 0)
+			usage();
 		
 		hints[i].ai_socktype = SOCK_STREAM;
-		if (getaddrinfo(nodes[i], tcp_port, &hints[i], &nsd.tcp[i].addr) != 0) {
-			error("cannot parse address '%s'", nodes[i]);
-		}
+		if ( getaddrinfo(nodes[i], tcp_port, &hints[i], &nsd.tcp[i].addr) != 0)
+			usage();
+
 	}
 
 	/* Parse the username into uid and gid */
 	nsd.gid = getgid();
 	nsd.uid = getuid();
-	if (*nsd.username) {
+	if(*nsd.username) {
 		struct passwd *pwd;
-		if (isdigit(*nsd.username)) {
+		if(isdigit(*nsd.username)) {
 			char *t;
 			nsd.uid = strtol(nsd.username, &t, 10);
-			if (*t != 0) {
-				if (*t != '.' || !isdigit(*++t)) {
+			if(*t != 0) {
+				if(*t != '.' || !isdigit(*++t)) {
 					error("-u user or -u uid or -u uid.gid");
 				}
 				nsd.gid = strtol(t, &t, 10);
 			} else {
 				/* Lookup the group id in /etc/passwd */
-				if ((pwd = getpwuid(nsd.uid)) == NULL) {
-					error("user id %u does not exist.", (unsigned) nsd.uid);
+				if((pwd = getpwuid(nsd.uid)) == NULL) {
+					error("user id %d does not exist.", nsd.uid);
 				} else {
 					nsd.gid = pwd->pw_gid;
 				}
@@ -631,7 +620,7 @@ main (int argc, char *argv[])
 			}
 		} else {
 			/* Lookup the user id in /etc/passwd */
-			if ((pwd = getpwnam(nsd.username)) == NULL) {
+			if((pwd = getpwnam(nsd.username)) == NULL) {
 				error("user '%s' does not exist.", nsd.username);
 			} else {
 				nsd.uid = pwd->pw_uid;
@@ -648,14 +637,14 @@ main (int argc, char *argv[])
 	}
 	
 	/* Relativize the pathnames for chroot... */
-	if (nsd.chrootdir) {
+	if(nsd.chrootdir) {
 		int l = strlen(nsd.chrootdir);
 
-		if (strncmp(nsd.chrootdir, nsd.pidfile, l) != 0) {
+		if(strncmp(nsd.chrootdir, nsd.pidfile, l) != 0) {
 			log_msg(LOG_ERR, "%s is not relative to %s: will not chroot",
 				nsd.pidfile, nsd.chrootdir);
 			nsd.chrootdir = NULL;
-		} else if (strncmp(nsd.chrootdir, nsd.dbfile, l) != 0) {
+		} else if(strncmp(nsd.chrootdir, nsd.dbfile, l) != 0) {
 			log_msg(LOG_ERR, "%s is not relative to %s: will not chroot",
 				nsd.dbfile, nsd.chrootdir);
 			nsd.chrootdir = NULL;
@@ -663,18 +652,17 @@ main (int argc, char *argv[])
 	}
 
 	/* Do we have a running nsd? */
-	if ((oldpid = readpid(nsd.pidfile)) == -1) {
-		if (errno != ENOENT) {
+	if((oldpid = readpid(nsd.pidfile)) == -1) {
+		if(errno != ENOENT) {
 			log_msg(LOG_ERR, "can't read pidfile %s: %s",
 				nsd.pidfile, strerror(errno));
 		}
 	} else {
-		if (kill(oldpid, 0) == 0 || errno == EPERM) {
+		if(kill(oldpid, 0) == 0 || errno == EPERM) {
 			log_msg(LOG_ERR,
 				"nsd is already running as %u, stopping",
 				(unsigned) oldpid);
-			/* XXX: Stop or continue to bind port anyway? */
-/* 			exit(0); */
+			exit(0);
 		} else {
 			log_msg(LOG_ERR,
 				"...stale pid file from process %u",
@@ -701,12 +689,12 @@ main (int argc, char *argv[])
 		}
 
 		/* Detach ourselves... */
-		if (setsid() == -1) {
+		if(setsid() == -1) {
 			log_msg(LOG_ERR, "setsid() failed: %s", strerror(errno));
 			exit(1);
 		}
 
-		if ((fd = open("/dev/null", O_RDWR, 0)) != -1) {
+		if((fd = open("/dev/null", O_RDWR, 0)) != -1) {
 			(void)dup2(fd, STDIN_FILENO);
 			(void)dup2(fd, STDOUT_FILENO);
 			(void)dup2(fd, STDERR_FILENO);
@@ -733,7 +721,7 @@ main (int argc, char *argv[])
 	nsd.pid = getpid();
 
 	/* Overwrite pid... */
-	if (writepid(&nsd) == -1) {
+	if(writepid(&nsd) == -1) {
 		log_msg(LOG_ERR, "cannot overwrite the pidfile %s: %s",
 			nsd.pidfile, strerror(errno));
 	}
@@ -742,7 +730,7 @@ main (int argc, char *argv[])
 	nsd.mode = NSD_RUN;
 
 	/* Run the server... */
-	if (server_init(&nsd) != 0) {
+	if(server_init(&nsd) != 0) {
 		unlink(nsd.pidfile);
 		exit(1);
 	}
@@ -757,7 +745,7 @@ main (int argc, char *argv[])
 			*eq = '\0';
 			arg = eq + 1;
 		}
-		if (!plugin_load(&nsd, plugins[i], arg)) {
+		if (!plugin_load(plugins[i], arg)) {
 			plugin_finalize_all();
 			unlink(nsd.pidfile);
 			exit(1);
@@ -766,7 +754,7 @@ main (int argc, char *argv[])
 	free(plugins);
 #endif /* PLUGINS */
 	
-	log_msg(LOG_NOTICE, "nsd started, pid %d", (int) nsd.pid);
+	log_msg(LOG_NOTICE, "nsd started, pid %d", nsd.pid);
 
 	if (nsd.server_kind == NSD_SERVER_MAIN) {
 		server_main(&nsd);

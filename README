@@ -32,10 +32,13 @@ The source code is available for download from:
 
 NSD consists of two programs: the zone compiler 'zonec' and the name
 server 'nsd' itself. The name server works with an intermediate
-database prepared by the zone compiler from standard zone files.
+database prepared by the zone compiler from standard zone files. Most
+of the complexity in preparing answers is dealt with in zonec, such
+that the processing nsd has to do per query is kept at the absolutely
+necessary minimum.
 
-For NSD operation this means that zones have to be compiled by zonec
-before NSD can use them.
+For nsd operation this means that zones have to be compiled by zonec
+before nsd can use them.
 
 All this can be controlled by a simple control script called 'nsdc'
 which uses a simple configuration file.
@@ -87,7 +90,7 @@ Step 14: If desired add nsdc update to your superuser crontab to
 
 
 
-2.0 Building NSD
+2.0 Building nsd
 
 
 2.1 Unpacking the source
@@ -158,12 +161,6 @@ addition to standard configure options, one may use the following:
         to modify NSD or develop plugins.  This option enables the
         standard C "assert" macro.
 
-  --enable-mmap
-
-        Use the mmap(2) system call to load the databse into memory.
-        This is useful on operating systems like Solaris which
-        otherwise reserve additional memory for the database.
-
   --disable-axfr
 
 	Disables outbound AXFR functionalities altogether.
@@ -210,11 +207,6 @@ addition to standard configure options, one may use the following:
 
 	Compile in libwrap (tcp_wrappers) support.
 
-  --with-facility=facility
-        Specify the syslog facility to use.  The default is
-        LOG_DAEMON.  See the syslog(3) manual page for the available
-        facilities.
-
 
 2.3 Building
 
@@ -230,7 +222,8 @@ Become a superuser (if necessary) and type ``make install''
 This step should install three binaries
 
 nsd             - the daemon itself
-nsdc            - a shell script to control the daemon
+nsdc            - a very (not anymore so) simple shell script to
+		  control the daemon
 zonec           - zone compiler
 nsd-notify	- a simple C program to send outbound notifies
 
@@ -255,9 +248,7 @@ Where bluesky.com should be the domain name you will be serving with
 NSD.
 
 The second line indicates that nsdc update should try to axfr the zone
-greysky.com from the master server 10.1.1.1. Multiple masters are 
-supported. They are queried in order, if the first one fails the second
-one is queried, and so on.
+greysky.com from the master server 10.1.1.1
 
 Since NSD is primarily written to be run on the root name servers,
 this file most likely to contain something like:
