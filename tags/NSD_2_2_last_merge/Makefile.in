@@ -1,0 +1,285 @@
+#
+# Makefile -- one file to make them all, nsd(8)
+#
+# Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
+#
+# See LICENSE for the license.
+#
+
+# Standard installation pathnames
+SHELL = @SHELL@
+srcdir = @srcdir@
+prefix	= @prefix@
+exec_prefix = @exec_prefix@
+sbindir	= @sbindir@
+mandir = @mandir@
+
+# NSD specific pathnames
+configdir = @configdir@
+pidfile = @pidfile@
+zonesfile = @zonesfile@
+dbfile = @dbfile@
+configfile = @configfile@
+zonesdir = @zonesdir@
+namedxfer = @namedxfer@
+user = @user@
+
+CC		= @CC@
+CPPFLAGS	= @CPPFLAGS@ @DEFS@ -I. -DDBFILE=\"$(dbfile)\" -DPIDFILE=\"$(pidfile)\" -DUSER=\"$(user)\"
+CFLAGS		= @CFLAGS@
+LDFLAGS		= @LDFLAGS@
+LIBS		= @LIBS@
+LIBWRAP		= @LIBWRAP@
+LIBOBJS		= @LIBOBJS@
+INSTALL		= $(srcdir)/install-sh -c
+INSTALL_PROGRAM	= $(INSTALL)
+INSTALL_DATA	= $(INSTALL) -m 644
+
+YACC		= @YACC@
+LEX		= @LEX@
+
+COMPILE		= $(CC) $(CPPFLAGS) $(CFLAGS)
+LINK		= $(CC) $(CFLAGS) $(LDFLAGS)
+EDIT		= sed \
+			-e 's,@prefix\@,$(prefix),g' \
+			-e 's,@exec_prefix\@,$(exec_prefix),g' \
+			-e 's,@sbindir\@,$(sbindir),g' \
+			-e 's,@configdir\@,$(configdir),g' \
+			-e 's,@zonesdir\@,$(zonesdir),g' \
+			-e 's,@pidfile\@,$(pidfile),g' \
+			-e 's,@zonesfile\@,$(zonesfile),g' \
+			-e 's,@dbfile\@,$(dbfile),g' \
+			-e 's,@configfile\@,$(configfile),g' \
+			-e 's,@shell\@,$(SHELL),g' \
+			-e 's,@user\@,$(user),g'
+
+TARGETS 	= nsd zonec nsd-notify nsd-xfer nsdc.sh nsdc.conf.sample
+
+NSD_OBJECTS	=				\
+	answer.o				\
+	axfr.o					\
+	buffer.o				\
+	dbaccess.o				\
+	dname.o					\
+	dns.o					\
+	edns.o					\
+	namedb.o				\
+	netio.o					\
+	nsd.o					\
+	packet.o				\
+	plugins.o				\
+	query.o					\
+	rbtree.o				\
+	rdata.o					\
+	region-allocator.o			\
+	server.o				\
+	tsig.o					\
+	tsig-openssl.o				\
+	util.o
+
+ZONEC_OBJECTS	=				\
+	buffer.o				\
+	dbcreate.o				\
+	dname.o					\
+	dns.o					\
+	namedb.o				\
+	rbtree.o				\
+	rdata.o					\
+	region-allocator.o			\
+	util.o					\
+	zlexer.o				\
+	zonec.o					\
+	zparser.o
+
+NSD_NOTIFY_OBJECTS	=			\
+	buffer.o				\
+	dname.o					\
+	dns.o					\
+	namedb.o				\
+	nsd-notify.o				\
+	rbtree.o				\
+	region-allocator.o			\
+	util.o
+
+NSD_XFER_OBJECTS	=			\
+	answer.o				\
+	axfr.o					\
+	buffer.o				\
+	dbaccess.o				\
+	dname.o					\
+	dns.o					\
+	edns.o					\
+	namedb.o				\
+	nsd-xfer.o				\
+	packet.o				\
+	query.o					\
+	rbtree.o				\
+	rdata.o					\
+	region-allocator.o			\
+	tsig.o					\
+	tsig-openssl.o				\
+	util.o
+
+all:	$(TARGETS)
+
+.c.o:
+	$(COMPILE) -c $<
+
+nsdc.sh:	nsdc.sh.in
+	rm -f nsdc.sh
+	$(EDIT) nsdc.sh.in > nsdc.sh
+
+nsdc.conf.sample:	nsdc.conf.sample.in
+	rm -f nsdc.conf.sample
+	$(EDIT) nsdc.conf.sample.in > nsdc.conf.sample
+
+install: all
+	$(INSTALL) -d $(sbindir)
+	$(INSTALL) -d $(configdir)
+	$(INSTALL) -d $(mandir)
+	$(INSTALL) -d $(mandir)/man8
+	$(INSTALL) nsd $(sbindir)/nsd
+	$(INSTALL) zonec $(sbindir)/zonec
+	$(INSTALL) nsdc.sh $(sbindir)/nsdc
+	$(INSTALL) nsd-notify $(sbindir)/nsd-notify
+	$(INSTALL) nsd-xfer $(sbindir)/nsd-xfer
+	$(INSTALL_DATA) nsd.8 $(mandir)/man8
+	$(INSTALL_DATA) nsdc.8 $(mandir)/man8
+	$(INSTALL_DATA) zonec.8 $(mandir)/man8
+	$(INSTALL_DATA) nsd-notify.8 $(mandir)/man8/nsd-notify.8
+	$(INSTALL_DATA) nsd-xfer.8 $(mandir)/man8/nsd-xfer.8
+	$(INSTALL_DATA) nsdc.conf.sample $(configfile).sample
+	$(INSTALL_DATA) nsd.zones.sample $(zonesfile).sample
+
+uninstall:
+	@echo
+	rm -f -- $(sbindir)/nsd $(sbindir)/zonec $(sbindir)/nsdc $(sbindir)/nsd-notify $(sbindir)/nsd-xfer
+	rm -f -- $(mandir)/man8/nsd.8 $(mandir)/man8/nsdc.8 $(mandir)/man8/zonec.8 $(mandir)/man8/nsd-notify.8 $(mandir)/man8/nsd-xfer.8
+	rm -f -- $(pidfile) $(dbfile)
+	@echo
+	@echo "You still need to remove $(configdir) directory by hand."
+
+nsd:	$(NSD_OBJECTS) $(LIBOBJS)
+	$(LINK) -o $@ $(NSD_OBJECTS) $(LIBOBJS) $(LIBWRAP) $(LIBS)
+
+zonec:	$(ZONEC_OBJECTS) $(LIBOBJS)
+	$(LINK) -o $@ $(ZONEC_OBJECTS) $(LIBOBJS) $(LIBS)
+
+nsd-notify:	$(NSD_NOTIFY_OBJECTS) $(LIBOBJS)
+	$(LINK) -o $@ $(NSD_NOTIFY_OBJECTS) $(LIBOBJS) $(LIBS)
+
+nsd-xfer:	$(NSD_XFER_OBJECTS) $(LIBOBJS)
+	$(LINK) -o $@ $(NSD_XFER_OBJECTS) $(LIBOBJS) $(LIBWRAP) $(LIBS)
+
+clean:
+	rm -f dname rbtree *.o *.so y.* *.core *.gmon
+	rm -f $(TARGETS)
+
+devclean: clean
+	rm -f zlexer.c zparser.h zparser.c zparser.stamp
+
+realclean: clean
+	rm -f Makefile config.h config.h.in config.log config.status configure
+	rm -rf autom4te*
+
+basename.o:	compat/basename.c
+	$(COMPILE) -c compat/basename.c -o basename.o
+
+inet_pton.o:	compat/inet_pton.c
+	$(COMPILE) -c compat/inet_pton.c -o inet_pton.o
+
+b64_pton.o:	compat/b64_pton.c
+	$(COMPILE) -c compat/b64_pton.c -o b64_pton.o
+
+b64_ntop.o:	compat/b64_ntop.c
+	$(COMPILE) -c compat/b64_ntop.c -o b64_ntop.o
+
+snprintf.o:	compat/snprintf.c
+	$(COMPILE) -c compat/snprintf.c -o snprintf.o
+
+vsnprintf.o:	compat/vsnprintf.c
+	$(COMPILE) -c compat/vsnprintf.c -o vsnprintf.o
+
+timegm.o:	compat/timegm.c
+	$(COMPILE) -c compat/timegm.c -o timegm.o
+
+malloc.o:	compat/malloc.c
+	$(COMPILE) -c compat/malloc.c -o malloc.o
+
+pselect.o:	compat/pselect.c
+	$(COMPILE) -c compat/pselect.c -o pselect.o
+
+zlexer.c:	zlexer.lex
+	$(LEX) -i -o$@ zlexer.lex
+
+zparser.c zparser.h: zparser.y
+	$(YACC) -d -o zparser.c zparser.y
+
+# Example plugin
+example-plugin.o: contrib/example-plugin.c
+	$(COMPILE) -c contrib/example-plugin.c -o $@
+
+example-plugin.so: example-plugin.o
+	$(LINK) -shared example-plugin.o -o $@
+
+# autoconf rules
+config.h.in:	configure.ac
+	autoheader
+
+configure:	configure.ac
+	autoconf
+
+# Dependencies
+answer.o: answer.c config.h answer.h dns.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h heap.h rbtree.h packet.h query.h nsd.h edns.h
+axfr.o: axfr.c config.h axfr.h nsd.h dns.h edns.h buffer.h \
+  region-allocator.h util.h query.h namedb.h dname.h heap.h rbtree.h \
+  packet.h
+buffer.o: buffer.c config.h buffer.h region-allocator.h util.h
+dbaccess.o: dbaccess.c config.h dns.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h heap.h rbtree.h
+dbcreate.o: dbcreate.c config.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h dns.h heap.h rbtree.h
+dname.o: dname.c config.h dns.h dname.h buffer.h region-allocator.h \
+  util.h query.h namedb.h heap.h rbtree.h nsd.h edns.h packet.h
+dns.o: dns.c config.h dns.h zonec.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h heap.h rbtree.h zparser.h
+edns.o: edns.c config.h dns.h edns.h buffer.h region-allocator.h util.h
+namedb.o: namedb.c config.h namedb.h dname.h buffer.h region-allocator.h \
+  util.h dns.h heap.h rbtree.h
+netio.o: netio.c config.h netio.h region-allocator.h util.h
+nsd-notify.o: nsd-notify.c config.h query.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h dns.h heap.h rbtree.h nsd.h edns.h packet.h
+nsd-xfer.o: nsd-xfer.c config.h dname.h buffer.h region-allocator.h \
+  util.h dns.h packet.h namedb.h heap.h rbtree.h query.h nsd.h edns.h \
+  rdata.h tsig.h tsig-openssl.h zonec.h
+nsd.o: nsd.c config.h nsd.h dns.h edns.h buffer.h region-allocator.h \
+  util.h plugins.h nsd-plugin.h query.h namedb.h dname.h heap.h rbtree.h \
+  packet.h
+packet.o: packet.c config.h packet.h dns.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h heap.h rbtree.h query.h nsd.h edns.h rdata.h
+plugins.o: plugins.c config.h nsd.h dns.h edns.h buffer.h \
+  region-allocator.h util.h plugins.h nsd-plugin.h query.h namedb.h \
+  dname.h heap.h rbtree.h packet.h
+query.o: query.c config.h answer.h dns.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h heap.h rbtree.h packet.h axfr.h nsd.h edns.h \
+  query.h plugins.h nsd-plugin.h
+rbtree.o: rbtree.c config.h rbtree.h region-allocator.h
+rdata.o: rdata.c config.h rdata.h dns.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h heap.h rbtree.h zonec.h
+region-allocator.o: region-allocator.c config.h region-allocator.h
+server.o: server.c config.h axfr.h nsd.h dns.h edns.h buffer.h \
+  region-allocator.h util.h query.h namedb.h dname.h heap.h rbtree.h \
+  packet.h netio.h plugins.h nsd-plugin.h
+tsig-openssl.o: tsig-openssl.c config.h tsig-openssl.h region-allocator.h \
+  tsig.h buffer.h util.h dname.h
+tsig.o: tsig.c config.h tsig.h buffer.h region-allocator.h util.h dname.h \
+  tsig-openssl.h dns.h packet.h namedb.h heap.h rbtree.h query.h nsd.h \
+  edns.h
+util.o: util.c config.h util.h
+zlexer.o: zlexer.c config.h zonec.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h dns.h heap.h rbtree.h zparser.h
+zonec.o: zonec.c config.h zonec.h namedb.h dname.h buffer.h \
+  region-allocator.h util.h dns.h heap.h rbtree.h rdata.h zparser.h
+zparser.o: zparser.c config.h dname.h buffer.h region-allocator.h util.h \
+  namedb.h dns.h heap.h rbtree.h zonec.h
