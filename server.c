@@ -249,7 +249,7 @@ restart_child_servers(struct nsd *nsd)
 static void
 initialize_dname_compression_tables(struct nsd *nsd)
 {
-	compressed_dname_offsets = (uint16_t *) xalloc(
+	compressed_dname_offsets = xalloc(
 		(domain_table_count(nsd->db->domains) + 1) * sizeof(uint16_t));
 	memset(compressed_dname_offsets, 0,
 	       (domain_table_count(nsd->db->domains) + 1) * sizeof(uint16_t));
@@ -266,7 +266,7 @@ int
 server_init(struct nsd *nsd)
 {
 	size_t i;
-#if defined(SO_REUSEADDR) || (defined(INET6) && (defined(IPV6_V6ONLY) || defined(IPV6_USE_MIN_MTU)))
+#if defined(SO_REUSEADDR) || (defined(INET6) && defined(IPV6_V6ONLY))
 	int on = 1;
 #endif
 
@@ -279,36 +279,13 @@ server_init(struct nsd *nsd)
 			return -1;
 		}
 
-#if defined(INET6)
-		if (nsd->udp[i].addr->ai_family == AF_INET6) {
-# if defined(IPV6_V6ONLY)
-			if (setsockopt(nsd->udp[i].s,
-				       IPPROTO_IPV6, IPV6_V6ONLY,
-				       &on, sizeof(on)) < 0)
-			{
-				log_msg(LOG_ERR, "setsockopt(..., IPV6_V6ONLY, ...) failed: %s",
-					strerror(errno));
-				return -1;
-			}
-# endif
-# if defined(IPV6_USE_MIN_MTU)
-			/*
-			 * There is no fragmentation of IPv6 datagrams
-			 * during forwarding in the network. Therefore
-			 * we do not send UDP datagrams larger than
-			 * the minimum IPv6 MTU of 1280 octets. The
-			 * EDNS0 message length can be larger if the
-			 * network stack supports IPV6_USE_MIN_MTU.
-			 */
-			if (setsockopt(nsd->udp[i].s,
-				       IPPROTO_IPV6, IPV6_USE_MIN_MTU,
-				       &on, sizeof(on)) < 0)
-			{
-				log_msg(LOG_ERR, "setsockopt(..., IPV6_USE_MIN_MTU, ...) failed: %s",
-					strerror(errno));
-				return -1;
-			}
-# endif
+#if defined(INET6) && defined(IPV6_V6ONLY)
+		if (nsd->udp[i].addr->ai_family == AF_INET6 &&
+		    setsockopt(nsd->udp[i].s, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on)) < 0)
+		{
+			log_msg(LOG_ERR, "setsockopt(..., IPV6_V6ONLY, ...) failed: %s",
+				strerror(errno));
+			return -1;
 		}
 #endif
 
@@ -655,15 +632,12 @@ server_child(struct nsd *nsd)
 			struct udp_handler_data *data;
 			netio_handler_type *handler;
 
-			data = (struct udp_handler_data *) region_alloc(
-				server_region,
-				sizeof(struct udp_handler_data));
+			data = region_alloc(server_region, sizeof(struct udp_handler_data));
 			data->query_region = query_region;
 			data->nsd = nsd;
 			data->socket = &nsd->udp[i];
 
-			handler = (netio_handler_type *) region_alloc(
-				server_region, sizeof(netio_handler_type));
+			handler = region_alloc(server_region, sizeof(netio_handler_type));
 			handler->fd = nsd->udp[i].s;
 			handler->timeout = NULL;
 			handler->user_data = data;
@@ -678,16 +652,14 @@ server_child(struct nsd *nsd)
 	 * and disable them based on the current number of active TCP
 	 * connections.
 	 */
-	tcp_accept_handlers = (netio_handler_type *) region_alloc(
-		server_region, nsd->ifs * sizeof(netio_handler_type));
+	tcp_accept_handlers = region_alloc(server_region,
+					   nsd->ifs * sizeof(netio_handler_type));
 	if (nsd->server_kind & NSD_SERVER_TCP) {
 		for (i = 0; i < nsd->ifs; ++i) {
 			struct tcp_accept_handler_data *data;
 			netio_handler_type *handler;
 			
-			data = (struct tcp_accept_handler_data *) region_alloc(
-				server_region,
-				sizeof(struct tcp_accept_handler_data));
+			data = region_alloc(server_region, sizeof(struct tcp_accept_handler_data));
 			data->query_region = query_region;
 			data->nsd = nsd;
 			data->socket = &nsd->tcp[i];
@@ -750,8 +722,7 @@ handle_udp(netio_type *netio ATTR_UNUSED,
 	   netio_handler_type *handler,
 	   netio_event_types_type event_types)
 {
-	struct udp_handler_data *data
-		= (struct udp_handler_data *) handler->user_data;
+	struct udp_handler_data *data = handler->user_data;
 	int received, sent;
 	struct query q;
 
@@ -814,8 +785,7 @@ handle_udp(netio_type *netio ATTR_UNUSED,
 static void
 cleanup_tcp_handler(netio_type *netio, netio_handler_type *handler)
 {
-	struct tcp_handler_data *data
-		= (struct tcp_handler_data *) handler->user_data;
+	struct tcp_handler_data *data = handler->user_data;
 	netio_remove_handler(netio, handler);
 	close(handler->fd);
 
@@ -840,8 +810,7 @@ handle_tcp_reading(netio_type *netio,
 		   netio_handler_type *handler,
 		   netio_event_types_type event_types)
 {
-	struct tcp_handler_data *data
-		= (struct tcp_handler_data *) handler->user_data;
+	struct tcp_handler_data *data = handler->user_data;
 	ssize_t received;
 	struct query *q = &data->query;
 
@@ -971,8 +940,7 @@ handle_tcp_writing(netio_type *netio,
 		   netio_handler_type *handler,
 		   netio_event_types_type event_types)
 {
-	struct tcp_handler_data *data
-		= (struct tcp_handler_data *) handler->user_data;
+	struct tcp_handler_data *data = handler->user_data;
 	ssize_t sent;
 	struct query *q = &data->query;
 
@@ -1096,8 +1064,7 @@ handle_tcp_accept(netio_type *netio,
 		  netio_handler_type *handler,
 		  netio_event_types_type event_types)
 {
-	struct tcp_accept_handler_data *data
-		= (struct tcp_accept_handler_data *) handler->user_data;
+	struct tcp_accept_handler_data *data = handler->user_data;
 	int s;
 	struct tcp_handler_data *tcp_data;
 	region_type *tcp_region;
@@ -1143,8 +1110,7 @@ handle_tcp_accept(netio_type *netio,
 	 * closed by the TCP handler.
 	 */
 	tcp_region = region_create(xalloc, free);
-	tcp_data = (struct tcp_handler_data *) region_alloc(
-		tcp_region, sizeof(struct tcp_handler_data));
+	tcp_data = region_alloc(tcp_region, sizeof(struct tcp_handler_data));
 	tcp_data->region = tcp_region;
 	tcp_data->nsd = data->nsd;
 	
@@ -1164,11 +1130,9 @@ handle_tcp_accept(netio_type *netio,
 	memcpy(&tcp_data->query.addr, &addr, addrlen);
 	tcp_data->query.addrlen = addrlen;
 	
-	tcp_handler = (netio_handler_type *) region_alloc(
-		tcp_region, sizeof(netio_handler_type));
+	tcp_handler = region_alloc(tcp_region, sizeof(netio_handler_type));
 	tcp_handler->fd = s;
-	tcp_handler->timeout = (struct timespec *) region_alloc(
-		tcp_region, sizeof(struct timespec));
+	tcp_handler->timeout = region_alloc(tcp_region, sizeof(struct timespec));
 	tcp_handler->timeout->tv_sec = TCP_TIMEOUT;
 	tcp_handler->timeout->tv_nsec = 0L;
 	timespec_add(tcp_handler->timeout, netio_current_time(netio));

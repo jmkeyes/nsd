@@ -126,31 +126,20 @@ encode_rr(struct query *q, domain_type *owner, rrset_type *rrset, uint16_t rr)
 
 	encode_dname(q, owner);
 	query_write_u16(q, rrset->type);
-	query_write_u16(q, rrset->klass);
+	query_write_u16(q, rrset->class);
 	query_write_u32(q, rrset->rrs[rr]->ttl);
 
 	/* Reserve space for rdlength. */
 	rdlength_pos = q->iobufptr;
 	q->iobufptr += sizeof(rdlength);
 
-	for (j = 0; j < rrset->rrs[rr]->rdata_count; ++j) {
-		switch (rdata_atom_wireformat_type(rrset->type, j)) {
-		case RDATA_WF_COMPRESSED_DNAME:
-			encode_dname(q, rdata_atom_domain(
-					     rrset->rrs[rr]->rdata[j]));
-			break;
-		case RDATA_WF_UNCOMPRESSED_DNAME:
-		{
-			const dname_type *dname = domain_dname(
-				rdata_atom_domain(rrset->rrs[rr]->rdata[j]));
-			query_write(q, dname_name(dname), dname->name_size);
-			break;
-		}
-		default:
+	for (j = 0; !rdata_atom_is_terminator(rrset->rrs[rr]->rdata[j]); ++j) {
+		if (rdata_atom_is_domain(rrset->type, j)) {
+			encode_dname(q, rdata_atom_domain(rrset->rrs[rr]->rdata[j]));
+		} else {
 			query_write(q,
 				    rdata_atom_data(rrset->rrs[rr]->rdata[j]),
 				    rdata_atom_size(rrset->rrs[rr]->rdata[j]));
-			break;
 		}
 	}
 

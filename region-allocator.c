@@ -83,7 +83,7 @@ region_type *
 region_create(void *(*allocator)(size_t size),
 	      void (*deallocator)(void *))
 {
-	region_type *result = (region_type *) allocator(sizeof(region_type));
+	region_type *result = allocator(sizeof(region_type));
 	if (!result) return NULL;
 
 	result->total_allocated = 0;
@@ -93,7 +93,7 @@ region_create(void *(*allocator)(size_t size),
 	result->unused_space = 0;
 	
 	result->allocated = 0;
-	result->data = (char *) allocator(CHUNK_SIZE);
+	result->data = allocator(CHUNK_SIZE);
 	if (!result->data) {
 		deallocator(result);
 		return NULL;
@@ -105,8 +105,7 @@ region_create(void *(*allocator)(size_t size),
 
 	result->maximum_cleanup_count = 16;
 	result->cleanup_count = 0;
-	result->cleanups = (cleanup_type *) allocator(
-		result->maximum_cleanup_count * sizeof(cleanup_type));
+	result->cleanups = allocator(result->maximum_cleanup_count * sizeof(cleanup_type));
 	if (!result->cleanups) {
 		deallocator(result->data);
 		deallocator(result);
@@ -149,7 +148,7 @@ region_add_cleanup(region_type *region, void (*action)(void *), void *data)
 	assert(action);
     
 	if (region->cleanup_count >= region->maximum_cleanup_count) {
-		cleanup_type *cleanups = (cleanup_type *) region->allocator(
+		cleanup_type *cleanups = region->allocator(
 			2 * region->maximum_cleanup_count * sizeof(cleanup_type));
 		if (!cleanups) return 0;
 
@@ -203,7 +202,7 @@ region_alloc(region_type *region, size_t size)
 		
 		region_add_cleanup(region, region->deallocator, chunk);
 		region->allocated = 0;
-		region->data = (char *) chunk;
+		region->data = chunk;
 	}
 
 	result = region->data + region->allocated;
@@ -270,7 +269,7 @@ char *
 region_strdup(region_type *region, const char *string)
 {
 	size_t len = strlen(string);
-	char *result = (char *) region_alloc(region, len + 1);
+	char *result = region_alloc(region, len + 1);
 	if (!result) return NULL;
 	memcpy(result, string, len + 1);
 	return result;
