@@ -1,5 +1,5 @@
 /*
- * $Id: query.c,v 1.96 2003/04/22 11:08:59 alexis Exp $
+ * $Id: query.c,v 1.95.2.3 2003/06/11 10:07:44 erik Exp $
  *
  * query.c -- nsd(8) the resolver.
  *
@@ -61,19 +61,12 @@
 #include <query.h>
 
 
-#ifdef HAVE_LIBWRAP
+#ifdef LIBWRAP
 #include <tcpd.h>
 
 int allow_severity = LOG_INFO;
 int deny_severity = LOG_NOTICE;
-#endif /* HAVE_LIBWRAP */
-
-int
-query_filter (struct query *q) {
-	/* XXX Some matching/policy code is to be inserted here */
-
-	return 0;
-}
+#endif /* LIBWRAP */
 
 int 
 query_axfr (struct query *q, struct nsd *nsd, u_char *qname, u_char *zname, int depth)
@@ -349,6 +342,7 @@ query_process (struct query *q, struct nsd *nsd)
 	u_int16_t qclass;
 	u_char *qptr;
 	int qdepth, i;
+	int recursion_desired;
 
 	/* OPT record type... */
 	u_int16_t opt_type, opt_class, opt_rdlen;
@@ -356,11 +350,6 @@ query_process (struct query *q, struct nsd *nsd)
 	struct domain *d;
 	struct answer *a;
 	int match;
-
-	/* Drop the query on the floor if bogus... */
-	if(query_filter(q) != 0) {
-		return -1;
-	}
 
 	/* Sanity checks */
 	if(QR(q))
@@ -401,12 +390,16 @@ query_process (struct query *q, struct nsd *nsd)
 		return 0;
 	}
 
+	/* Save the RD flag (RFC1034 4.1.1).  */
+	recursion_desired = RD(q);
+
 	/* Zero the flags... */
 	*(u_int16_t *)(q->iobuf + 2) = 0;
-
-	/* Setup the header... */
+	
 	QR_SET(q);		/* This is an answer */
-
+	if (recursion_desired)
+		RD_SET(q);   /* Restore the RD flag (RFC1034 4.1.1) */
+	
 	/* Lets parse the qname and convert it to lower case */
 	qdepth = 0;
 	qnamelow = qnamebuf + 3;
@@ -560,7 +553,7 @@ query_process (struct query *q, struct nsd *nsd)
 	case TYPE_AXFR:
 #ifndef DISABLE_AXFR		/* XXX Should be a run-time flag */
 		if(q->tcp) {
-#ifdef HAVE_LIBWRAP
+#ifdef LIBWRAP
 			struct request_info request;
 #ifdef AXFR_DAEMON_PREFIX
 			char *t;
@@ -592,7 +585,7 @@ query_process (struct query *q, struct nsd *nsd)
 				}
 #endif /* AXFR_DAEMON_PREFIX */
 			}
-#endif /* HAVE_LIBWRAP */
+#endif /* LIBWRAP */
 			return query_axfr(q, nsd, qname, qnamelow - 1, qdepth);
 		}
 #endif	/* DISABLE_AXFR */

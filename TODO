@@ -1,4 +1,4 @@
-$Id: TODO,v 1.42 2003/04/29 13:40:52 alexis Exp $
+$Id: TODO,v 1.40.2.1 2003/04/15 09:14:28 alexis Exp $
 
 AUTOCONF
 
@@ -31,10 +31,6 @@ PURITY
 TESTS
 
 MISC
-
-CLEANUP
-- proper error/fatal/warning interfaces
-- separate parse for nsd.zones
 
 DOCUMENTATION
 
