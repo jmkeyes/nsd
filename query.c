@@ -1,9 +1,38 @@
 /*
  * query.c -- nsd(8) the resolver.
  *
+ * Alexis Yushin, <alexis@nlnetlabs.nl>
+ *
  * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
- * See LICENSE for the license.
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -65,8 +94,10 @@ query_put_dname_offset(struct query *q, domain_type *domain, uint16_t offset)
 }
 
 void
-query_clear_dname_offsets(struct query *q, size_t max_offset)
+query_clear_dname_offsets(struct query *q)
 {
+	uint16_t max_offset = q->iobufptr - q->iobuf;
+	
 	while (q->compressed_dname_count > 0
 	       && (q->compressed_dname_offsets[q->compressed_dnames[q->compressed_dname_count - 1]->number]
 		   >= max_offset))
@@ -106,61 +137,34 @@ query_add_compression_domain(struct query *q, domain_type *domain, uint16_t offs
 /*
  * Generate an error response with the specified RCODE.
  */
-query_state_type
-query_error (struct query *q, nsd_rc_type rcode)
+void
+query_error (struct query *q, int rcode)
 {
-	if (rcode == NSD_RC_DISCARD) {
-		return QUERY_DISCARDED;
-	}
-	
-	buffer_clear(q->packet);
-	
-	QR_SET(q);		   /* This is an answer.  */
-	RCODE_SET(q, (int) rcode); /* Error code.  */
+	QR_SET(q);		/* This is an answer.  */
+	RCODE_SET(q, rcode);	/* Error code.  */
 	
 	/* Truncate the question as well... */
-	QDCOUNT_SET(q, 0);
-	ANCOUNT_SET(q, 0);
-	NSCOUNT_SET(q, 0);
-	ARCOUNT_SET(q, 0);
-	buffer_set_position(q->packet, QHEADERSZ);
-	return QUERY_PROCESSED;
+	QDCOUNT(q) = ANCOUNT(q) = NSCOUNT(q) = ARCOUNT(q) = 0;
+	q->iobufptr = q->iobuf + QHEADERSZ;
 }
 
-static query_state_type
+static void 
 query_formerr (struct query *query)
 {
-	return query_error(query, NSD_RC_FORMAT);
-}
-
-static void
-query_cleanup(void *data)
-{
-	query_type *query = (query_type *) data;
-	region_destroy(query->region);
-}
-
-query_type *
-query_create(region_type *region, uint16_t *compressed_dname_offsets)
-{
-	query_type *query = region_alloc_zero(region, sizeof(query_type));
-	query->region = region_create(xalloc, free);
-	query->compressed_dname_offsets = compressed_dname_offsets;
-	query->packet = buffer_create(region, QIOBUFSZ);
-	region_add_cleanup(region, query_cleanup, query);
-	return query;
+	query_error(query, RCODE_FORMAT);
 }
 
 void 
-query_reset(query_type *q, size_t maxlen, int is_tcp)
+query_init(struct query *q, region_type *region, uint16_t *compressed_dname_offsets,
+	   size_t maxlen, int is_tcp)
 {
-	region_free_all(q->region);
+	q->region = region;
+	q->compressed_dname_offsets = compressed_dname_offsets;
 	q->addrlen = sizeof(q->addr);
+	q->iobufptr = q->iobuf;
 	q->maxlen = maxlen;
-	q->reserved_space = 0;
-	buffer_clear(q->packet);
-	edns_init_record(&q->edns);
-	tsig_init_record(&q->tsig, q->region);
+	q->edns = 0;
+	q->dnssec_ok = 0;
 	q->tcp = is_tcp;
 	q->name = NULL;
 	q->zone = NULL;
@@ -193,21 +197,18 @@ query_addtxt(struct query  *q,
 	assert(txt_length <= UCHAR_MAX);
 	
 	/* Add the dname */
-	if (dname >= buffer_begin(q->packet)
-	    && dname <= buffer_current(q->packet))
-	{
-		buffer_write_u16(q->packet,
-				 0xc000 | (dname - buffer_begin(q->packet)));
+	if (dname >= q->iobuf && dname <= q->iobufptr) {
+		query_write_u16(q, 0xc000 | (dname - q->iobuf));
 	} else {
-		buffer_write(q->packet, dname + 1, *dname);
+		query_write(q, dname + 1, *dname);
 	}
 
-	buffer_write_u16(q->packet, TYPE_TXT);
-	buffer_write_u16(q->packet, klass);
-	buffer_write_u32(q->packet, ttl);
-	buffer_write_u16(q->packet, len + 1);
-	buffer_write_u8(q->packet, len);
-	buffer_write(q->packet, txt, len);
+	query_write_u16(q, TYPE_TXT);
+	query_write_u16(q, klass);
+	query_write_u32(q, ttl);
+	query_write_u16(q, len + 1);
+	query_write_u8(q, len);
+	query_write(q, txt, len);
 }
 
 /*
@@ -222,13 +223,13 @@ query_addtxt(struct query  *q,
  * Result code: NULL on failure, a pointer to the byte after the query
  * section otherwise.
  */
-nsd_rc_type
+static uint8_t *
 process_query_section(struct query *query)
 {
 	uint8_t qnamebuf[MAXDOMAINLEN];
 
 	uint8_t *dst = qnamebuf;
-	uint8_t *query_name = buffer_at(query->packet, QHEADERSZ);
+	uint8_t *query_name = query->iobuf + QHEADERSZ;
 	uint8_t *src = query_name;
 	size_t i;
 	size_t len;
@@ -241,10 +242,11 @@ process_query_section(struct query *query)
 		 * MAXDOMAINLEN ...
 		 */
 		if ((*src & 0xc0) ||
-		    (src + *src + 1 > buffer_end(query->packet)) || 
+		    (src + *src + 1 > query->iobufptr) || 
 		    (src + *src + 1 > query_name + MAXDOMAINLEN))
 		{
-			return NSD_RC_FORMAT;
+			query_formerr(query);
+			return NULL;
 		}
 		*dst++ = *src;
 		for (i = *src++; i; i--) {
@@ -255,19 +257,20 @@ process_query_section(struct query *query)
 
 	/* Make sure name is not too long or we have stripped packet... */
 	len = src - query_name;
-	if (len > MAXDOMAINLEN ||
-	    (src + 2*sizeof(uint16_t) > buffer_end(query->packet)))
-	{
-		return NSD_RC_FORMAT;
+	if (len > MAXDOMAINLEN || (src + 2*sizeof(uint16_t) > query->iobufptr)) {
+		query_formerr(query);
+		return NULL;
 	}
-	buffer_set_position(query->packet, src - buffer_begin(query->packet));
 
 	query->name = dname_make(query->region, qnamebuf);
-	query->opcode = OPCODE(query);
-	query->type = buffer_read_u16(query->packet);
-	query->klass = buffer_read_u16(query->packet);
 
-	return NSD_RC_OK;
+	query->opcode = OPCODE(query);
+	memcpy(&query->type, src, sizeof(uint16_t));
+	memcpy(&query->klass, src + sizeof(uint16_t), sizeof(uint16_t));
+	query->type = ntohs(query->type);
+	query->klass = ntohs(query->klass);
+	
+	return src + 2*sizeof(uint16_t);
 }
 
 
@@ -279,68 +282,107 @@ process_query_section(struct query *query)
  *
  * Return 0 on failure, 1 on success.
  */
-static nsd_rc_type
-process_edns(struct query *q)
+static int
+process_edns (struct query *q, uint8_t *qptr)
 {
-	if (q->edns.status == EDNS_ERROR) {
-		return NSD_RC_FORMAT;
-	}
-	if (q->edns.status == EDNS_OK) {
-		/* Only care about UDP size larger than normal... */
-		if (!q->tcp && q->edns.maxlen > UDP_MAX_MESSAGE_LEN) {
-			if (q->edns.maxlen < EDNS_MAX_MESSAGE_LEN) {
-				q->maxlen = q->edns.maxlen;
-			} else {
-				q->maxlen = EDNS_MAX_MESSAGE_LEN;
+	/* OPT record type... */
+	uint16_t opt_type, opt_class, opt_rdlen;
+
+	/* Do we have an OPT record? */
+	if (ARCOUNT(q) > 0) {
+		/* Only one opt is allowed... */
+		if (ntohs(ARCOUNT(q)) != 1) {
+			query_formerr(q);
+			return 0;
+		}
+
+		/* Must have root owner name... */
+		if (*qptr != 0) {
+			query_formerr(q);
+			return 0;
+		}
+
+		/* Must be of the type OPT... */
+		memcpy(&opt_type, qptr + 1, 2);
+		if (ntohs(opt_type) != TYPE_OPT) {
+			query_formerr(q);
+			return 0;
+		}
+
+		/* Ok, this is EDNS(0) packet... */
+		q->edns = 1;
+
+		/* Get the UDP size... */
+		memcpy(&opt_class, qptr + 3, 2);
+		opt_class = ntohs(opt_class);
+
+		/* Check the version... */
+		if (qptr[6] != 0) {
+			q->edns = -1;
+		} else {
+			if (qptr[7] & 0xa0) {
+				q->dnssec_ok = 1;
 			}
 			
+			/* Make sure there are no other options... */
+			memcpy(&opt_rdlen, qptr + 9, 2);
+			if (opt_rdlen != 0) {
+				q->edns = -1;
+			} else {
+				/* Only care about UDP size larger than normal... */
+				if (!q->tcp
+				    && opt_class > UDP_MAX_MESSAGE_LEN)
+				{
+					if (opt_class < EDNS_MAX_MESSAGE_LEN) {
+						q->maxlen = opt_class;
+					} else {
+						q->maxlen = EDNS_MAX_MESSAGE_LEN;
+					}
+
 #if defined(INET6) && !defined(IPV6_USE_MIN_MTU)
-			/*
-			 * Use IPv6 minimum MTU to avoid sending
-			 * packets that are too large for some links.
-			 * IPv6 will not automatically fragment in
-			 * this case (unlike IPv4).
-			 */
-			if (q->addr.ss_family == AF_INET6
-			    && q->maxlen > IPV6_MIN_MTU)
-			{
-				q->maxlen = IPV6_MIN_MTU;
-			}
+					/*
+					 * Use IPv6 minimum MTU to
+					 * avoid sending packets that
+					 * are too large for some
+					 * links.  IPv6 will not
+					 * automatically fragment in
+					 * this case (unlike IPv4).
+					 */
+					if (q->addr.ss_family == AF_INET6
+					    && q->maxlen > IPV6_MIN_MTU)
+					{
+						q->maxlen = IPV6_MIN_MTU;
+					}
 #endif
+				}
+
+#ifdef STRICT_MESSAGE_PARSE
+				/* Trailing garbage? */
+				if ((qptr + OPT_LEN) != q->iobufptr) {
+					q->edns = 0;
+					query_formerr(q);
+					return 0;
+				}
+#endif
+
+				/* Strip the OPT resource record off... */
+				q->iobufptr = qptr;
+				ARCOUNT(q) = 0;
+
+				DEBUG(DEBUG_QUERY, 2,
+				      (stderr, "EDNS0 maxlen = %lu\n", (unsigned long) q->maxlen));
+			}
 		}
-		
-		/* Strip the OPT resource record off... */
-		buffer_set_position(q->packet, q->edns.position);
-		buffer_set_limit(q->packet, q->edns.position);
-		ARCOUNT_SET(q, ARCOUNT(q) - 1);
-	}
-	return NSD_RC_OK;
-}
-
-static nsd_rc_type
-process_tsig(query_type *q ATTR_UNUSED)
-{
-	nsd_rc_type result;
-	
-	if (q->tsig.status != TSIG_NOT_PRESENT) {
-		/* Strip TSIG record.  */
-		buffer_set_position(q->packet, q->tsig.position);
-		buffer_set_limit(q->packet, q->tsig.position);
-		ARCOUNT_SET(q, ARCOUNT(q) - 1);
 	}
 
-	if (q->tsig.status == TSIG_ERROR) {
-		/* TSIG error? */
-		result = NSD_RC_FORMAT;
-	} else if (q->tsig.status == TSIG_OK) {
-		/* Verify TSIG.  */
-		result = tsig_validate_record(&q->tsig, q->packet);
-	} else {
-		result = NSD_RC_OK;
+	/* Leave enough room for the EDNS field.  */
+	if (q->edns != 0) {
+		q->maxlen -= OPT_LEN;
 	}
 	
-	return result;
+	return 1;
 }
+
 
 /*
  * Log notifies and return an RCODE_IMPL error to the client.
@@ -364,7 +406,8 @@ answer_notify (struct query *query)
 			dname_to_string(query->name), namebuf);
 	}
 
-	return query_error(query, NSD_RC_IMPL);
+	query_error(query, RCODE_IMPL);
+	return QUERY_PROCESSED;
 }
 
 
@@ -385,11 +428,11 @@ answer_chaos(struct nsd *nsd, struct query *q)
 		{
 			/* Add ID */
 			query_addtxt(q,
-				     buffer_begin(q->packet) + QHEADERSZ,
+				     q->iobuf + QHEADERSZ,
 				     CLASS_CHAOS,
 				     0,
 				     nsd->identity);
-			ANCOUNT_SET(q, ANCOUNT(q) + 1);
+			ANCOUNT(q) = htons(ntohs(ANCOUNT(q)) + 1);
 		} else if ((q->name->name_size == 16
 			    && memcmp(dname_name(q->name), "\007version\006server", 16) == 0) ||
 			   (q->name->name_size == 14
@@ -397,11 +440,11 @@ answer_chaos(struct nsd *nsd, struct query *q)
 		{
 			/* Add version */
 			query_addtxt(q,
-				     buffer_begin(q->packet) + QHEADERSZ,
+				     q->iobuf + QHEADERSZ,
 				     CLASS_CHAOS,
 				     0,
 				     nsd->version);
-			ANCOUNT_SET(q, ANCOUNT(q) + 1);
+			ANCOUNT(q) = htons(ntohs(ANCOUNT(q)) + 1);
 		}
 		break;
 	default:
@@ -566,7 +609,7 @@ answer_delegation(struct query *query, answer_type *answer)
 		  AUTHORITY_SECTION,
 		  query->delegation_domain,
 		  query->delegation_rrset);
-	if (query->edns.dnssec_ok && zone_is_secure(query->zone)) {
+	if (query->dnssec_ok && zone_is_secure(query->zone)) {
 		rrset_type *rrset;
 		if ((rrset = domain_find_rrset(query->delegation_domain, query->zone, TYPE_DS))) {
 			add_rrset(query, answer, AUTHORITY_SECTION,
@@ -613,7 +656,7 @@ answer_nodata(struct query *query, answer_type *answer, domain_type *original)
 		answer_soa(query, answer);
 	}
 	
-	if (query->edns.dnssec_ok && zone_is_secure(query->zone)) {
+	if (query->dnssec_ok && zone_is_secure(query->zone)) {
 		domain_type *nsec_domain;
 		rrset_type *nsec_rrset;
 
@@ -648,7 +691,7 @@ answer_domain(struct query *q, answer_type *answer,
 		int added = 0;
 		for (rrset = domain_find_any_rrset(domain, q->zone); rrset; rrset = rrset->next) {
 			if (rrset->zone == q->zone
-			    && (!q->edns.dnssec_ok
+			    && (!q->dnssec_ok
 				|| rrset->type != TYPE_RRSIG
 				|| !zone_is_secure(q->zone)))
 			{
@@ -750,7 +793,7 @@ answer_authoritative(struct query *q,
 	}
 
 	/* Authorative zone.  */
-	if (q->edns.dnssec_ok && zone_is_secure(q->zone)) {
+	if (q->dnssec_ok && zone_is_secure(q->zone)) {
 		if (match != closest_encloser) {
 			domain_type *nsec_domain;
 			rrset_type *nsec_rrset;
@@ -866,34 +909,6 @@ answer_query(struct nsd *nsd, struct query *q)
 	query_clear_compression_tables(q);
 }
 
-void
-query_prepare_response(query_type *q)
-{
-	uint16_t flags;
-	
-	/*
-	 * Preserve the data up-to the current packet's limit.
-	 */
-	buffer_set_position(q->packet, buffer_limit(q->packet));
-	buffer_set_limit(q->packet, buffer_capacity(q->packet));
-	
-	/*
-	 * Reserve space for the EDNS and TSIG records if
-	 * required.
-	 */
-	q->reserved_space = (edns_reserved_space(&q->edns) +
-			     tsig_reserved_space(&q->tsig));
-	
-	/* Update the flags.  */
-	flags = FLAGS(q);
-#ifdef DNSSEC
-	flags &= 0x0110U;	/* Preserve the RD and CD flags.  */
-#else
-	flags &= 0x0100U;	/* Preserve the RD flag.  */
-#endif
-	flags |= 0x8000U;	/* Set the QR flag.  */
-	FLAGS_SET(q, flags);
-}
 
 /*
  * Processes the query.
@@ -903,9 +918,12 @@ query_state_type
 query_process(struct query *q, struct nsd *nsd)
 {
 	/* The query... */
-	nsd_rc_type rc;
+	uint8_t *qptr;
+	int recursion_desired;
+#ifdef DNSSEC
+	int checking_disabled;
+#endif
 	query_state_type query_state;
-	uint16_t arcount;
 	
 	/* Sanity checks */
 	if (QR(q)) {
@@ -913,9 +931,9 @@ query_process(struct query *q, struct nsd *nsd)
 		return QUERY_DISCARDED;
 	}
 
-	rc = process_query_section(q);
-	if (rc != NSD_RC_OK) {
-		return query_error(q, rc);
+	qptr = process_query_section(q);
+	if (!qptr) {
+		return QUERY_PROCESSED;
 	}
 
 	/* Update statistics.  */
@@ -927,61 +945,64 @@ query_process(struct query *q, struct nsd *nsd)
 		if (q->opcode == OPCODE_NOTIFY) {
 			return answer_notify(q);
 		} else {
-			return query_error(q, NSD_RC_IMPL);
+			query_error(q, RCODE_IMPL);
+			return QUERY_PROCESSED;
 		}
 	}
 
 	/* Dont bother to answer more than one question at once... */
-	if (QDCOUNT(q) != 1 || TC(q)) {
-		buffer_write_u16_at(q->packet, 2, 0);
-		return query_formerr(q);
+	if (ntohs(QDCOUNT(q)) != 1 || TC(q)) {
+		*(uint16_t *)(q->iobuf + 2) = 0;
+
+		query_formerr(q);
+		return QUERY_PROCESSED;
 	}
 
 	/* Dont allow any records in the answer or authority section... */
 	if (ANCOUNT(q) != 0 || NSCOUNT(q) != 0) {
-		return query_formerr(q);
+		query_formerr(q);
+		return QUERY_PROCESSED;
 	}
 
-	arcount = ARCOUNT(q);
-	if (arcount > 0) {
-		if (edns_parse_record(&q->edns, q->packet))
-			--arcount;
-	}
-	if (arcount > 0) {
-		if (tsig_parse_record(&q->tsig, q->packet))
-			--arcount;
-	}
-	if (arcount > 0) {
-		return query_formerr(q);
+	if (!process_edns(q, qptr)) {
+		return QUERY_PROCESSED;
 	}
 
 	/* Do we have any trailing garbage? */
+	if (qptr != q->iobufptr) {
 #ifdef	STRICT_MESSAGE_PARSE
-	if (buffer_remaining(q->packet) > 0) {
 		/* If we're strict.... */
-		return query_formerr(q);
-	}
+		query_formerr(q);
+		return QUERY_PROCESSED;
+#else
+		/* Otherwise, strip it... */
+		q->iobufptr = qptr;
 #endif
-	/* Remove trailing garbage.  */
-	buffer_set_limit(q->packet, buffer_position(q->packet));
+	}
+
+	/* Save the RD and CD flags.  */
+	recursion_desired = RD(q);
+#ifdef DNSSEC
+	checking_disabled = CD(q);
+#endif
+
+	/* Zero the flags... */
+	*(uint16_t *)(q->iobuf + 2) = 0;
 	
-	rc = process_tsig(q);
-	if (rc != NSD_RC_OK) {
-		return query_error(q, rc);
-	}
-
-	rc = process_edns(q);
-	if (rc != NSD_RC_OK) {
-		return query_error(q, rc);
-	}
-
-	query_prepare_response(q);
+	QR_SET(q);		/* This is an answer */
+	if (recursion_desired)
+		RD_SET(q);	/* Restore the RD flag.  */
+#ifdef DNSSEC
+	if (checking_disabled)
+		CD_SET(q);	/* Restore the CD flag.  */
+#endif
 	
 	if (q->klass != CLASS_IN && q->klass != CLASS_ANY) {
 		if (q->klass == CLASS_CHAOS) {
 			return answer_chaos(nsd, q);
 		} else {
-			return query_error(q, NSD_RC_REFUSE);
+			query_error(q, RCODE_REFUSE);
+			return QUERY_PROCESSED;
 		}
 	}
 
@@ -996,40 +1017,27 @@ query_process(struct query *q, struct nsd *nsd)
 }
 
 void
-query_add_optional(struct query *q, struct nsd *nsd)
-{
+query_addedns(struct query *q, struct nsd *nsd) {
 	struct edns_data *edns = &nsd->edns_ipv4;
 #if defined(INET6)
 	if (q->addr.ss_family == AF_INET6) {
 		edns = &nsd->edns_ipv6;
 	}
 #endif
-	switch (q->edns.status) {
-	case EDNS_NOT_PRESENT:
-		break;
-	case EDNS_OK:
-		buffer_write(q->packet, edns->ok, OPT_LEN);
-		ARCOUNT_SET(q, ARCOUNT(q) + 1);
+	switch (q->edns) {
+	case 1:	/* EDNS(0) packet... */
+		q->maxlen += OPT_LEN;
+		query_write(q, edns->ok, OPT_LEN);
+		ARCOUNT((q)) = htons(ntohs(ARCOUNT((q))) + 1);
 
 		STATUP(nsd, edns);
 		break;
-	case EDNS_ERROR:
-		buffer_write(q->packet, edns->error, OPT_LEN);
-		ARCOUNT_SET(q, ARCOUNT(q) + 1);
+	case -1: /* EDNS(0) error... */
+		q->maxlen += OPT_LEN;
+		query_write(q, edns->error, OPT_LEN);
+		ARCOUNT((q)) = htons(ntohs(ARCOUNT((q))) + 1);
 
 		STATUP(nsd, ednserr);
-		break;
-	}
-
-	switch (q->tsig.status) {
-	case TSIG_NOT_PRESENT:
-		break;
-	case TSIG_OK:
-	case TSIG_ERROR:
-		tsig_update_record(&q->tsig, q->packet);
-		tsig_append_record(&q->tsig, q->packet);
-		ARCOUNT_SET(q, ARCOUNT(q) + 1);
-
 		break;
 	}
 }

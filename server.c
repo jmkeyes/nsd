@@ -1,9 +1,38 @@
 /*
  * server.c -- nsd(8) network input/output
  *
+ * Alexis Yushin, <alexis@nlnetlabs.nl>
+ *
  * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
- * See LICENSE for the license.
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -22,6 +51,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,7 +79,7 @@ struct udp_handler_data
 {
 	struct nsd        *nsd;
 	struct nsd_socket *socket;
-	query_type        *query;
+	region_type       *query_region;
 };
 
 /*
@@ -59,6 +89,7 @@ struct udp_handler_data
 struct tcp_accept_handler_data {
 	struct nsd         *nsd;
 	struct nsd_socket  *socket;
+	region_type        *query_region;
 	size_t              tcp_accept_handler_count;
 	netio_handler_type *tcp_accept_handlers;
 };
@@ -93,7 +124,7 @@ struct tcp_handler_data
 	/*
 	 * The current query data for this TCP connection.
 	 */
-	query_type      *query;
+	struct query     query;
 
 	/*
 	 * These fields are used to enable the TCP accept handlers
@@ -419,7 +450,6 @@ server_main(struct nsd *nsd)
 	int status;
 	pid_t child_pid;
 	pid_t reload_pid = -1;
-	sig_atomic_t mode;
 	
 	assert(nsd->server_kind == NSD_SERVER_MAIN);
 
@@ -428,8 +458,8 @@ server_main(struct nsd *nsd)
 		exit(1);
 	}
 
-	while ((mode = nsd->mode) != NSD_SHUTDOWN) {
-		switch (mode) {
+	while (nsd->mode != NSD_SHUTDOWN) {
+		switch (nsd->mode) {
 		case NSD_RUN:
 			child_pid = waitpid(0, &status, 0);
 		
@@ -589,10 +619,12 @@ void
 server_child(struct nsd *nsd)
 {
 	size_t i;
+	sigset_t block_sigmask;
+	sigset_t default_sigmask;
 	region_type *server_region = region_create(xalloc, free);
+	region_type *query_region = region_create(xalloc, free);
 	netio_type *netio = netio_create(server_region);
 	netio_handler_type *tcp_accept_handlers;
-	sig_atomic_t mode;
 	
 	assert(nsd->server_kind != NSD_SERVER_MAIN);
 	
@@ -603,6 +635,22 @@ server_child(struct nsd *nsd)
 		close_all_sockets(nsd->udp, nsd->ifs);
 	}
 	
+	/* Allow sigalarm to get us out of the loop */
+	siginterrupt(SIGALRM, 1);
+
+	/*
+	 * Block signals that modify nsd->mode, which must be tested
+	 * for atomically.  These signals are only unblocked while
+	 * waiting in netio_dispatch below.
+	 */
+	sigemptyset(&block_sigmask);
+	sigaddset(&block_sigmask, SIGHUP);
+	sigaddset(&block_sigmask, SIGILL);
+	sigaddset(&block_sigmask, SIGUSR1);
+	sigaddset(&block_sigmask, SIGINT);
+	sigaddset(&block_sigmask, SIGTERM);
+	sigprocmask(SIG_BLOCK, &block_sigmask, &default_sigmask);
+
 	if (nsd->server_kind & NSD_SERVER_UDP) {
 		for (i = 0; i < nsd->ifs; ++i) {
 			struct udp_handler_data *data;
@@ -611,8 +659,7 @@ server_child(struct nsd *nsd)
 			data = (struct udp_handler_data *) region_alloc(
 				server_region,
 				sizeof(struct udp_handler_data));
-			data->query = query_create(
-				server_region, compressed_dname_offsets);
+			data->query_region = query_region;
 			data->nsd = nsd;
 			data->socket = &nsd->udp[i];
 
@@ -642,6 +689,7 @@ server_child(struct nsd *nsd)
 			data = (struct tcp_accept_handler_data *) region_alloc(
 				server_region,
 				sizeof(struct tcp_accept_handler_data));
+			data->query_region = query_region;
 			data->nsd = nsd;
 			data->socket = &nsd->tcp[i];
 			data->tcp_accept_handler_count = nsd->ifs;
@@ -658,22 +706,28 @@ server_child(struct nsd *nsd)
 	}
 	
 	/* The main loop... */	
-	while ((mode = nsd->mode) != NSD_QUIT) {
+	while (nsd->mode != NSD_QUIT) {
 
 		/* Do we need to do the statistics... */
-		if (mode == NSD_STATS) {
+		if (nsd->mode == NSD_STATS) {
+			nsd->mode = NSD_RUN;
+
 #ifdef BIND8_STATS
 			/* Dump the statistics */
 			bind8_stats(nsd);
 #else /* BIND8_STATS */
 			log_msg(LOG_NOTICE, "Statistics support not enabled at compile time.");
 #endif /* BIND8_STATS */
-
-			nsd->mode = NSD_RUN;
 		}
 
+		/*
+		 * Release all memory allocated while processing the
+		 * previous request.
+		 */
+		region_free_all(query_region);
+
 		/* Wait for a query... */
-		if (netio_dispatch(netio, NULL, NULL) == -1) {
+		if (netio_dispatch(netio, NULL, &default_sigmask) == -1) {
 			if (errno != EINTR) {
 				log_msg(LOG_ERR, "netio_dispatch failed: %s", strerror(errno));
 				break;
@@ -685,6 +739,7 @@ server_child(struct nsd *nsd)
 	bind8_stats(nsd);
 #endif /* BIND8_STATS */
 
+	region_destroy(query_region);
 	region_destroy(server_region);
 	
 	server_shutdown(nsd);
@@ -699,8 +754,8 @@ handle_udp(netio_type *netio ATTR_UNUSED,
 	struct udp_handler_data *data
 		= (struct udp_handler_data *) handler->user_data;
 	int received, sent;
-	struct query *q = data->query;
-	
+	struct query q;
+
 	if (!(event_types & NETIO_EVENT_READ)) {
 		return;
 	}
@@ -713,55 +768,46 @@ handle_udp(netio_type *netio ATTR_UNUSED,
 	}
 
 	/* Initialize the query... */
-	query_reset(q, UDP_MAX_MESSAGE_LEN, 0);
-
-	received = recvfrom(handler->fd,
-			    buffer_begin(q->packet),
-			    buffer_remaining(q->packet),
-			    0,
-			    (struct sockaddr *)&q->addr,
-			    &q->addrlen);
-	if (received == -1) {
+	query_init(&q,
+		   data->query_region,
+		   compressed_dname_offsets,
+		   UDP_MAX_MESSAGE_LEN,
+		   0);
+	
+	if ((received = recvfrom(handler->fd, q.iobuf, QIOBUFSZ, 0, (struct sockaddr *)&q.addr, &q.addrlen)) == -1) {
 		if (errno != EAGAIN && errno != EINTR) {
 			log_msg(LOG_ERR, "recvfrom failed: %s", strerror(errno));
 			STATUP(data->nsd, rxerr);
 		}
-	} else {
-		buffer_skip(q->packet, received);
-		buffer_flip(q->packet);
+		return;
+	}
+	q.iobufptr = q.iobuf + received;
+	q.tcp = 0;
 
-		/* Process and answer the query... */
-		if (process_query(data->nsd, q) != QUERY_DISCARDED) {
-			if (RCODE(q) == RCODE_OK && !AA(q))
-				STATUP(data->nsd, nona);
+	/* Process and answer the query... */
+	if (process_query(data->nsd, &q) != QUERY_DISCARDED) {
+		if (RCODE((&q)) == RCODE_OK && !AA((&q)))
+			STATUP(data->nsd, nona);
+		/* Add edns(0) info if necessary.. */
+		query_addedns(&q, data->nsd);
 
-			/* Add EDNS0 and TSIG info if necessary.  */
-			query_add_optional(q, data->nsd);
-
-			buffer_flip(q->packet);
-
-			sent = sendto(handler->fd,
-				      buffer_begin(q->packet),
-				      buffer_remaining(q->packet),
-				      0,
-				      (struct sockaddr *) &q->addr,
-				      q->addrlen);
-			if (sent == -1) {
-				log_msg(LOG_ERR, "sendto failed: %s", strerror(errno));
-				STATUP(data->nsd, txerr);
-			} else if ((size_t) sent != buffer_remaining(q->packet)) {
-				log_msg(LOG_ERR, "sent %d in place of %d bytes", sent, (int) buffer_remaining(q->packet));
-			} else {
-#ifdef BIND8_STATS
-				/* Account the rcode & TC... */
-				STATUP2(data->nsd, rcode, RCODE(q));
-				if (TC(q))
-					STATUP(data->nsd, truncated);
-#endif /* BIND8_STATS */
-			}
-		} else {
-			STATUP(data->nsd, dropped);
+		if ((sent = sendto(handler->fd, q.iobuf, query_used_size(&q), 0, (struct sockaddr *)&q.addr, q.addrlen)) == -1) {
+			log_msg(LOG_ERR, "sendto failed: %s", strerror(errno));
+			STATUP(data->nsd, txerr);
+			return;
+		} else if (sent != q.iobufptr - q.iobuf) {
+			log_msg(LOG_ERR, "sent %d in place of %d bytes", sent, (int) query_used_size(&q));
+			return;
 		}
+
+#ifdef BIND8_STATS
+		/* Account the rcode & TC... */
+		STATUP2(data->nsd, rcode, RCODE((&q)));
+		if (TC((&q)))
+			STATUP(data->nsd, truncated);
+#endif /* BIND8_STATS */
+	} else {
+		STATUP(data->nsd, dropped);
 	}
 }
 
@@ -786,7 +832,7 @@ cleanup_tcp_handler(netio_type *netio, netio_handler_type *handler)
 	}
 	--data->nsd->current_tcp_count;
 	assert(data->nsd->current_tcp_count >= 0);
-
+	
 	region_destroy(data->region);
 }
 
@@ -798,6 +844,7 @@ handle_tcp_reading(netio_type *netio,
 	struct tcp_handler_data *data
 		= (struct tcp_handler_data *) handler->user_data;
 	ssize_t received;
+	struct query *q = &data->query;
 
 	if (event_types & NETIO_EVENT_TIMEOUT) {
 		/* Connection timed out.  */
@@ -807,24 +854,16 @@ handle_tcp_reading(netio_type *netio,
 
 	assert(event_types & NETIO_EVENT_READ);
 
-	if (data->bytes_transmitted == 0) {
-		query_reset(data->query, TCP_MAX_MESSAGE_LEN, 1);
-	}
-
 	/*
 	 * Check if we received the leading packet length bytes yet.
 	 */
-	if (data->bytes_transmitted < sizeof(uint16_t)) {
+	if (data->bytes_transmitted < sizeof(q->tcplen)) {
 		received = read(handler->fd,
-				(char *) &data->query->tcplen
-				+ data->bytes_transmitted,
-				sizeof(uint16_t) - data->bytes_transmitted);
+				(char *) &q->tcplen + data->bytes_transmitted,
+				sizeof(q->tcplen) - data->bytes_transmitted);
 		if (received == -1) {
 			if (errno == EAGAIN || errno == EINTR) {
-				/*
-				 * Read would block, wait until more
-				 * data is available.
-				 */
+				/* Read would block, wait until more data is available.  */
 				return;
 			} else {
 				log_msg(LOG_ERR, "failed reading from tcp: %s", strerror(errno));
@@ -838,7 +877,7 @@ handle_tcp_reading(netio_type *netio,
 		}
 
 		data->bytes_transmitted += received;
-		if (data->bytes_transmitted < sizeof(uint16_t)) {
+		if (data->bytes_transmitted < sizeof(q->tcplen)) {
 			/*
 			 * Not done with the tcplen yet, wait for more
 			 * data to become available.
@@ -846,10 +885,10 @@ handle_tcp_reading(netio_type *netio,
 			return;
 		}
 
-		assert(data->bytes_transmitted == sizeof(uint16_t));
+		assert(data->bytes_transmitted == sizeof(q->tcplen));
 
-		data->query->tcplen = ntohs(data->query->tcplen);
-		
+		q->tcplen = ntohs(q->tcplen);
+
 		/*
 		 * Minimum query size is:
 		 *
@@ -858,33 +897,26 @@ handle_tcp_reading(netio_type *netio,
 		 *   + Query class        (2)
 		 *   + Query type         (2)
 		 */
-		if (data->query->tcplen < QHEADERSZ + 1 + sizeof(uint16_t) + sizeof(uint16_t)) {
+		if (q->tcplen < QHEADERSZ + 1 + sizeof(uint16_t) + sizeof(uint16_t)) {
 			log_msg(LOG_WARNING, "dropping bogus tcp connection");
 			cleanup_tcp_handler(netio, handler);
 			return;
 		}
 
-		if (data->query->tcplen > data->query->maxlen) {
+		if (q->tcplen > q->maxlen) {
 			log_msg(LOG_ERR, "insufficient tcp buffer, dropping connection");
 			cleanup_tcp_handler(netio, handler);
 			return;
 		}
-
-		buffer_set_limit(data->query->packet, data->query->tcplen);
 	}
 
-	assert(buffer_remaining(data->query->packet) > 0);
+	assert(data->bytes_transmitted < q->tcplen + sizeof(q->tcplen));
 
 	/* Read the (remaining) query data.  */
-	received = read(handler->fd,
-			buffer_current(data->query->packet),
-			buffer_remaining(data->query->packet));
+	received = read(handler->fd, q->iobufptr, q->tcplen - query_used_size(q));
 	if (received == -1) {
 		if (errno == EAGAIN || errno == EINTR) {
-			/*
-			 * Read would block, wait until more data is
-			 * available.
-			 */
+			/* Read would block, wait until more data is available.  */
 			return;
 		} else {
 			log_msg(LOG_ERR, "failed reading from tcp: %s", strerror(errno));
@@ -898,8 +930,8 @@ handle_tcp_reading(netio_type *netio,
 	}
 
 	data->bytes_transmitted += received;
-	buffer_skip(data->query->packet, received);
-	if (buffer_remaining(data->query->packet) > 0) {
+	q->iobufptr += received;
+	if (query_used_size(q) < q->tcplen) {
 		/*
 		 * Message not yet complete, wait for more data to
 		 * become available.
@@ -907,23 +939,21 @@ handle_tcp_reading(netio_type *netio,
 		return;
 	}
 
-	assert(buffer_position(data->query->packet) == data->query->tcplen);
+	assert(query_used_size(q) == q->tcplen);
 
 	/* Account... */
 #ifndef INET6
 	STATUP(data->nsd, ctcp);
 #else
-	if (data->query->addr.ss_family == AF_INET) {
+	if (data->query.addr.ss_family == AF_INET) {
 		STATUP(data->nsd, ctcp);
-	} else if (data->query->addr.ss_family == AF_INET6) {
+	} else if (data->query.addr.ss_family == AF_INET6) {
 		STATUP(data->nsd, ctcp6);
 	}
 #endif
 
 	/* We have a complete query, process it.  */
-
-	buffer_flip(data->query->packet);
-	data->query_state = process_query(data->nsd, data->query);
+	data->query_state = process_query(data->nsd, q);
 	if (data->query_state == QUERY_DISCARDED) {
 		/* Drop the packet and the entire connection... */
 		STATUP(data->nsd, dropped);
@@ -931,15 +961,14 @@ handle_tcp_reading(netio_type *netio,
 		return;
 	}
 
-	if (RCODE(data->query) == RCODE_OK && !AA(data->query)) {
+	if (RCODE(q) == RCODE_OK && !AA(q)) {
 		STATUP(data->nsd, nona);
 	}
 		
-	query_add_optional(data->query, data->nsd);
+	query_addedns(q, data->nsd);
 
 	/* Switch to the tcp write handler.  */
-	buffer_flip(data->query->packet);
-	data->query->tcplen = buffer_remaining(data->query->packet);
+	q->tcplen = query_used_size(q);
 	data->bytes_transmitted = 0;
 	
 	handler->timeout->tv_sec = TCP_TIMEOUT;
@@ -958,7 +987,7 @@ handle_tcp_writing(netio_type *netio,
 	struct tcp_handler_data *data
 		= (struct tcp_handler_data *) handler->user_data;
 	ssize_t sent;
-	struct query *q = data->query;
+	struct query *q = &data->query;
 
 	if (event_types & NETIO_EVENT_TIMEOUT) {
 		/* Connection timed out.  */
@@ -1003,8 +1032,8 @@ handle_tcp_writing(netio_type *netio,
 	assert(data->bytes_transmitted < q->tcplen + sizeof(q->tcplen));
 
 	sent = write(handler->fd,
-		     buffer_current(q->packet),
-		     buffer_remaining(q->packet));
+		     q->iobuf + data->bytes_transmitted - sizeof(q->tcplen),
+		     query_used_size(q) - data->bytes_transmitted + sizeof(q->tcplen));
 	if (sent == -1) {
 		if (errno == EAGAIN || errno == EINTR) {
 			/*
@@ -1019,7 +1048,6 @@ handle_tcp_writing(netio_type *netio,
 		}
 	}
 
-	buffer_skip(q->packet, sent);
 	data->bytes_transmitted += sent;
 	if (data->bytes_transmitted < q->tcplen + sizeof(q->tcplen)) {
 		/*
@@ -1030,17 +1058,13 @@ handle_tcp_writing(netio_type *netio,
 	}
 
 	assert(data->bytes_transmitted == q->tcplen + sizeof(q->tcplen));
-
+	       
 	if (data->query_state == QUERY_IN_AXFR) {
 		/* Continue processing AXFR and writing back results.  */
-		buffer_clear(q->packet);
 		data->query_state = query_axfr(data->nsd, q);
 		if (data->query_state != QUERY_PROCESSED) {
-			query_add_optional(data->query, data->nsd);
-			
 			/* Reset data. */
-			buffer_flip(q->packet);
-			q->tcplen = buffer_remaining(q->packet);
+			q->tcplen = query_used_size(q);
 			data->bytes_transmitted = 0;
 			/* Reset timeout.  */
 			handler->timeout->tv_sec = TCP_TIMEOUT;
@@ -1059,6 +1083,11 @@ handle_tcp_writing(netio_type *netio,
 	 * Done sending, wait for the next request to arrive on the
 	 * TCP socket by installing the TCP read handler.
 	 */
+	query_init(&data->query,
+		   data->query.region,
+		   data->query.compressed_dname_offsets,
+		   data->query.maxlen,
+		   1);
 	data->bytes_transmitted = 0;
 	
 	handler->timeout->tv_sec = TCP_TIMEOUT;
@@ -1103,8 +1132,7 @@ handle_tcp_accept(netio_type *netio,
 	
 	/* Accept it... */
 	addrlen = sizeof(addr);
-	s = accept(handler->fd, (struct sockaddr *) &addr, &addrlen);
-	if (s == -1) {
+	if ((s = accept(handler->fd, (struct sockaddr *)&addr, &addrlen)) == -1) {
 		if (errno != EINTR) {
 			log_msg(LOG_ERR, "accept failed: %s", strerror(errno));
 		}
@@ -1113,7 +1141,6 @@ handle_tcp_accept(netio_type *netio,
 
 	if (fcntl(s, F_SETFL, O_NONBLOCK) == -1) {
 		log_msg(LOG_ERR, "fcntl failed: %s", strerror(errno));
-		close(s);
 		return;
 	}
 	
@@ -1125,16 +1152,23 @@ handle_tcp_accept(netio_type *netio,
 	tcp_data = (struct tcp_handler_data *) region_alloc(
 		tcp_region, sizeof(struct tcp_handler_data));
 	tcp_data->region = tcp_region;
-	tcp_data->query = query_create(tcp_region, compressed_dname_offsets);
 	tcp_data->nsd = data->nsd;
 	
+	query_init(&tcp_data->query,
+		   data->query_region,
+		   compressed_dname_offsets,
+		   (MAX_PACKET_SIZE < data->nsd->tcp_max_msglen
+		    ? MAX_PACKET_SIZE
+		    : data->nsd->tcp_max_msglen),
+		   1);
+
 	tcp_data->tcp_accept_handler_count = data->tcp_accept_handler_count;
 	tcp_data->tcp_accept_handlers = data->tcp_accept_handlers;
 
 	tcp_data->query_state = QUERY_PROCESSED;
 	tcp_data->bytes_transmitted = 0;
-	memcpy(&tcp_data->query->addr, &addr, addrlen);
-	tcp_data->query->addrlen = addrlen;
+	memcpy(&tcp_data->query.addr, &addr, addrlen);
+	tcp_data->query.addrlen = addrlen;
 	
 	tcp_handler = (netio_handler_type *) region_alloc(
 		tcp_region, sizeof(netio_handler_type));

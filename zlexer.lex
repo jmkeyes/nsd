@@ -50,7 +50,6 @@ Q       \"
     static enum rr_spot in_rr = outside;
 {SPACE}*{COMMENT}.*     /* ignore */
 ^@                      {
-		            LEXOUT(("ORIGIN "));		
                             in_rr = expecting_dname;
                             return ORIGIN;
                         }
@@ -83,7 +82,7 @@ Q       \"
 				
 
 				if ( include_stack_ptr >= MAXINCLUDES ) {
-				    zc_error("Includes nested too deeply (>10)");
+				    error("Includes nested too deeply (>10)");
             			    exit(1);
             			}
 
@@ -124,7 +123,7 @@ Q       \"
 
 		        	yyin = fopen( yytext, "r" );
         			if ( ! yyin ) {
-					zc_error("Cannot open $INCLUDE file: %s", yytext);
+					error("Cannot open $INCLUDE file: %s", yytext);
 				    	exit(1);
 				}
 
@@ -154,7 +153,7 @@ Q       \"
             				yy_switch_to_buffer( include_stack[include_stack_ptr] );
             			}
         		}
-^{DOLLAR}{LETTER}+      { zc_warning("Unknown $directive: %s", yytext); }
+^{DOLLAR}{LETTER}+      { warning("Unknown $directive: %s", yytext); }
 ^{DOT}                  {
                             /* a ^. means the root zone... also set in_rr */
                             in_rr = expecting_dname;
@@ -182,7 +181,7 @@ Q       \"
                         }
 {SPACE}*\({SPACE}*      {
                             if ( paren_open == 1 ) {
-				zc_error("Nested parentheses");
+				error("Nested parentheses");
                                 yyterminate();
                             }
                             LEXOUT(("SP( "));
@@ -191,7 +190,7 @@ Q       \"
                         }
 {SPACE}*\){SPACE}*      {
                             if ( paren_open == 0 ) {
-				zc_error("Unterminated parentheses");
+				error("Unterminated parentheses");
                                 yyterminate();
                             }
                             LEXOUT(("SP) "));
@@ -229,7 +228,7 @@ Q       \"
 .                       {
                             /* we should NEVER reach this
                              * bail out with an error */
-			    zc_error("Unknown character seen - is this a zonefile?");
+			    error("Unknown character seen - is this a zonefile?");
                             /*exit(1); [XXX] we should exit... */
                         }
 %%
@@ -266,7 +265,7 @@ zoctet(char *word)
             case '.':
 		/* [XXX] is empty label handled correctly? */
                 if (s[1] == '.') {
-                    zc_warning("Empty label");
+                    warning("Empty label");
                     break;
                 }
                 *p = *s;
@@ -288,7 +287,7 @@ zoctet(char *word)
                         *p = val;
                         length++;
                     } else {
-                        zc_warning("ASCII \\DDD overflow");
+                        warning("ASCII \\DDD overflow");
                     }
 
                 } else {
