@@ -382,6 +382,7 @@ rtype:
     { current_rr->type = $1; }
     | A sp rdata_a 
     { current_rr->type = $1; }
+    /* RFC 1886. */
     | AAAA sp rdata_aaaa 
     { current_rr->type = $1; }
     | LOC sp rdata_loc
@@ -390,61 +391,26 @@ rtype:
     { current_rr->type = $1; }
     | DS sp rdata_ds
     { current_rr->type = $1; }
-    | DS sp rdata_unknown
-    { current_rr->type = $1; }
     | KEY sp rdata_dnskey	/* XXX: Compatible format? */
-    { current_rr->type = $1; }
-    | KEY sp rdata_unknown 	
     { current_rr->type = $1; }
     | DNSKEY sp rdata_dnskey
     { current_rr->type = $1; }
-    | DNSKEY sp rdata_unknown
-    { current_rr->type = $1; }
     | NXT sp rdata_nxt
-    { current_rr->type = $1; }
-    | NXT sp rdata_unknown
     { current_rr->type = $1; }
     | NSEC sp rdata_nsec
     { current_rr->type = $1; }
-    | NSEC sp rdata_unknown
-    { current_rr->type = $1; }
     | SIG sp rdata_rrsig	/* XXX: Compatible format? */
     { current_rr->type = $1; }
-    | SIG sp rdata_unknown
-    { current_rr->type = $1; }
     | RRSIG sp rdata_rrsig
-    { current_rr->type = $1; }
-    | RRSIG sp rdata_unknown
     { current_rr->type = $1; }
     | RP sp rdata_rp
     { current_rr->type = $1; }
     | SSHFP sp rdata_sshfp
     { current_rr->type = $1; }
-    | SSHFP sp rdata_unknown
-    { current_rr->type = $1; }
     | NAPTR sp rdata_naptr
     { current_rr->type = $1; }
     | UTYPE sp rdata_unknown
     { current_rr->type = $1; }
-    | CNAME sp rdata_unknown_err 
-    | HINFO sp rdata_unknown_err 
-    | MB sp rdata_unknown_err	
-    | MD sp rdata_unknown_err	
-    | MF sp rdata_unknown_err	
-    | MG sp rdata_unknown_err		
-    | MINFO sp rdata_unknown_err 
-    | MR sp rdata_unknown_err		
-    | MX sp rdata_unknown_err 
-    | NS sp rdata_unknown_err 
-    | PTR sp rdata_unknown_err 
-    | SOA sp rdata_unknown_err 
-    | TXT sp rdata_unknown_err
-    | A sp rdata_unknown_err
-    | AAAA sp rdata_unknown_err 
-    | LOC sp rdata_unknown_err
-    | SRV sp rdata_unknown_err
-    | RP sp rdata_unknown_err
-    | NAPTR sp rdata_unknown_err
     | STR error NL
     {
 	    error_prev_line("Unrecognized RR type '%s'", $1.str);
@@ -580,7 +546,7 @@ rdata_dnskey:	STR sp STR sp STR sp hex_seq trail
 	{
 		zadd_rdata_wireformat(current_parser, zparser_conv_short(zone_region, $1.str)); /* flags */
 		zadd_rdata_wireformat(current_parser, zparser_conv_byte(zone_region, $3.str)); /* proto */
-		zadd_rdata_wireformat(current_parser, zparser_conv_byte(zone_region, $5.str)); /* alg */
+		zadd_rdata_wireformat(current_parser, zparser_conv_algorithm(zone_region, $5.str)); /* alg */
 		zadd_rdata_wireformat(current_parser, zparser_conv_b64(zone_region, $7.str)); /* hash */
 	}
 	|   error NL
@@ -661,12 +627,9 @@ rdata_unknown:	URR sp STR sp hex_seq trail
 		/* $2 is the number of octects, currently ignored */
 		zadd_rdata_wireformat(current_parser, zparser_conv_hex(zone_region, $5.str));
 	}
-	| URR error NL
+	| error NL
 	{ error_prev_line("Syntax error in UNKNOWN RR rdata"); }
        ;
-
-rdata_unknown_err:	URR error NL
-	{ error_prev_line("Not handled (yet)");}
 %%
 
 int
