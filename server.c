@@ -1,11 +1,11 @@
 /*
- * $Id: server.c,v 1.69 2003/03/20 10:31:25 alexis Exp $
+ * $Id: server.c,v 1.59.2.10 2003/06/05 15:13:20 erik Exp $
  *
  * server.c -- nsd(8) network input/output
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -37,38 +37,52 @@
  * POSSIBILITY OF SUCH DAMAGE.
  *
  */
-#include <config.h>
+#include "nsd.h"
 
-#include <sys/types.h>
-#include <sys/param.h>
-#include <sys/socket.h>
 
-#ifdef	HAVE_SYS_SELECT_H
-#include <sys/select.h>
-#endif
+/*
+ * Remove the specified pid from the list of TCP pids.	Returns 0 if
+ * the pid is not in the list, 1 otherwise.  The field is set to 0.
+ */
+int
+delete_tcp_child_pid(struct nsd *nsd, pid_t pid)
+{
+	int i;
+	for (i = 1; i <= nsd->tcp.open_conn; ++i) {
+		if (nsd->pid[i] == pid) {
+			nsd->pid[i] = 0;
+			return 1;
+		}
+	}
+	return 0;
+}
 
-#include <netinet/in.h>
-#include <arpa/inet.h>
+/*
+ * Restart child TCP servers if necessary.
+ */
+int
+restart_tcp_child_servers(struct nsd *nsd)
+{
+	int i;
 
-#include <assert.h>
-#include <ctype.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <stddef.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <syslog.h>
-#include <time.h>
-#include <unistd.h>
-
-#include <dns.h>
-#include <namedb.h>
-#include <dname.h>
-#include <nsd.h>
-#include <query.h>
-
+	/* Pre-fork the tcp processes... */
+	for (i = 1; i <= nsd->tcp.open_conn; ++i) {
+		if (nsd->pid[i] == 0) {
+			nsd->pid[i] = nsd->debug ? 0 : fork();
+			switch (nsd->pid[i]) {
+			case 0: /* CHILD */
+				nsd->pid[0] = 0;
+				server_tcp(nsd);
+				/* NOTREACH */
+				exit(0);
+			case -1:
+				syslog(LOG_ERR, "fork failed: %m");
+				return -1;
+			}
+		}
+	}
+	return 0;
+}
 
 /*
  * Initialize the server, create and bind the sockets.
@@ -145,7 +159,7 @@ server_init(struct nsd *nsd)
 	}
 
 	/* Listen to it... */
-	if(listen(nsd->tcp.s, TCP_BACKLOG) == -1) {
+	if(listen(nsd->tcp.s, CF_TCP_BACKLOG) == -1) {
 		syslog(LOG_ERR, "cant listen: %m");
 		return -1;
 	}
@@ -181,7 +195,7 @@ server_init(struct nsd *nsd)
 	}
 
 	/* Listen to it... */
-	if(listen(nsd->tcp6.s, TCP_BACKLOG) == -1) {
+	if(listen(nsd->tcp6.s, CF_TCP_BACKLOG) == -1) {
 		syslog(LOG_ERR, "cant listen: %m");
 		return -1;
 	}
@@ -223,27 +237,39 @@ server_init(struct nsd *nsd)
 
 /*
  * Fork the required number of servers.
- *
  */
 int
 server_start_tcp(struct nsd *nsd)
 {
 	int i;
 
-	/* Pre-fork the tcp processes... */
-	for(i = 1; i <= nsd->tcp.open_conn; i++) {
-		switch((nsd->pid[i] = nsd->debug ? 0 : fork())) {
-		case 0: /* CHILD */
-			nsd->pid[0] = 0;
-			server_tcp(nsd);
-			/* NOTREACH */
-			exit(0);
-		case -1:
-			syslog(LOG_ERR, "fork failed: %m");
-			return -1;
+	/* Start all child servers initially.  */
+	for (i = 1; i <= nsd->tcp.open_conn; ++i) {
+		nsd->pid[i] = 0;
+	}
+
+	return restart_tcp_child_servers(nsd);
+}
+
+static void
+close_all_udp_sockets(struct nsd *nsd)
+{
+	int i;
+
+	/* Close all the sockets... */
+	for (i = 0; i < nsd->ifs; ++i) {
+		if (nsd->udp[i].s != -1) {
+			close(nsd->udp[i].s);
+			nsd->udp[i].s = -1;
 		}
 	}
-	return 0;
+
+#ifdef INET6
+	if (nsd->udp6.s != -1) {
+		close(nsd->udp6.s);
+		nsd->udp6.s = -1;
+	}
+#endif /* INET6 */
 }
 
 /*
@@ -254,19 +280,14 @@ server_start_tcp(struct nsd *nsd)
 void
 server_shutdown(struct nsd *nsd)
 {
-	int i;
 #ifdef	BIND8_STATS
 	bind8_stats(nsd);
 #endif /* BIND8_STATS */
 
-	/* Close all the sockets... */
-	for(i = 0; i < nsd->ifs; i++) {
-		close(nsd->udp[i].s);
-	}
-	close(nsd->tcp.s);
+	close_all_udp_sockets(nsd);
 
+	close(nsd->tcp.s);
 #ifdef INET6
-	close(nsd->udp6.s);
 	close(nsd->tcp6.s);
 #endif /* INET6 */
 
@@ -346,6 +367,9 @@ server_udp(struct nsd *nsd)
 			break;
 		}
 
+		/* Restart any TCP child processes that may have died.  */
+		restart_tcp_child_servers(nsd);
+		
 		/* Set it up */
 		FD_ZERO(&peer);
 
@@ -459,6 +483,8 @@ server_tcp(struct nsd *nsd)
 	u_int16_t tcplen;
 	struct query q;
 
+	close_all_udp_sockets(nsd);
+	
 	/* Allow sigalarm to get us out of the loop */
 	siginterrupt(SIGALRM, 1);
 	siginterrupt(SIGINT, 1);	/* These two are to avoid hanging tcp connections... */
@@ -541,7 +567,7 @@ server_tcp(struct nsd *nsd)
 		q.tcp = 1;
 
 		/* Until we've got end of file */
-		alarm(TCP_TIMEOUT);
+		alarm(CF_TCP_TIMEOUT);
 		while((received = read(s, &tcplen, 2)) == 2) {
 			/* XXX Why 17???? */
 			if(ntohs(tcplen) < 17) {
@@ -582,7 +608,7 @@ server_tcp(struct nsd *nsd)
 				do {
 					query_addedns(&q, nsd);
 
-					alarm(TCP_TIMEOUT);
+					alarm(CF_TCP_TIMEOUT);
 					tcplen = htons(q.iobufptr - q.iobuf);
 					if(((sent = write(s, &tcplen, 2)) == -1) ||
 						((sent = write(s, q.iobuf, q.iobufptr - q.iobuf)) == -1)) {
@@ -624,3 +650,14 @@ server_tcp(struct nsd *nsd)
 
 	/* NOTREACH */
 }
+
+
+/* Emacs:
+
+Local Variables:
+c-basic-offset: 8
+c-indentation-style: bsd
+indent-tabs-mode: t
+End:
+
+*/

@@ -1,11 +1,11 @@
 /*
- * $Id: rbtree.h,v 1.12 2003/03/20 10:31:25 alexis Exp $
+ * $Id: rbtree.h,v 1.10 2002/05/23 13:20:57 alexis Exp $
  *
  * rbtree.h -- generic red-black tree
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -78,18 +78,18 @@ struct rbtree_t {
 	rbnode_t	*_node;
 
 	/* Free and compare functions */
-	void *(*mallocf)(size_t);
-	int (*cmp) (void *, void *);
+	void *(*mallocf)();
+	int (*cmp) ();
 };
 
+rbtree_t *rbtree_create __P((void *(*)(), int (*)()));
+void *rbtree_insert __P((rbtree_t *, void *, void *, int));
+void *rbtree_search __P((rbtree_t *, void *));
+void rbtree_delete __P((rbtree_t *, void *, int, int));
+void rbtree_destroy __P((rbtree_t *, int, int));
+rbnode_t *rbtree_first __P((rbtree_t *));
+rbnode_t *rbtree_next __P((rbnode_t *));
 #define	rbtree_last() RBTREE_NULL
-/* rbtree.c */
-rbtree_t *rbtree_create(void *(*mallocf)(size_t), int (*cmpf)(void *, void *));
-void *rbtree_insert(rbtree_t *rbtree, void *key, void *data, int overwrite);
-void *rbtree_search(rbtree_t *rbtree, void *key);
-void rbtree_destroy(rbtree_t *rbtree, int freekeys, int freedata);
-rbnode_t *rbtree_first(rbtree_t *rbtree);
-rbnode_t *rbtree_next(rbnode_t *rbtree);
 
 #define	RBTREE_WALK(rbtree, k, d) \
 	for((rbtree)->_node = rbtree_first(rbtree);\

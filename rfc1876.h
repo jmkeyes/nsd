@@ -1,7 +1,7 @@
 /*
- * $Id: client.h,v 1.2 2003/05/08 10:30:36 alexis Exp $
+ * $Id: rfc1876.h,v 1.3 2002/09/09 11:03:54 alexis Exp $
  *
- * client.h -- set of DNS client routines
+ * rfc1876.h -- LOC resource record routines from RFC1876
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
@@ -37,12 +37,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  *
  */
-#ifndef _CLIENT_H_
-#define _CLIENT_H_
 
-u_char *uncompress(struct query *q);
-int unpack(struct query *q, struct RR *rr, u_int16_t rdlength);
-struct RR **response(int s, struct query *q);
-int query(int s, struct query *q, u_char *dname, u_int16_t qtype, u_int16_t qclass, u_int32_t qid, int op, int aa, int rd, int tcp);
+#ifndef	_RFC1876_H_
+#define	_RFC1876_H_
 
-#endif _CLIENT_H_
+#define	LOCRDLEN 16
+u_int32_t loc_aton(const char *ascii, u_char *binary);
+char *loc_ntoa(const void *binary, u_char *ascii, size_t);
+
+#endif	/* _RFC1876_H_ */

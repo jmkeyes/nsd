@@ -1,25 +1,16 @@
-$Id: TODO,v 1.42 2003/04/29 13:40:52 alexis Exp $
-
-AUTOCONF
-
-+ check whether the --with-nsd-user exists in the system
+$Id: TODO,v 1.28 2002/09/26 15:34:51 alexis Exp $
 
 ZONE COMPILER
 - memory allocation optimization is needed
+- parser is too smart: should not try to continue processing if there are errors...
 - as writing the zone the order should be DNS SEC compliant (use dnameinvert())
-- error diagnostic has to be improved a lot
-- add a check to make sure that the biggest answer in the database does not
-  exceed the query buffer
-- improve the strdname() routine
-+ empty node should not cause NXDOMAIN
-
+- missing closing quote doesnt register as an error
 
 SERVER
 - in tcp the timeout should be handled different than with alarm()?
 - replace all ntohs(..) with #define .... something[i] and ntohs() it beforehand
 - make sure that we dont copy anything from the query we dont want to copy, like
   funny headers etc
-- query buffer is now 64k, perhaps we want it smaller? (used to be 1k)
 
 SECURITY
 
@@ -29,12 +20,12 @@ PURITY
 - bzero pads so the databases can be cmp'd
 
 TESTS
+- set all the buffer sizes to ridiculously small values see if it causes
+  core dumps
 
 MISC
-
-CLEANUP
-- proper error/fatal/warning interfaces
-- separate parse for nsd.zones
+- functions should be regrouped differently in .c files, so nsd-notify
+  doesnt have to be linked with all the unnecessary stuff
 
 DOCUMENTATION
 

@@ -1,11 +1,11 @@
 /*
- * $Id: heap.h,v 1.14 2003/03/20 10:31:25 alexis Exp $
+ * $Id: heap.h,v 1.12 2002/05/23 13:20:57 alexis Exp $
  *
  * heap.h -- generic heap
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -40,10 +40,6 @@
 
 #ifndef _HEAP_H_
 #define	_HEAP_H_
-
-#define	USE_HEAP_RBTREE
-
-
 
 #if !defined(__P)
 #	if defined(__STDC__)

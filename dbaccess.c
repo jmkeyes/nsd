@@ -1,11 +1,11 @@
 /*
- * $Id: dbaccess.c,v 1.31 2003/03/20 10:31:25 alexis Exp $
+ * $Id: dbaccess.c,v 1.25 2002/09/10 13:04:55 alexis Exp $
  *
  * dbaccess.c -- access methods for nsd(8) database
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -50,7 +50,6 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <syslog.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -59,8 +58,10 @@
 
 #ifndef	USE_BERKELEY_DB
 
-int 
-domaincmp (register u_char *a, register u_char *b)
+int
+domaincmp(a, b)
+	register u_char *a;
+	register u_char *b;
 {
 	register int r;
 	register int alen = (int)*a;
@@ -76,8 +77,9 @@ domaincmp (register u_char *a, register u_char *b)
 
 #ifdef	USE_HEAP_HASH
 
-unsigned long 
-domainhash (register u_char *dname)
+unsigned long
+domainhash(dname)
+	register u_char *dname;
 {
         register unsigned long hash = 0;
 	register u_char *p = dname;
@@ -94,13 +96,15 @@ domainhash (register u_char *dname)
 #endif
 
 struct domain *
-namedb_lookup (struct namedb *db, u_char *dname)
+namedb_lookup(db, dname)
+	struct namedb *db;
+	u_char *dname;
 {
 #ifdef USE_BERKELEY_DB
 	DBT key, data;
 
-	memset(&key, 0, sizeof(key));
-	memset(&data, 0, sizeof(data));
+	bzero(&key, sizeof(key));
+	bzero(&data, sizeof(data));
 	key.size = (size_t)*dname;
 	key.data = dname + 1;
 
@@ -123,7 +127,9 @@ namedb_lookup (struct namedb *db, u_char *dname)
 }
 
 struct answer *
-namedb_answer (struct domain *d, int type)
+namedb_answer(d, type)
+	struct domain *d;
+	u_int16_t type;
 {
 	struct answer *a;
 
@@ -136,7 +142,8 @@ namedb_answer (struct domain *d, int type)
 }
 
 struct namedb *
-namedb_open (char *filename)
+namedb_open(filename)
+	char *filename;
 {
 	struct namedb *db;
 	char magic[NAMEDB_MAGIC_SIZE] = NAMEDB_MAGIC;
@@ -174,8 +181,8 @@ namedb_open (char *filename)
 	}
 
 	/* Read the bitmasks... */
-	memset(&key, 0, sizeof(key));
-	memset(&data, 0, sizeof(data));
+	bzero(&key, sizeof(key));
+	bzero(&data, sizeof(data));
 
 	key.size = 0;
 	key.data = NULL;
@@ -185,15 +192,15 @@ namedb_open (char *filename)
 	}
 
 	if((data.size != (NAMEDB_BITMASKLEN * 3 + NAMEDB_MAGIC_SIZE)) ||
-		memcmp(data.data, magic, NAMEDB_MAGIC_SIZE)) {
+		bcmp(data.data, magic, NAMEDB_MAGIC_SIZE)) {
 		syslog(LOG_ERR, "corrupted superblock in %s", db->filename);
 		namedb_close(db);
 		return NULL;
 	}
 
-	memcpy(db->masks[NAMEDB_AUTHMASK], data.data + NAMEDB_MAGIC_SIZE, NAMEDB_BITMASKLEN);
-	memcpy(db->masks[NAMEDB_STARMASK], data.data + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN, NAMEDB_BITMASKLEN);
-	memcpy(db->masks[NAMEDB_DATAMASK], data.data + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN * 2, NAMEDB_BITMASKLEN);
+	bcopy(data.data + NAMEDB_MAGIC_SIZE, db->masks[NAMEDB_AUTHMASK], NAMEDB_BITMASKLEN);
+	bcopy(data.data + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN, db->masks[NAMEDB_STARMASK], NAMEDB_BITMASKLEN);
+	bcopy(data.data + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN * 2, db->masks[NAMEDB_DATAMASK], NAMEDB_BITMASKLEN);
 
 #else
 
@@ -239,10 +246,10 @@ namedb_open (char *filename)
 	(void)close(db->fd);
 
 #ifdef USE_HEAP_RBTREE
-	if((db->heap = heap_create(malloc, (int (*)(void *, void *))domaincmp)) == NULL) {
+	if((db->heap = heap_create(malloc, domaincmp)) == NULL) {
 #else
 # ifdef USE_HEAP_HASH
-	if((db->heap = heap_create(malloc, (int (*)(void *, void *))domaincmp, domainhash, NAMEDB_HASH_SIZE)) == NULL) {
+	if((db->heap = heap_create(malloc, domaincmp, domainhash, NAMEDB_HASH_SIZE)) == NULL) {
 # endif
 #endif
 		free(db->mpool);
@@ -253,7 +260,7 @@ namedb_open (char *filename)
 
 	p = db->mpool;
 
-	if(memcmp(p, magic, NAMEDB_MAGIC_SIZE)) {
+	if(bcmp(p, magic, NAMEDB_MAGIC_SIZE)) {
 		syslog(LOG_ERR, "corrupted database: %s", db->filename);
 		namedb_close(db);
 		return NULL;
@@ -278,7 +285,7 @@ namedb_open (char *filename)
 
 	p++;
 
-	if(memcmp(p, magic, NAMEDB_MAGIC_SIZE)) {
+	if(bcmp(p, magic, NAMEDB_MAGIC_SIZE)) {
 		syslog(LOG_ERR, "corrupted database: %s", db->filename);
 		namedb_close(db);
 		return NULL;
@@ -286,9 +293,9 @@ namedb_open (char *filename)
 	p += NAMEDB_MAGIC_SIZE;
 
 	/* Copy the bitmasks... */
-	memcpy(db->masks[NAMEDB_AUTHMASK], p, NAMEDB_BITMASKLEN);
-	memcpy(db->masks[NAMEDB_STARMASK], p + NAMEDB_BITMASKLEN, NAMEDB_BITMASKLEN);
-	memcpy(db->masks[NAMEDB_DATAMASK], p + NAMEDB_BITMASKLEN * 2, NAMEDB_BITMASKLEN);
+	bcopy(p, db->masks[NAMEDB_AUTHMASK], NAMEDB_BITMASKLEN);
+	bcopy(p + NAMEDB_BITMASKLEN, db->masks[NAMEDB_STARMASK], NAMEDB_BITMASKLEN);
+	bcopy(p + NAMEDB_BITMASKLEN * 2, db->masks[NAMEDB_DATAMASK], NAMEDB_BITMASKLEN);
 
 #endif
 
@@ -306,7 +313,8 @@ namedb_open (char *filename)
 }
 
 void
-namedb_close (struct namedb *db)
+namedb_close(db)
+	struct namedb *db;
 {
 	/* If it is already closed... */
 	if(db == NULL)

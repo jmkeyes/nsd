@@ -1,11 +1,11 @@
 /*
- * $Id: dbcreate.c,v 1.18 2003/03/20 10:31:25 alexis Exp $
+ * $Id: dbcreate.c,v 1.15 2002/05/27 14:43:34 alexis Exp $
  *
  * namedb_create.c -- routines to create an nsd(8) name database 
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -50,7 +50,8 @@
 #include "namedb.h"
 
 struct namedb *
-namedb_new (char *filename)
+namedb_new(filename)
+	char *filename;
 {
 	struct namedb *db;
 
@@ -93,23 +94,26 @@ namedb_new (char *filename)
 #endif	/* USE_BERKELEY_DB */
 
 	/* Initialize the masks... */
-	memset(db->masks[NAMEDB_AUTHMASK], 0, NAMEDB_BITMASKLEN);
-	memset(db->masks[NAMEDB_STARMASK], 0, NAMEDB_BITMASKLEN);
-	memset(db->masks[NAMEDB_DATAMASK], 0, NAMEDB_BITMASKLEN);
+	bzero(db->masks[NAMEDB_AUTHMASK], NAMEDB_BITMASKLEN);
+	bzero(db->masks[NAMEDB_STARMASK], NAMEDB_BITMASKLEN);
+	bzero(db->masks[NAMEDB_DATAMASK], NAMEDB_BITMASKLEN);
 
 	return db;
-}
+};
 
 
-int 
-namedb_put (struct namedb *db, u_char *dname, struct domain *d)
+int
+namedb_put(db, dname, d)
+	struct namedb *db;
+	u_char *dname;
+	struct domain *d;
 {
 #ifdef	USE_BERKELEY_DB
 	DBT key, data;
 
 	/* Store it */
-	memset(&key, 0, sizeof(key));
-	memset(&data, 0, sizeof(data));
+	bzero(&key, sizeof(key));
+	bzero(&data, sizeof(data));
 
 	key.size = *dname;
 	key.data = dname + 1;
@@ -132,10 +136,11 @@ namedb_put (struct namedb *db, u_char *dname, struct domain *d)
 #endif	/* USE_BERKELEY_DB */
 
 	return 0;
-}
+};
 
-int 
-namedb_save (struct namedb *db)
+int
+namedb_save(db)
+	struct namedb *db;
 {
 #ifdef	USE_BERKELEY_DB
 	/* The buffer for the super block */
@@ -144,14 +149,14 @@ namedb_save (struct namedb *db)
 	DBT key, data;
 
 	/* Create the super block */
-	memcpy(sbuf, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE);
-	memcpy(sbuf + NAMEDB_MAGIC_SIZE, db->masks[NAMEDB_AUTHMASK], NAMEDB_BITMASKLEN);
-	memcpy(sbuf + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN, db->masks[NAMEDB_STARMASK], NAMEDB_BITMASKLEN);
-	memcpy(sbuf + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN * 2, db->masks[NAMEDB_DATAMASK], NAMEDB_BITMASKLEN);
+	bcopy(NAMEDB_MAGIC, sbuf, NAMEDB_MAGIC_SIZE);
+	bcopy(db->masks[NAMEDB_AUTHMASK], sbuf + NAMEDB_MAGIC_SIZE, NAMEDB_BITMASKLEN);
+	bcopy(db->masks[NAMEDB_STARMASK], sbuf + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN, NAMEDB_BITMASKLEN);
+	bcopy(db->masks[NAMEDB_DATAMASK], sbuf + NAMEDB_MAGIC_SIZE + NAMEDB_BITMASKLEN * 2, NAMEDB_BITMASKLEN);
 
 	/* Write the bitmasks... */
-	memset(&key, 0, sizeof(key));
-	memset(&data, 0, sizeof(data));
+	bzero(&key, sizeof(key));
+	bzero(&data, sizeof(data));
 	data.size = NAMEDB_BITMASKLEN * 3 + NAMEDB_MAGIC_SIZE;
 	data.data = sbuf;
 
@@ -193,8 +198,9 @@ namedb_save (struct namedb *db)
 }
 
 
-void 
-namedb_discard (struct namedb *db)
+void
+namedb_discard(db)
+	struct namedb *db;
 {
 	unlink(db->filename);
 	free(db->filename);

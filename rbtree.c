@@ -1,11 +1,11 @@
 /*
- * $Id: rbtree.c,v 1.12 2003/03/20 10:31:25 alexis Exp $
+ * $Id: rbtree.c,v 1.9 2002/05/23 13:20:57 alexis Exp $
  *
  * rbtree.c -- generic red black tree
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -52,10 +52,6 @@
 
 rbnode_t	rbtree_null_node = {RBTREE_NULL, RBTREE_NULL, RBTREE_NULL, BLACK, NULL, NULL};
 
-static void rbtree_rotate_left(rbtree_t *rbtree, rbnode_t *node);
-static void rbtree_rotate_right(rbtree_t *rbtree, rbnode_t *node);
-static void rbtree_insert_fixup(rbtree_t *rbtree, rbnode_t *node);
-
 /*
  * Creates a new red black tree, intializes and returns a pointer to it.
  *
@@ -63,7 +59,9 @@ static void rbtree_insert_fixup(rbtree_t *rbtree, rbnode_t *node);
  *
  */
 rbtree_t *
-rbtree_create (void *(*mallocf)(size_t), int (*cmpf)(void *, void *))
+rbtree_create(mallocf, cmpf)
+	void *(*mallocf)(size_t);
+	int (*cmpf)(void *, void *);
 {
 	rbtree_t *rbtree;
 
@@ -79,14 +77,16 @@ rbtree_create (void *(*mallocf)(size_t), int (*cmpf)(void *, void *))
 	rbtree->cmp = cmpf;
 
 	return rbtree;
-}
+};
 
 /*
  * Rotates the node to the left.
  *
  */
 void
-rbtree_rotate_left(rbtree_t *rbtree, rbnode_t *node)
+rbtree_rotate_left(rbtree, node)
+	rbtree_t *rbtree;
+	rbnode_t *node;
 {
 	rbnode_t *right = node->right;
 	node->right = right->left;
@@ -106,14 +106,16 @@ rbtree_rotate_left(rbtree_t *rbtree, rbnode_t *node)
 	}
 	right->left = node;
 	node->parent = right;
-}
+};
 
 /*
  * Rotates the node to the right.
  *
  */
 void
-rbtree_rotate_right(rbtree_t *rbtree, rbnode_t *node)
+rbtree_rotate_right(rbtree, node)
+	rbtree_t *rbtree;
+	rbnode_t *node;
 {
 	rbnode_t *left = node->left;
 	node->left = left->right;
@@ -133,10 +135,12 @@ rbtree_rotate_right(rbtree_t *rbtree, rbnode_t *node)
 	}
 	left->right = node;
 	node->parent = left;
-}
+};
 
 void
-rbtree_insert_fixup(rbtree_t *rbtree, rbnode_t *node)
+rbtree_insert_fixup(rbtree, node)
+	rbtree_t *rbtree;
+	rbnode_t *node;
 {
 	rbnode_t	*uncle;
 
@@ -212,7 +216,10 @@ rbtree_insert_fixup(rbtree_t *rbtree, rbnode_t *node)
  *
  */
 void *
-rbtree_insert (rbtree_t *rbtree, void *key, void *data, int overwrite)
+rbtree_insert(rbtree, key, data, overwrite)
+	rbtree_t *rbtree;
+	void *key, *data;
+	int overwrite;
 {
 	/* XXX Not necessary, but keeps compiler quiet... */
 	int r = 0;
@@ -267,14 +274,16 @@ rbtree_insert (rbtree_t *rbtree, void *key, void *data, int overwrite)
 	rbtree_insert_fixup(rbtree, node);
 
 	return node->data;
-}
+};
 
 /*
  * Searches the red black tree, returns the data if key is found or NULL otherwise.
  *
  */
 void *
-rbtree_search (rbtree_t *rbtree, void *key)
+rbtree_search(rbtree, key)
+	rbtree_t *rbtree;
+	void *key;
 {
 	int r;
 	rbnode_t *node;
@@ -301,7 +310,8 @@ rbtree_search (rbtree_t *rbtree, void *key)
  *
  */
 rbnode_t *
-rbtree_first (rbtree_t *rbtree)
+rbtree_first(rbtree)
+	rbtree_t *rbtree;
 {
 	rbnode_t *node;
 
@@ -314,7 +324,8 @@ rbtree_first (rbtree_t *rbtree)
  *
  */
 rbnode_t *
-rbtree_next (rbnode_t *node)
+rbtree_next(node)
+	rbnode_t *node;
 {
 	rbnode_t *parent;
 
@@ -333,8 +344,11 @@ rbtree_next (rbnode_t *node)
 }
 
 /* void rbtree_delete __P((rbtree_t *, void *, int, int)); */
-void 
-rbtree_destroy (rbtree_t *rbtree, int freekeys, int freedata)
+void
+rbtree_destroy(rbtree, freekeys, freedata)
+	rbtree_t *rbtree;
+	int freekeys;
+	int freedata;
 {
 	rbnode_t *parent;
 	rbnode_t *node;
@@ -374,8 +388,10 @@ rbtree_destroy (rbtree_t *rbtree, int freekeys, int freedata)
 
 #define	BUFSZ	1000
 
-int 
-main (int argc, char **argv)
+int
+main(argc, argv)
+	int argc;
+	char **argv;
 {
 	rbtree_t *rbtree;
 	char buf[BUFSZ];
