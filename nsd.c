@@ -1,5 +1,5 @@
 /*
- * $Id: nsd.c,v 1.73 2003/06/17 14:50:26 erik Exp $
+ * $Id: nsd.c,v 1.68.2.5 2003/06/18 09:29:02 erik Exp $
  *
  * nsd.c -- nsd(8)
  *
@@ -66,13 +66,12 @@
 #include <dns.h>
 #include <dname.h>
 #include <namedb.h>
-#include <network.h>
 #include <nsd.h>
 #include <query.h>
 
 
 /* The server handler... */
-static struct nsd nsd;
+struct nsd nsd;
 char hostname[MAXHOSTNAMELEN];
 
 /*
@@ -107,12 +106,12 @@ xrealloc (register void *p, register size_t size)
 void
 usage (void)
 {
-	fprintf(stderr, "usage: nsd [-4] [-6] [-d] [-p port] [-a address] [-i identity] [-n tcp_servers ] [-u user|uid] [-t chrootdir] -f database\n");
+	fprintf(stderr, "usage: nsd [-d] [-p port] [-a address] [-i identity] [-n tcp_servers ] [-u user|uid] [-t chrootdir] -f database\n");
 	exit(1);
 }
 
 pid_t 
-readpid (const char *file)
+readpid (char *file)
 {
 	int fd;
 	pid_t pid;
@@ -251,7 +250,7 @@ sig_handler (int sig)
 
 	/* Distribute the signal to the servers... */
 	for (i = 1; i <= nsd.tcp_open_conn; ++i) {
-		if (kill(nsd.pid[i], sig) == -1) {
+		if (nsd.pid[i] != 0 && kill(nsd.pid[i], sig) == -1) {
 			syslog(LOG_ERR, "problems killing %d: %m", nsd.pid[i]);
 		}
 	}
@@ -271,7 +270,7 @@ bind8_stats (struct nsd *nsd)
 
 	/* XXX A bit ugly but efficient. Should be somewhere else. */
 	static
-	const char *types[] = {NULL, "A", "NS", "MD", "MF", "CNAME", "SOA", "MB", "MG",		/* 8 */
+	char *types[] = {NULL, "A", "NS", "MD", "MF", "CNAME", "SOA", "MB", "MG",		/* 8 */
 			"MR", "NULL", "WKS", "PTR", "HINFO", "MINFO", "MX", "TXT",		/* 16 */
 			"RP", "AFSDB", "X25", "ISDN", "RT", "NSAP", "NSAP_PTR", "SIG",		/* 24 */
 			"KEY", "PX", "GPOS", "AAAA", "LOC", "NXT", "EID", "NIMLOC",		/* 32 */
@@ -371,15 +370,11 @@ main (int argc, char *argv[])
 	pid_t	oldpid;
 
 	/* For initialising the address info structures */
-	const char *nodes[MAX_INTERFACES];
-	const char *udp_port;
-	const char *tcp_port;
-	int family[MAX_INTERFACES];
+	struct  addrinfo hints[MAX_INTERFACES];
+	char *	nodes[MAX_INTERFACES];
+	char * 	udp_port;
+	char * 	tcp_port;
 
-	for (i = 0; i < MAX_INTERFACES; ++i) {
-		family[i] = DEFAULT_AI_FAMILY;
-	}
-	
 	/* Initialize the server handler... */
 	memset(&nsd, 0, sizeof(struct nsd));
 	nsd.dbfile	= DBFILE;
@@ -390,7 +385,14 @@ main (int argc, char *argv[])
 	udp_port = UDP_PORT;
 	tcp_port = TCP_PORT;
 
-	for (i = 0; i < MAX_INTERFACES; ++i) {
+	for(i = 0; i < MAX_INTERFACES; i++) {
+		memset(&hints[i], 0, sizeof(hints[i]));
+#ifdef INET6
+		hints[i].ai_family = PF_UNSPEC;
+#else
+		hints[i].ai_family = PF_INET;
+#endif
+		hints[i].ai_flags = AI_PASSIVE;
 		nodes[i] = NULL;
 	}
 
@@ -435,23 +437,11 @@ main (int argc, char *argv[])
 
 
 	/* Parse the command line... */
-	while((c = getopt(argc, argv, "46a:df:p:i:u:t:s:n:")) != -1) {
+	while((c = getopt(argc, argv, "a:df:p:i:u:t:s:n:")) != -1) {
 		switch (c) {
-		case '4':
-			for (i = 0; i < MAX_INTERFACES; ++i) {
-				family[i] = PF_INET;
-			}
-			break;
-#ifdef INET6
-		case '6':
-			for (i = 0; i < MAX_INTERFACES; ++i) {
-				family[i] = PF_INET6;
-			}
-			break;
-#endif
 		case 'a':
-			nodes[nsd.ifs] = optarg;
-			++nsd.ifs;
+			nodes[nsd.ifs] = nodes[nsd.ifs] = optarg;
+			nsd.ifs++;
 			break;
 		case 'd':
 			nsd.debug = 1;
@@ -502,47 +492,24 @@ main (int argc, char *argv[])
 		usage();
 
 	/* We need at least one active interface */
-	if(nsd.ifs == 0) {
-		nsd.ifs = 1;
-
-		/*
-		 * With IPv6 we'd like to open two separate sockets,
-		 * one for IPv4 and one for IPv6, both listening to
-		 * the wildcard address (unless the -4 or -6 flags are
-		 * specified).
-		 *
-		 * However, this is only supported on platforms where
-		 * we can turn the socket option IPV6_V6ONLY _on_.
-		 * Otherwise we just listen to a single IPv6 socket
-		 * and any incoming IPv4 connections will be
-		 * automatically mapped to our IPv6 socket.
-		 */
-#ifdef INET6
-		if (family[0] == PF_UNSPEC) {
-# ifdef IPV6_V6ONLY
-			family[0] = PF_INET6;
-			family[1] = PF_INET;
-			nsd.ifs = 2;
-# else
-			family[0] = PF_INET6;
-# endif
-		}
-#endif
-	}
+	if(nsd.ifs == 0)
+		nsd.ifs++;
 
 	/* Set up the address info structures with real interface/port data */
-	for(i = 0; i < nsd.ifs; i++) {
-		int flags = AI_PASSIVE;
-		
+	for(i = 0; i < nsd.ifs ; i++)
+	{
 		/* We don't perform name-lookups */
 		if (nodes[i] != NULL)
-			flags = AI_NUMERICHOST;
+			hints[i].ai_flags = AI_NUMERICHOST;
 		
-		if (nw_host_lookup(&nsd.udp[i].addr, nodes[i], udp_port, SOCK_DGRAM, family[i], flags) != 0)
+		hints[i].ai_socktype = SOCK_DGRAM;
+		if ( getaddrinfo(nodes[i], udp_port, &hints[i], &nsd.udp[i].addr) != 0)
 			usage();
 		
-		if (nw_host_lookup(&nsd.tcp[i].addr, nodes[i], udp_port, SOCK_STREAM, family[i], flags) != 0)
+		hints[i].ai_socktype = SOCK_STREAM;
+		if ( getaddrinfo(nodes[i], tcp_port, &hints[i], &nsd.tcp[i].addr) != 0)
 			usage();
+
 	}
 
 	/* Parse the username into uid and gid */

@@ -1,5 +1,5 @@
 /*
- * $Id: nsd.h,v 1.56 2003/06/17 14:50:27 erik Exp $
+ * $Id: nsd.h,v 1.51.2.3 2003/06/18 09:11:23 erik Exp $
  *
  * nsd.h -- nsd(8) definitions and prototypes
  *
@@ -47,7 +47,7 @@
 #define	NSD_STATS 3
 #define	NSD_QUIT 4
 
-#define	OPT_LEN	11U
+#define	OPT_LEN	11
 
 #ifdef BIND8_STATS
 
@@ -79,14 +79,14 @@ struct	nsd {
 	time_t  	tcp_timeout;	/* XXX: Why is this unused ? */
 
 	/* Configuration */
-	const char	*dbfile;
-	const char	*pidfile;
-	const char	*username;
+	char	*dbfile;
+	char	*pidfile;
+	char	*username;
 	uid_t	uid;
 	gid_t	gid;
-	const char	*chrootdir;
-	const char	*version;
-	const char	*identity;
+	char	*chrootdir;
+	char	*version;
+	char	*identity;
 	int	ifs;
 	int	tcp_open_conn;
 
@@ -131,7 +131,7 @@ struct	nsd {
 void *xalloc(register size_t size);
 void *xrealloc(register void *p, register size_t size);
 void usage(void);
-pid_t readpid(const char *file);
+pid_t readpid(char *file);
 int writepid(struct nsd *nsd);
 void sig_handler(int sig);
 void bind8_stats(struct nsd *nsd);

@@ -1,5 +1,5 @@
 /*
- * $Id: dname.c,v 1.10 2003/06/16 15:13:16 erik Exp $
+ * $Id: dname.c,v 1.8.2.3 2003/06/11 10:07:41 erik Exp $
  *
  * dname.c -- dname operations
  *
@@ -56,13 +56,11 @@
  *
  */
 int 
-dnamecmp (const void *left, const void *right)
+dnamecmp (register u_char *a, register u_char *b)
 {
-	int r;
-	const u_char *a = left;
-	const u_char *b = right;
-	int alen = (int)*a;
-	int blen = (int)*b;
+	register int r;
+	register int alen = (int)*a;
+	register int blen = (int)*b;
 
 	while(alen && blen) {
 		a++; b++;
@@ -79,13 +77,13 @@ dnamecmp (const void *left, const void *right)
  * XXX Actually should not be here cause it is a debug routine.
  *
  */
-const char *
-dnamestr (const u_char *dname)
+char *
+dnamestr (u_char *dname)
 {
 	static char s[MAXDOMAINLEN+1];
 	char *p;
 	int l;
-	const u_char *n = dname;
+	u_char *n = dname;
 
 	l = (int) *dname;
 	n++;
@@ -114,15 +112,15 @@ dnamestr (const u_char *dname)
  * XXX Verify that every label dont exceed MAXLABELLEN
  * XXX Complain about empty labels (.nlnetlabs..nl)
  */
-const u_char *
-strdname (const char *source, const u_char *o)
+u_char *
+strdname (char *source, u_char *o)
 {
 	static u_char dname[MAXDOMAINLEN+1];
 
-	const u_char *s = (const u_char *) source;
-	u_char *h;
-	u_char *p;
-	u_char *d = dname + 1;
+	u_char *s = (u_char *) source;
+	register u_char *h;
+	register u_char *p;
+	register u_char *d = dname + 1;
 
 	if(*s == '@' && *(s+1) == 0) {
 		for(p = dname, s = o; s < o + *o + 1; p++, s++)
@@ -178,7 +176,7 @@ strdname (const char *source, const u_char *o)
  *
  */
 u_char *
-dnamedup (const u_char *dname)
+dnamedup (u_char *dname)
 {
 	u_char *p;
 

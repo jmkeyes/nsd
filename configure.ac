@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,1.2.0,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,1.1.0,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -174,7 +174,7 @@ AC_FUNC_CHOWN
 AC_FUNC_FORK
 AC_FUNC_MALLOC
 AC_TYPE_SIGNAL
-AC_CHECK_FUNCS([alarm dup2 endpwent gethostname inet_aton memset memcpy select socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror])
+AC_CHECK_FUNCS([alarm dup2 endpwent gethostname inet_aton memset memcpy select socket strcasecmp strchr strdup strerror strncasecmp strtol getprotoent getservent])
 
 #
 # Checking for missing functions we can replace
