@@ -1,0 +1,175 @@
+.\"
+.\" $Id: zonec.8,v 1.18 2003/12/17 10:19:26 miekg Exp $
+.\"
+.\" zonec.8 -- zonec manual
+.\"
+.\" Copyright (c) 2001-2003, NLnet Labs. All rights reserved.
+.\"
+.\" This software is an open source.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\"
+.\" Redistributions of source code must retain the above copyright notice,
+.\" this list of conditions and the following disclaimer.
+.\"
+.\" Redistributions in binary form must reproduce the above copyright notice,
+.\" this list of conditions and the following disclaimer in the documentation
+.\" and/or other materials provided with the distribution.
+.\"
+.\" Neither the name of the NLNET LABS nor the names of its contributors may
+.\" be used to endorse or promote products derived from this software without
+.\" specific prior written permission.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+.\" "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+.\" TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+.\" PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+.\" LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.\"
+.Dd @date@
+.Os FreeBSD
+.Dt zonec 8 
+.Sh NAME
+.Nm zonec
+.Nd NSD Zone Compiler
+.Sh SYNOPSIS
+.Nm zonec
+.Op Fl v
+.Op Fl h
+.Op Fl L
+.Op Fl F
+.Op Fl f Ar database
+.Op Fl D Ar directory
+.Op Fl o Ar origin
+.Ar nsd.zones
+.Sh DESCRIPTION
+.Ic Zonec
+is the
+.Xr nsd 8
+database compiler for creating name space databases from a set of
+input master zone files specified in
+.Ar nsd.zones
+file. If 
+.Ar nsd.zones 
+file equals
+.Ar -
+then all zone information is read from stdin. Making constructs like:
+
+.Ic cat zones* | ./zonec -f nsd.db -o example.net -
+
+possible.
+.Pp
+It is normally invoked via
+.Xr nsdc 8
+rebuild command.
+.Ic Zonec
+will then parse every zone in
+.Ar nsd.zones
+file and add it to the name space database,
+.Pa /etc/nsd/nsd.db
+by default, that is used by
+.Xr nsd 8
+to answer incoming queries.
+.Pp
+The available options are:
+.Bl -tag -width indent
+.It Fl d Ar directory
+Change the working directory to
+.Ar directory
+before doing any work.
+.It Fl f Ar database
+Create the specified
+.Ar database
+instead of the default
+.Pa /etc/nsd/nsd.db
+.It Fl o Ar origin
+When reading from stdin use this as the first origin. When reading zone
+from 
+.Pa nsd.zones
+this option is ignored.
+.It Fl v
+Be verbose about the progress.  Specify multiple times for additional
+verbosity.
+.It Fl F
+Set debug facilities
+.It Fl L
+Set debug level. (If compiled with --enable-checking.)
+.El
+.Sh FILE FORMAT
+The nsd.zones file is formatted as follows:
+.TS
+tab (@);
+l l.
+zone    <zonename>     <filename>       [masters <IP>|<IP>|...]
+zone    <zonename>     <filename>       [notify <IP>|<IP>|...]
+.TE
+
+The first word on a line must be ``zone''. It indicates that the zone
+should be loaded as authoritative data. 
+
+The second word is the name (origin) of the zone and the third word is the
+pathname to the master zone file. If you use zonec with the -d option
+the pathname may be relative to the NSD zones directory.
+
+Optionally masters list-of-ip-addresses can be present to update the respective
+zone with axfr from the given master servers. These servers will be tried in
+order.  This option is ignored by zonec and is only relevant for nsdc update.
+
+Optionally a list-of-ip-addresses of server that must be notified when can be
+present.  This option is ignored by zonec and is only relevant for nsdc notify.
+
+A typical example would be:
+.TS
+tab (@);
+l l.
+zone    example.com    primary/example.com    
+zone    example.net    secondary/example.net    masters 10.1.1.1
+.TE
+
+The second line indicates that nsdc update should try to axfr the zone
+example.net from the master server 10.1.1.1
+
+Since NSD is primarily written to be run on the root name servers,
+this file most likely to contain something like:
+.TS
+tab (@);
+l l.
+zone    .               root.zone
+.TE
+
+
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /etc/nsd/nsd.db
+default
+.Ic NSD
+database
+.El
+.Sh DIAGNOSTICS
+.Ic zonec
+will log all the problems via the standard error output and
+progress via stdout if
+.Fl v
+option is specified.
+.Sh SEE ALSO
+.Xr nsd 8,
+.Xr nsdc 8 and
+.Pa README
+.Sh AUTHORS
+.Ic NSD
+was written by NLnet Labs and RIPE NCC joint team. Please see CREDITS file
+in the distribution for further details.
+.Sh BUGS
+.Ic Zonec
+has rather weak error diagnostics that will change in further versions.
+.Ic Zonec
+expects the input files to be free of syntax errors and very little
+fool proof checks are done.
