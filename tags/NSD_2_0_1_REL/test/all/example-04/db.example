@@ -1,0 +1,24 @@
+example.       3600 IN SOA ns1.example. bugs.x.w.example. (
+                           1071609350
+                           3600
+                           300
+                           3600000
+                           3600
+                           )
+               3600 RRSIG  SOA 5 1 3600 20040115201552 (
+                           20031216201552 41681 example.
+                           F1KxMLu2zwDUFgUtdAqCq6F9zkaIPb3B7dzA
+                           hRLp8riOMQQgCCQ4x9KvSu2xLJa539jQIRW0
+                           VBU6+FZWzC2IJcc5liv2SXzyfiPu8diB9+Bj
+                           CSITjVX0IGrQgd+PKkaTxWQzG9TDZ2TtgnyM
+                           owLe/OV+Qqqic7ShV/S9l2YJF9I= )
+               3600 NS     ns1.example.
+               3600 NS     ns2.example.
+	       3600 TYPE12442  \# 4  0A0000 01
+               3600 RRSIG  NS 5 1 3600 20040115201552 (
+                           20031216201552 41681 example.
+                           YgTFj4yXRzbOddwfOTQhLHGPWm7x55ZRoPVz
+                           +bxuPHTozw3I2gpno81Em1RuVekWJHivAvQj
+                           s1h72oh+ipBadjCGSRu46u1T9JYUSLxLecgY
+                           eEw9qDeQIoZHRny5bYrX1x87ItEo5+n1lwOH
+                           FTVyQbVkcaxQ6U2FbZtMbfo//go= )
