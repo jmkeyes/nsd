@@ -9,18 +9,13 @@
 
 #include <config.h>
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <ctype.h>
-#include <netdb.h>
 #include <string.h>
 #ifdef HAVE_STRINGS_H
 #include <strings.h>
 #endif
 
 #include "dns.h"
+#include "namedb.h"
 #include "zonec.h"
 #include "zparser.h"
 
@@ -61,9 +56,9 @@ rrtype_descriptor_type rrtype_descriptors[RRTYPE_DESCRIPTORS_LENGTH] = {
 	{ TYPE_NULL, "NULL", T_UTYPE, 1, 1,
 	  { RDATA_WF_BINARY }, { RDATA_ZF_DNAME } },
 	/* 11 */
-	{ TYPE_WKS, "WKS", T_WKS, 2, 2,
-	  { RDATA_WF_A, RDATA_WF_BINARY },
-	  { RDATA_ZF_A, RDATA_ZF_SERVICES } },
+	{ TYPE_WKS, "WKS", T_WKS, 3, 3,
+	  { RDATA_WF_A, RDATA_WF_BYTE, RDATA_WF_BINARY },
+	  { RDATA_ZF_A, RDATA_ZF_PROTOCOL, RDATA_ZF_SERVICES } },
 	/* 12 */
 	{ TYPE_PTR, "PTR", T_PTR, 1, 1,
 	  { RDATA_WF_COMPRESSED_DNAME }, { RDATA_ZF_DNAME } },
@@ -261,7 +256,7 @@ rrtype_descriptor_type rrtype_descriptors[RRTYPE_DESCRIPTORS_LENGTH] = {
 	/* 47 */
 	{ TYPE_NSEC, "NSEC", T_NSEC, 2, 2,
 	  { RDATA_WF_UNCOMPRESSED_DNAME, RDATA_WF_BINARY },
-	  { RDATA_ZF_DNAME, RDATA_ZF_NSEC } },
+	  { RDATA_ZF_DNAME, RDATA_ZF_NXT } },
 	/* 48 */
 	{ TYPE_DNSKEY, "DNSKEY", T_DNSKEY, 4, 4,
 	  { RDATA_WF_SHORT, RDATA_WF_BYTE, RDATA_WF_BYTE, RDATA_WF_BINARY },
@@ -284,29 +279,3 @@ rrtype_descriptor_by_name(const char *name)
 
 	return NULL;
 }
-
-const char *
-rrtype_to_string(uint16_t rrtype)
-{
-	static char buf[20];
-	rrtype_descriptor_type *descriptor = rrtype_descriptor_by_type(rrtype);
-	if (descriptor->name) {
-		return descriptor->name;
-	} else {
-		snprintf(buf, sizeof(buf), "TYPE%d", (int) rrtype);
-		return buf;
-	}
-}
-
-const char *
-rrclass_to_string(uint16_t rrclass)
-{
-	static char buf[20];
-	if (rrclass == CLASS_IN) {
-		return "IN";
-	} else {
-		snprintf(buf, sizeof(buf), "CLASS%d", (int) rrclass);
-		return buf;
-	}
-}
-

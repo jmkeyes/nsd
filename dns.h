@@ -1,69 +1,44 @@
 /*
- * dns.h -- DNS definitions.
+ * dns.h -- everything we wanted to know but were afraid
+ *		to ask about DNS
+ *
+ * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
  * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
- * See LICENSE for the license.
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
 #ifndef _DNS_H_
 #define _DNS_H_
-
-enum rr_section {
-	QUESTION_SECTION,
-	ANSWER_SECTION,
-	AUTHORITY_SECTION,
-	ADDITIONAL_SECTION,
-	/*
-	 * Use a split additional section to ensure A records appear
-	 * before any AAAA records (this is recommended practice to
-	 * avoid truncating the additional section for IPv4 clients
-	 * that do not specify EDNS0), and AAAA records before other
-	 * types of additional records (such as X25 and ISDN).
-	 * Encode_answer sets the ARCOUNT field of the response packet
-	 * correctly.
-	 */
-	ADDITIONAL_A_SECTION = ADDITIONAL_SECTION,
-	ADDITIONAL_AAAA_SECTION,
-	ADDITIONAL_OTHER_SECTION,
-
-	RR_SECTION_COUNT
-};
-typedef enum rr_section rr_section_type;
-
-/* Possible OPCODE values */
-#define	OPCODE_QUERY		0 	/* a standard query (QUERY) */
-#define OPCODE_IQUERY		1 	/* an inverse query (IQUERY) */
-#define OPCODE_STATUS		2 	/* a server status request (STATUS) */
-#define OPCODE_NOTIFY		4 	/* NOTIFY */
-#define OPCODE_UPDATE		5 	/* Dynamic update */
-
-/* Possible RCODE values */
-#define	RCODE_OK		0 	/* No error condition */
-#define RCODE_FORMAT		1 	/* Format error */
-#define RCODE_SERVFAIL		2 	/* Server failure */
-#define RCODE_NXDOMAIN		3 	/* Name Error */
-#define RCODE_IMPL		4 	/* Not implemented */
-#define RCODE_REFUSE		5 	/* Refused */
-#define RCODE_NOTAUTH           9	/* Not authorized */
-
-/* Standardized NSD return code.  Partially maps to DNS RCODE values.  */
-enum nsd_rc
-{
-	/* Discard the client request.  */
-	NSD_RC_DISCARD  = -1,
-	/* OK, continue normal processing.  */
-	NSD_RC_OK       = RCODE_OK,
-	/* Return the appropriate error code to the client.  */
-	NSD_RC_FORMAT   = RCODE_FORMAT,
-	NSD_RC_SERVFAIL = RCODE_SERVFAIL,
-	NSD_RC_NXDOMAIN = RCODE_NXDOMAIN,
-	NSD_RC_IMPL     = RCODE_IMPL,
-	NSD_RC_REFUSE   = RCODE_REFUSE,
-	NSD_RC_NOTAUTH  = RCODE_NOTAUTH
-};
-typedef enum nsd_rc nsd_rc_type;
 
 /* RFC1035 */
 #define	CLASS_IN	1	/* Class IN */
@@ -119,7 +94,6 @@ typedef enum nsd_rc nsd_rc_type;
 #define TYPE_NSEC	47	
 #define TYPE_DNSKEY	48
 
-#define TYPE_TSIG       250
 #define	TYPE_IXFR	251
 #define	TYPE_AXFR	252
 #define	TYPE_MAILB	253 	/* A request for mailbox-related records (MB, MG or MR) */
@@ -135,9 +109,6 @@ typedef enum nsd_rc nsd_rc_type;
 /* Maximum size of a single RR.  */
 #define MAX_RR_SIZE \
 	(MAXDOMAINLEN + sizeof(uint32_t) + 4*sizeof(uint16_t) + MAX_RDLENGTH)
-
-#define IP4ADDRLEN      (32/8)
-#define	IP6ADDRLEN	(128/8)
 
 /*
  * The different types of RDATA wireformat data.
@@ -169,6 +140,7 @@ enum rdata_zoneformat
 	RDATA_ZF_LONG,		/* 32-bit integer.  */
 	RDATA_ZF_A,		/* 32-bit IPv4 address.  */
 	RDATA_ZF_AAAA,		/* 128-bit IPv6 address.  */
+	RDATA_ZF_PROTOCOL,	/* IP Protocol (TCP/UDP/...).  */
 	RDATA_ZF_RRTYPE,	/* RR type.  */
 	RDATA_ZF_ALGORITHM,	/* Cryptographic algorithm.  */
 	RDATA_ZF_CERTIFICATE_TYPE,
@@ -178,7 +150,7 @@ enum rdata_zoneformat
 	RDATA_ZF_HEX,		/* Hexadecimal binary data.  */
 	RDATA_ZF_NSAP,		/* NSAP.  */
 	RDATA_ZF_APL,		/* APL.  */
-	RDATA_ZF_SERVICES,	/* Protocol and port number bitmap.  */
+	RDATA_ZF_SERVICES,	/* Port number bitmap.  */
 	RDATA_ZF_NXT,		/* NXT type bitmap.  */
 	RDATA_ZF_NSEC,		/* NSEC type bitmap.  */
 	RDATA_ZF_LOC,		/* Location data.  */
@@ -214,18 +186,5 @@ rrtype_descriptor_by_type(uint16_t type)
 }
 
 rrtype_descriptor_type *rrtype_descriptor_by_name(const char *name);
-
-const char *rrtype_to_string(uint16_t rrtype);
-const char *rrclass_to_string(uint16_t rrclass);
-
-
-#ifdef __cplusplus
-inline rr_section_type
-operator++(rr_section_type &lhs)
-{
-	lhs = (rr_section_type) ((int) lhs + 1);
-	return lhs;
-}
-#endif /* __cplusplus */
 
 #endif /* _DNS_H_ */

@@ -1,12 +1,40 @@
 /*
- * dname.c -- Domain name handling.
+ * dname.c -- dname operations
+ *
+ * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
  * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
- * See LICENSE for the license.
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
-
 
 #include <config.h>
 
@@ -20,12 +48,14 @@
 
 #include "dns.h"
 #include "dname.h"
-#include "query.h"
+#include "namedb.h"
+#include "util.h"
+
 
 static const uint8_t *strdname (const char *source, const uint8_t *o);
 
 const dname_type *
-dname_make(region_type *region, const uint8_t *name, int normalize)
+dname_make(region_type *region, const uint8_t *name)
 {
 	size_t name_size = 0;
 	uint8_t label_offsets[MAXDOMAINLEN];
@@ -71,96 +101,12 @@ dname_make(region_type *region, const uint8_t *name, int normalize)
 	memcpy((uint8_t *) dname_label_offsets(result),
 	       label_offsets,
 	       label_count * sizeof(uint8_t));
-	if (normalize) {
-		uint8_t *dst = (uint8_t *) dname_name(result);
-		const uint8_t *src = name;
-		while (!label_is_root(src)) {
-			ssize_t len = label_length(src);
-			*dst++ = *src++;
-			for (i = 0; i < len; ++i) {
-				*dst++ = DNAME_NORMALIZE(*src++);
-			}
-		}
-		*dst = *src;
-	} else {
-		memcpy((uint8_t *) dname_name(result),
-		       name,
-		       name_size * sizeof(uint8_t));
-	}
+	memcpy((uint8_t *) dname_name(result),
+	       name,
+	       name_size * sizeof(uint8_t));
 	return result;
 }
 
-
-const dname_type *
-dname_make_from_packet(region_type *region, buffer_type *packet,
-		       int allow_pointers, int normalize)
-{
-	uint8_t buf[MAXDOMAINLEN + 1];
-	int done = 0;
-	uint8_t visited[(MAX_PACKET_SIZE+7)/8];
-	size_t dname_length = 0;
-	const uint8_t *label;
-	ssize_t mark = -1;
-	
-	memset(visited, 0, (buffer_limit(packet)+7)/8);
-	
-	while (!done) {
-		if (!buffer_available(packet, 1)) {
-/* 			error("dname out of bounds"); */
-			return NULL;
-		}
-
-		if (get_bit(visited, buffer_position(packet))) {
-/* 			error("dname loops"); */
-			return NULL;
-		}
-		set_bit(visited, buffer_position(packet));
-
-		label = buffer_current(packet);
-		if (label_is_pointer(label)) {
-			size_t pointer;
-			if (!allow_pointers) {
-				return NULL;
-			}
-			if (!buffer_available(packet, 2)) {
-/* 				error("dname pointer out of bounds"); */
-				return NULL;
-			}
-			pointer = label_pointer_location(label);
-			if (pointer >= buffer_limit(packet)) {
-/* 				error("dname pointer points outside packet"); */
-				return NULL;
-			}
-			buffer_skip(packet, 2);
-			if (mark == -1) {
-				mark = buffer_position(packet);
-			}
-			buffer_set_position(packet, pointer);
-		} else if (label_is_normal(label)) {
-			size_t length = label_length(label) + 1;
-			done = label_is_root(label);
-			if (!buffer_available(packet, length)) {
-/* 				error("dname label out of bounds"); */
-				return NULL;
-			}
-			if (dname_length + length >= sizeof(buf)) {
-/* 				error("dname too large"); */
-				return NULL;
-			}
-			buffer_read(packet, buf + dname_length, length);
-			dname_length += length;
-		} else {
-/* 			error("bad label type"); */
-			return NULL;
-		}
-	}
-
-	if (mark != -1) {
-		buffer_set_position(packet, mark);
-	}
-
-	return dname_make(region, buf, normalize);
-}
 
 const dname_type *
 dname_parse(region_type *region, const char *name, const dname_type *origin)
@@ -173,7 +119,7 @@ dname_parse(region_type *region, const char *name, const dname_type *origin)
 		buf[0] = 1;
 		buf[1] = 0;
 	}
-	return dname_make(region, strdname(name, buf) + 1, 0);
+	return dname_make(region, strdname(name, buf) + 1);
 }
 
 
@@ -208,7 +154,7 @@ dname_partial_copy(region_type *region, const dname_type *dname, uint8_t label_c
 	
 	assert(label_count <= dname->label_count);
 
-	return dname_make(region, dname_label(dname, label_count - 1), 0);
+	return dname_make(region, dname_label(dname, label_count - 1));
 }
 
 
@@ -310,28 +256,9 @@ dname_label_match_count(const dname_type *left, const dname_type *right)
 
 
 const char *
-dname_to_string(const dname_type *dname, const dname_type *origin)
+dname_to_string(const dname_type *dname)
 {
-	static char buf[MAXDOMAINLEN + 1];
-	if (origin
-	    && dname->label_count > 1
-	    && dname_is_subdomain(dname, origin))
-	{
-		int common_labels = dname_label_match_count(dname, origin);
-		int label_count = dname->label_count - common_labels;
-		const uint8_t *label = dname_name(dname);
-		char *p = buf;
-		int i;
-		for (i = 0; i < label_count; ++i) {
-			memcpy(p, label_data(label), label_length(label));
-			p += label_length(label);
-			*p++ = '.';
-		}
-		*--p = '\0';
-		return buf;
-	} else {
-		return labels_to_string(dname_name(dname));
-	}
+	return labels_to_string(dname_name(dname));
 }
 
 
@@ -401,12 +328,12 @@ strdname (const char *source, const uint8_t *o)
 						   (s[3] - '0'));
 					if (val >= 0 && val <= UCHAR_MAX) {
 						s += 3;
-						*p = DNAME_NORMALIZE(val);
+						*p = NAMEDB_NORMALIZE(val);
 					} else {
-						*p = DNAME_NORMALIZE(*++s);
+						*p = NAMEDB_NORMALIZE(*++s);
 					}
 				} else if (s[1] != '\0') {
-					*p = DNAME_NORMALIZE(*++s);
+					*p = NAMEDB_NORMALIZE(*++s);
 				}
 				break;
 			default:
@@ -430,25 +357,27 @@ strdname (const char *source, const uint8_t *o)
 
 
 const dname_type *
-dname_make_from_label(region_type *region,
-		      const uint8_t *label, const size_t length)
+create_dname(region_type *region, const uint8_t *str, const size_t len)
 {
-	uint8_t temp[MAXLABELLEN + 2];
+	uint8_t temp[MAXDOMAINLEN];
+	size_t i;
 
-	assert(length > 0 && length <= MAXLABELLEN);
+	assert(len > 0 && len <= MAXLABELLEN);
 
-	temp[0] = length;
-	memcpy(temp + 1, label, length * sizeof(uint8_t));
-	temp[length + 1] = '\000';
+	temp[0] = len;
+	for (i = 0; i < len; ++i) {
+		temp[i + 1] = DNAME_NORMALIZE(str[i]);
+	}
+	temp[len + 1] = '\000';
 
-	return dname_make(region, temp, 1);
+	return dname_make(region, temp);
 }
          
 
 const dname_type *
-dname_concatenate(region_type *region,
-		  const dname_type *left,
-		  const dname_type *right)
+cat_dname(region_type *region,
+	  const dname_type *left,
+	  const dname_type *right)
 {
 	uint8_t temp[MAXDOMAINLEN];
 
@@ -457,5 +386,5 @@ dname_concatenate(region_type *region,
 	memcpy(temp, dname_name(left), left->name_size - 1);
 	memcpy(temp + left->name_size - 1, dname_name(right), right->name_size);
 
-	return dname_make(region, temp, 0);
+	return dname_make(region, temp);
 }

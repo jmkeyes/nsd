@@ -1,9 +1,38 @@
 /*
  * dbaccess.c -- access methods for nsd(8) database
  *
+ * Alexis Yushin, <alexis@nlnetlabs.nl>
+ *
  * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
- * See LICENSE for the license.
+ * This software is an open source.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * Neither the name of the NLNET LABS nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -55,7 +84,7 @@ read_dname(FILE *fd, region_type *region)
 	if (fread(temp, sizeof(uint8_t), size, fd) != size)
 		return NULL;
 
-	return dname_make(region, temp, 1);
+	return dname_make(region, temp);
 }
 
 static int
@@ -124,77 +153,75 @@ read_rdata_atom(namedb_type *db, uint16_t type, int index, uint32_t domain_count
 	return 1;
 }
 
-static rrset_type *
+static int
 read_rrset(namedb_type *db,
 	   uint32_t domain_count, domain_type **domains,
 	   uint32_t zone_count, zone_type **zones)
 {
 	rrset_type *rrset;
 	int i, j;
+	uint16_t rdcount;
+	uint32_t ttl;
 	domain_type *owner;
-	uint16_t type;
-	uint16_t klass;
 	
 	owner = read_domain(db, domain_count, domains);
 	if (!owner)
-		return NULL;
+		return 0;
 
 	rrset = (rrset_type *) region_alloc(db->region, sizeof(rrset_type));
 			     
 	rrset->zone = read_zone(db, zone_count, zones);
 	if (!rrset->zone)
-		return NULL;
+		return 0;
 	
-	if (fread(&type, sizeof(type), 1, db->fd) != 1)
-		return NULL;
-	type = ntohs(type);
+	if (fread(&rrset->type, sizeof(rrset->type), 1, db->fd) != 1)
+		return 0;
+
+	if (fread(&rrset->klass, sizeof(rrset->klass), 1, db->fd) != 1)
+		return 0;
+
+	if (fread(&rrset->rrslen, sizeof(rrset->rrslen), 1, db->fd) != 1)
+		return 0;
+
+	rrset->type = ntohs(rrset->type);
+	rrset->klass = ntohs(rrset->klass);
+	rrset->rrslen = ntohs(rrset->rrslen);
+
+	rrset->rrs = (rrdata_type **) region_alloc(
+		db->region, rrset->rrslen * sizeof(rrdata_type *));
 	
-	if (fread(&klass, sizeof(klass), 1, db->fd) != 1)
-		return NULL;
-	klass = ntohs(klass);
+	for (i = 0; i < rrset->rrslen; ++i) {
+		if (fread(&rdcount, sizeof(rdcount), 1, db->fd) != 1)
+			return 0;
 
-	if (fread(&rrset->rr_count, sizeof(rrset->rr_count), 1, db->fd) != 1)
-		return NULL;
-	rrset->rr_count = ntohs(rrset->rr_count);
-	rrset->rrs = (rr_type *) region_alloc(
-		db->region, rrset->rr_count * sizeof(rr_type));
+		if (fread(&ttl, sizeof(ttl), 1, db->fd) != 1)
+			return 0;
 
-	assert(rrset->rr_count > 0);
-	
-	for (i = 0; i < rrset->rr_count; ++i) {
-		rr_type *rr = &rrset->rrs[i];
-
-		rr->type = type;
-		rr->klass = klass;
+		rdcount = ntohs(rdcount);
 		
-		if (fread(&rr->rdata_count, sizeof(rr->rdata_count), 1, db->fd) != 1)
-			return NULL;
-		rr->rdata_count = ntohs(rr->rdata_count);
-		rr->rdatas = (rdata_atom_type *) region_alloc(
-			db->region, rr->rdata_count * sizeof(rdata_atom_type));
-
-		if (fread(&rr->ttl, sizeof(rr->ttl), 1, db->fd) != 1)
-			return NULL;
-		rr->ttl = ntohl(rr->ttl);
-
-		for (j = 0; j < rr->rdata_count; ++j) {
-			if (!read_rdata_atom(db, rr->type, j, domain_count, domains, &rr->rdatas[j]))
-				return NULL;
+		rrset->rrs[i] = (rrdata_type *) region_alloc(
+			db->region, rrdata_size(rdcount));
+		rrset->rrs[i]->ttl = ntohl(ttl);
+		rrset->rrs[i]->rdata_count = rdcount;
+		
+		for (j = 0; j < rdcount; ++j) {
+			if (!read_rdata_atom(db, rrset->type, j, domain_count, domains, &rrset->rrs[i]->rdata[j]))
+				return 0;
 		}
 	}
 
 	domain_add_rrset(owner, rrset);
 
-	if (rrset->rrs[0].type == TYPE_SOA) {
+	if (rrset->type == TYPE_SOA) {
 		assert(owner == rrset->zone->apex);
 		rrset->zone->soa_rrset = rrset;
-	} else if (owner == rrset->zone->apex && rrset->rrs[0].type == TYPE_NS) {
+	} else if (owner == rrset->zone->apex && rrset->type == TYPE_NS) {
 		rrset->zone->ns_rrset = rrset;
 	}
 
 #ifdef DNSSEC
-	if (rrset->rrs[0].type == TYPE_RRSIG && owner == rrset->zone->apex) {
-		for (i = 0; i < rrset->rr_count; ++i) {
+	if (rrset->type == TYPE_RRSIG && owner == rrset->zone->apex) {
+		for (i = 0; i < rrset->rrslen; ++i) {
 			if (rrset_rrsig_type_covered(rrset, i) == TYPE_SOA) {
 				rrset->zone->is_secure = 1;
 				break;
@@ -203,7 +230,7 @@ read_rrset(namedb_type *db,
 	}
 #endif
 	
-	return rrset;
+	return 1;
 }
 
 struct namedb *
@@ -239,9 +266,6 @@ namedb_open (const char *filename)
 	
 	uint32_t i;
 	uint32_t rrset_count = 0;
-	uint32_t rr_count = 0;
-
-	rrset_type *rrset;
 	
 	DEBUG(DEBUG_DBACCESS, 2,
 	      (stderr, "sizeof(namedb_type) = %lu\n", (unsigned long) sizeof(namedb_type)));
@@ -251,10 +275,6 @@ namedb_open (const char *filename)
 	      (stderr, "sizeof(domain_type) = %lu\n", (unsigned long) sizeof(domain_type)));
 	DEBUG(DEBUG_DBACCESS, 2,
 	      (stderr, "sizeof(rrset_type) = %lu\n", (unsigned long) sizeof(rrset_type)));
-	DEBUG(DEBUG_DBACCESS, 2,
-	      (stderr, "sizeof(rr_type) = %lu\n", (unsigned long) sizeof(rr_type)));
-	DEBUG(DEBUG_DBACCESS, 2,
-	      (stderr, "sizeof(rdata_atom_type) = %lu\n", (unsigned long) sizeof(rdata_atom_type)));
 	DEBUG(DEBUG_DBACCESS, 2,
 	      (stderr, "sizeof(rbnode_t) = %lu\n", (unsigned long) sizeof(rbnode_t)));
 
@@ -343,14 +363,11 @@ namedb_open (const char *filename)
 	
 	region_destroy(dname_region);
 
-	while ((rrset = read_rrset(db, dname_count, domains, zone_count, zones))) {
+	while (read_rrset(db, dname_count, domains, zone_count, zones))
 		++rrset_count;
-		rr_count += rrset->rr_count;
-	}
 
 	DEBUG(DEBUG_DBACCESS, 2,
-	      (stderr, "Retrieved %lu RRs in %lu RRsets\n",
-	       (unsigned long) rr_count, (unsigned long) rrset_count));
+	      (stderr, "Retrieved %lu RRsets\n", (unsigned long) rrset_count));
 	
 	region_destroy(temp_region);
 	
