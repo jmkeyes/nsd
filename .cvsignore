@@ -12,6 +12,3 @@ nsdc.conf.sample
 nsdc.sh
 nsq
 zonec
-zparser.c
-zparser.h
-zlexer.c

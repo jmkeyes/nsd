@@ -43,17 +43,12 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
 #ifdef HAVE_SYSLOG_H
 #include <syslog.h>
 #endif /* HAVE_SYSLOG_H */
-#include <unistd.h>
 
 #include "util.h"
-
-#ifndef NDEBUG
-unsigned nsd_debug_facilities = 0xffff;
-int nsd_debug_level = 0;
-#endif
 
 static const char *global_ident = NULL;
 static log_function_type *current_log_function = log_file;
@@ -159,14 +154,6 @@ xalloc(size_t size)
 }
 
 void *
-xalloc_zero(size_t size)
-{
-	void *result = xalloc(size);
-	memset(result, 0, size);
-	return result;
-}
-
-void *
 xrealloc(void *ptr, size_t size)
 {
 	ptr = realloc(ptr, size);
@@ -175,25 +162,4 @@ xrealloc(void *ptr, size_t size)
 		exit(1);
 	}
 	return ptr;
-}
-
-int
-write_data(FILE *file, const void *data, size_t size)
-{
-	size_t result;
-
-	if (size == 0)
-		return 1;
-	
-	result = fwrite(data, 1, size, file);
-
-	if (result == 0) {
-		log_msg(LOG_ERR, "write failed: %s", strerror(errno));
-		return 0;
-	} else if (result < size) {
-		log_msg(LOG_ERR, "short write (disk full?)");
-		return 0;
-	} else {
-		return 1;
-	}
 }

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# $Id: nsdc.conf.sample.in,v 1.7 2003/07/28 12:28:39 erik Exp $
+# $Id: nsdc.conf.sample.in,v 1.6.6.1 2003/07/21 10:23:03 erik Exp $
 #
 # nsdc.conf.sample -- configuration for nsdc.sh
 #
