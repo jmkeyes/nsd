@@ -1,5 +1,5 @@
 /*
- * $Id: hash.c,v 1.18 2003/06/12 12:31:18 erik Exp $
+ * $Id: hash.c,v 1.17.2.1 2003/06/12 09:27:29 erik Exp $
  *
  * hash.h -- generic non-dynamic hash
  *

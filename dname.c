@@ -1,5 +1,5 @@
 /*
- * $Id: dname.c,v 1.9 2003/06/12 12:31:18 erik Exp $
+ * $Id: dname.c,v 1.8.2.3 2003/06/11 10:07:41 erik Exp $
  *
  * dname.c -- dname operations
  *

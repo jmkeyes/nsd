@@ -1,5 +1,5 @@
 /*
- * $Id: zparser.c,v 1.33 2003/06/12 12:31:19 erik Exp $
+ * $Id: zparser.c,v 1.30.2.1 2003/06/12 09:27:32 erik Exp $
  *
  * zparser.c -- master zone file parser
  *
@@ -1826,11 +1826,7 @@ zprintrr(FILE *f, struct RR *rr)
 {
 	fprintf(f, "%s\t%u\t%s\t%s\t", dnamestr(rr->dname), rr->ttl,
 		classbyint(rr->class), typebyint(rr->type));
-	if(rr->rdata != NULL) {
-		zprintrrrdata(f, rr);
-	} else {
-		fprintf(f, "; *** NO RDATA ***");
-	}
+	zprintrrrdata(f, rr);
 	fprintf(f, "\n");
 }
 

@@ -1,5 +1,5 @@
 /*
- * $Id: zonec.c,v 1.87 2003/04/15 09:57:18 alexis Exp $
+ * $Id: zonec.c,v 1.86.2.1 2003/04/15 09:34:05 alexis Exp $
  *
  * zone.c -- reads in a zone file and stores it in memory
  *

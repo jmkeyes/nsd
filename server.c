@@ -1,5 +1,5 @@
 /*
- * $Id: server.c,v 1.70 2003/06/12 12:31:18 erik Exp $
+ * $Id: server.c,v 1.69.2.3 2003/06/11 10:07:46 erik Exp $
  *
  * server.c -- nsd(8) network input/output
  *

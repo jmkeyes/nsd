@@ -150,6 +150,7 @@ fi
 replace_version README
 replace_version nsd.8
 replace_version nsdc.8
+replace_version nsd-notify.8
 replace_version zonec.8
 
 info "Renaming NSD directory to nsd-$version."
