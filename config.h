@@ -1,5 +1,5 @@
 /*
- * $Id: config.h,v 1.20 2002/12/17 14:41:29 alexis Exp $
+ * $Id: config.h,v 1.19.2.5 2002/12/17 14:42:06 alexis Exp $
  *
  * config.h -- nsd(8) local configuration
  *

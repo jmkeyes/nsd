@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# $Id: nsdc.sh.in,v 1.19 2002/12/17 14:41:29 alexis Exp $
+# $Id: nsdc.sh.in,v 1.18.2.1 2002/10/29 12:04:50 alexis Exp $
 #
 # nsdc.sh -- a shell script to manage the beast
 #

@@ -1,5 +1,5 @@
 /*
- * $Id: nsd.h,v 1.44 2002/12/17 14:41:29 alexis Exp $
+ * $Id: nsd.h,v 1.43.2.2 2002/12/05 22:25:07 alexis Exp $
  *
  * nsd.h -- nsd(8) definitions and prototypes
  *

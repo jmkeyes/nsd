@@ -1,5 +1,5 @@
 /*
- * $Id: nsd.c,v 1.57 2002/12/17 14:41:29 alexis Exp $
+ * $Id: nsd.c,v 1.56.2.10 2002/12/17 14:42:06 alexis Exp $
  *
  * nsd.c -- nsd(8)
  *
