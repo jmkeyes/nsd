@@ -1,5 +1,5 @@
 #
-# $Id: Makefile,v 1.70 2002/07/16 10:57:15 alexis Exp $
+# $Id: Makefile,v 1.69.2.6 2002/08/07 15:04:16 alexis Exp $
 #
 # Makefile -- one file to make them all, nsd(8)
 #
@@ -52,7 +52,15 @@ NSDFLAGS        =
 #	or	id
 #	or	id.gid
 #
-NSDUSER		= nobody
+NSDUSER		= nsd
+
+# This has to be set to the path of named-xfer program from bind if you
+# want ``nsdc update'' functionality
+NAMEDXFER	= 
+
+# A directory where the crypto keys are kept. For now only used to store TSIG keys for
+# named-xfer
+NSDKEYSDIR	= ${NSDZONESDIR}/keys
 
 #
 # Pathnames
@@ -67,13 +75,13 @@ NSDMANDIR	= ${PREFIX}/man/man8
 NSDZONESDIR     = ${PREFIX}/etc/nsd
 
 # The file containing the list of the zones to be compiled into the NSD database
-NSDZONES	= ${PREFIX}/etc/nsd/nsd.zones
+NSDZONES	= ${NSDZONESDIR}/nsd.zones
 
 # The pid file of the nsd
 NSDPIDFILE      = /var/run/nsd.pid
 
 # The NSD run-time database
-NSDDB           = /var/db/nsd.db
+NSDDB           = ${NSDZONESDIR}/nsd.db
 
 #
 # Use the following compile options to modify features set of NSD
@@ -171,7 +179,8 @@ nsdc.sh: nsdc.sh.in Makefile
 	rm -f $@
 	sed -e "s,@@NSDBINDIR@@,${NSDBINDIR},g" -e "s,@@NSDZONESDIR@@,${NSDZONESDIR},g" \
 		-e "s,@@NSDFLAGS@@,${NSDFLAGS},g" -e "s,@@NSDPIDFILE@@,${NSDPIDFILE},g" \
-		-e "s,@@NSDDB@@,${NSDDB},g" -e "s,@@NSDZONES@@,${NSDZONES},g" $@.in > $@
+		-e "s,@@NSDDB@@,${NSDDB},g" -e "s,@@NSDZONES@@,${NSDZONES},g" \
+		-e "s,@@NAMEDXFER@@,${NAMEDXFER},g" -e "s,@@NSDKEYSDIR@@,${NSDKEYSDIR},g" $@.in > $@
 	chmod a+x $@
 
 nsd:	nsd.h dns.h nsd.o server.o query.o dbaccess.o rbtree.o hash.o

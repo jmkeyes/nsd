@@ -1,5 +1,5 @@
 /*
- * $Id: config.h,v 1.10 2002/07/01 16:49:55 alexis Exp $
+ * $Id: config.h,v 1.10.2.2 2002/08/06 15:23:23 alexis Exp $
  *
  * config.h -- nsd(8) local configuration
  *
@@ -84,6 +84,10 @@
 #define	CF_PIDFILE	"/var/run/nsd.pid"
 #endif
 
+#ifndef	CF_FACILITY
+#define	CF_FACILITY	LOG_LOCAL5
+#endif
+
 #define	CF_TCP_MAX_CONNECTIONS	8
 #define	CF_TCP_PORT		53
 #define	CF_TCP_MAX_MESSAGE_LEN	16384
@@ -100,6 +104,7 @@ typedef          int   int32_t;
 typedef unsigned char  u_int8_t;
 typedef unsigned short u_int16_t;
 typedef unsigned int   u_int32_t;
+typedef	unsigned long  in_addr_t;
 #endif
 
 #ifdef __linux__
