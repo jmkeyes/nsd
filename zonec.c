@@ -1,11 +1,11 @@
 /*
- * $Id: zonec.c,v 1.87 2003/04/15 09:57:18 alexis Exp $
+ * $Id: zonec.c,v 1.65 2002/09/19 14:29:43 alexis Exp $
  *
  * zone.c -- reads in a zone file and stores it in memory
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -37,37 +37,16 @@
  * POSSIBILITY OF SUCH DAMAGE.
  *
  */
-#include <config.h>
 
-#include <sys/types.h>
-#include <sys/param.h>
-
-#include <assert.h>
-#include <fcntl.h>
-#include <ctype.h>
-#include <errno.h>
-#include <limits.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <syslog.h>
-#include <unistd.h>
-
-#include <heap.h>
-#include <dns.h>
-#include <zparser.h>
-#include <namedb.h>
-#include <dname.h>
-#include <zonec.h>
+#include "zonec.h"
 
 #include <netinet/in.h>		/* htons, htonl on Linux */
 
-static void zone_addbuf (struct message *, const void *, size_t);
-static void zone_addcompr (struct message *msg, u_char *dname, int offset, int len);
+static void zone_addbuf __P((struct message *, const void *, size_t));
+static void zone_addcompr __P((struct message *, u_char *, u_int16_t, u_char));
 
 /* The database file... */
-char *dbfile = DBFILE;
+char *dbfile = DEFAULT_DBFILE;
 
 /* The database masks */
 u_char bitmasks[NAMEDB_BITMASKLEN * 3];
@@ -84,8 +63,9 @@ int totalerrors = 0;
 
 #ifdef	USE_HEAP_HASH
 
-unsigned long 
-dnamehash (register u_char *dname)
+unsigned long
+dnamehash(dname)
+	register u_char *dname;
 {
         register unsigned long hash = 0;
 	register u_char *p = dname;
@@ -107,7 +87,8 @@ dnamehash (register u_char *dname)
  *
  */
 void *
-xalloc (register size_t size)
+xalloc(size)
+	register size_t	size;
 {
 	register void *p;
 
@@ -119,7 +100,9 @@ xalloc (register size_t size)
 }
 
 void *
-xrealloc (register void *p, register size_t size)
+xrealloc(p, size)
+	register void *p;
+	register size_t	size;
 {
 
 	if((p = realloc(p, size)) == NULL) {
@@ -137,49 +120,48 @@ zone_initmsg(struct message *m)
 	m->bufptr = m->buf;
 }
 
-void 
-zone_print (struct zone *z)
+void
+zone_print(z)
+	struct zone *z;
 {
 	struct rrset *rrset;
-	struct RR rr;
 	u_char *dname;
 	int i;
 
 	printf("; zone %s\n", dnamestr(z->dname));
 	printf("; zone data\n");
 
-	HEAP_WALK(z->data, dname, rrset) {
+	HEAP_WALK(z->data, (char *)dname, rrset) {
 		while(rrset) {
-			rr.dname = dname;
-			rr.ttl = rrset->ttl;
-			rr.class = rrset->class;
-			rr.type = rrset->type;
 			for(i = 0; i < rrset->rrslen; i++) {
-				rr.rdata = rrset->rrs[i];
-				zprintrr(stdout, &rr);
+				printf("%s\t%d\t%s\t%s\t", dnamestr(dname), rrset->ttl, \
+					 classtoa(rrset->class), typetoa(rrset->type));
+				zf_print_rdata(rrset->rrs[i], rrset->fmt);
+				printf("\n");
 			}
 			rrset = rrset->next;
 		}
 	}
 
-	printf("; referrals\n");
-	HEAP_WALK(z->cuts, dname, rrset) {
+	printf("; zone cuts\n");
+	HEAP_WALK(z->cuts, (char *)dname, rrset) {
 		while(rrset) {
-			rr.dname = dname;
-			rr.ttl = rrset->ttl;
-			rr.class = rrset->class;
-			rr.type = rrset->type;
 			for(i = 0; i < rrset->rrslen; i++) {
-				rr.rdata = rrset->rrs[i];
-				zprintrr(stdout, &rr);
+				printf("%s\t%d\t%s\t%s\t", dnamestr(dname), rrset->ttl, \
+					 classtoa(rrset->class), typetoa(rrset->type));
+				zf_print_rdata(rrset->rrs[i], rrset->fmt);
+				printf("\n");
 			}
 			rrset = rrset->next;
 		}
 	}
 }
 
-static void 
-zone_addbuf (struct message *msg, const void *data, size_t size)
+static void
+zone_addbuf(msg, data, size)
+	struct message *msg;
+	const void *data;
+	size_t size;
 {
 	if(msg->bufptr - msg->buf + size > IOBUFSZ) {
 		fflush(stdout);
@@ -187,12 +169,16 @@ zone_addbuf (struct message *msg, const void *data, size_t size)
 		exit(1);	/* XXX: do something smart */
 	}
 
-	memcpy(msg->bufptr, data, size);
+	bcopy(data, msg->bufptr, size);
 	msg->bufptr += size;
 }
 
-static void 
-zone_addcompr (struct message *msg, u_char *dname, int offset, int len)
+static void
+zone_addcompr(msg, dname, offset, len)
+	struct message *msg;
+	u_char *dname;
+	u_int16_t offset;
+	u_char len;
 {
 	if (msg->comprlen >= MAXRRSPP) {
 		fflush(stdout);
@@ -206,8 +192,10 @@ zone_addcompr (struct message *msg, u_char *dname, int offset, int len)
 	msg->comprlen++;
 }
 
-u_int16_t 
-zone_addname (struct message *msg, u_char *dname)
+u_int16_t
+zone_addname(msg, dname)
+	struct message *msg;
+	u_char *dname;
 {
 	/* Lets try rdata dname compression */
 	int rdlength = 0;
@@ -220,8 +208,7 @@ zone_addname (struct message *msg, u_char *dname)
 			/* Walk through the dnames that we have already in the packet */
 			for(j = 0; j < msg->comprlen; j++) {
 				if((msg->compr[j].dnamelen == (dname + 1 + *dname - t)) &&
-					(strncasecmp((char *)t, (char *)msg->compr[j].dname,
-						msg->compr[j].dnamelen) == 0)) {
+					(strncasecmp(t, msg->compr[j].dname, msg->compr[j].dnamelen) == 0)) {
 					/* Match, first write down unmatched part */
 					zone_addbuf(msg, dname + 1, t - (dname + 1));
 					rdlength += (t - (dname + 1));
@@ -252,18 +239,24 @@ zone_addname (struct message *msg, u_char *dname)
 
 
 
-u_int16_t 
-zone_addrrset (struct message *msg, u_char *dname, struct rrset *rrset)
+u_int16_t
+zone_addrrset(msg, dname, rrset)
+	struct message *msg;
+	u_char *dname;
+	struct rrset *rrset;
 {
 	u_int16_t class = htons(CLASS_IN);
 	int32_t ttl;
-	u_int16_t **rdata;
-	u_char *rdlengthptr;
+	union zf_rdatom *rdata;
+	char *rdlengthptr;
+	char *f;
+	size_t size;
 	u_int16_t rdlength;
 	u_int16_t type;
 	int rrcount;
 	int i, j;
 
+	u_int32_t l;
 	u_int16_t s;
 
 	if(rrset == NULL) return 0;
@@ -302,6 +295,7 @@ zone_addrrset (struct message *msg, u_char *dname, struct rrset *rrset)
 		
 		msg->rrsetsoffs[msg->rrsetsoffslen++] = (msg->bufptr - msg->buf) | (rrset->color ? NAMEDB_RRSET_WHITE : 0);
 
+		rdata = rrset->rrs[j];
 
 		/* dname */
 		if(*(dname + 1) == 1 && *(dname + 2) == '*') {
@@ -333,7 +327,6 @@ zone_addrrset (struct message *msg, u_char *dname, struct rrset *rrset)
 		/* rdlength */
 		rdlengthptr = msg->bufptr;
 		rdlength = 0;
-
 		/*
 		 * Reserver space for rdata length.  The actual length
 		 * is filled in below.
@@ -341,24 +334,53 @@ zone_addrrset (struct message *msg, u_char *dname, struct rrset *rrset)
 		zone_addbuf(msg, &rdlength, sizeof(u_int16_t));
 
 		/* Pack the rdata */
-		
-		for(rdata = rrset->rrs[j]; *rdata; rdata++) {
-			/* Is it a domain name? */
-			if(**rdata == 0xffff) {
+		for(size = 0, i = 0, f = rrset->fmt; *f; f++, i++, size = 0) {
+			switch(*f) {
+			case '4':
+				size = sizeof(u_int32_t);
+				zone_addbuf(msg, &rdata[i].l, size);
+				break;
+			case 'l':
+				size = sizeof(int32_t);
+				l = htonl(rdata[i].l);
+				zone_addbuf(msg, &l, size);
+				break;
+			case '6':
+				size = IP6ADDRLEN;
+				zone_addbuf(msg, rdata[i].p, size);
+				break;
+			case 'L':
+				size = LOCRDLEN;
+				zone_addbuf(msg, rdata[i].p, size);
+				break;
+			case 'n':
 				if (msg->dnameslen >= MAXRRSPP) {
 					fflush(stdout);
 					fprintf(stderr, "zonec: too many domain names\n");
 					exit(1);
 				}
-				rdlength += zone_addname(msg, (u_char *)(*rdata + 1));
-				msg->dnames[msg->dnameslen++] = (u_char *)(*rdata + 1);
-			} else {
-				zone_addbuf(msg, *rdata + 1, **rdata);
-				rdlength += **rdata;
+				
+				size = 0;
+				rdlength += zone_addname(msg, rdata[i].p);
+				msg->dnames[msg->dnameslen++] = rdata[i].p;
+				break;
+			case 't':
+				size = *((u_char *)rdata[i].p) + 1;
+				zone_addbuf(msg, rdata[i].p, size);
+				break;
+			case 's':
+				size = sizeof(u_int16_t);
+				s = htons(rdata[i].s);
+				zone_addbuf(msg, &s, size);
+				break;
+			default:
+				fprintf(stderr, "zonec: panic! uknown atom in format %c\n", *f);
+				return rrcount;
 			}
+			rdlength += size;
 		}
 		rdlength = htons(rdlength);
-		memcpy(rdlengthptr, &rdlength, sizeof(u_int16_t));
+		bcopy(&rdlength, rdlengthptr, sizeof(u_int16_t));
 	}
 	return rrcount;
 }
@@ -368,7 +390,10 @@ zone_addrrset (struct message *msg, u_char *dname, struct rrset *rrset)
  *
  */
 struct domain *
-zone_addanswer (struct domain *d, struct message *msg, int type)
+zone_addanswer(d, msg, type)
+	struct domain *d;
+	struct message *msg;
+	u_int16_t type;
 {
 	struct answer *a;
 	size_t size, datasize;
@@ -397,9 +422,9 @@ zone_addanswer (struct domain *d, struct message *msg, int type)
 	ANSWER_RRSLEN(a) = msg->rrsetsoffslen;
 	ANSWER_DATALEN(a) = datasize;
 
-	memcpy(ANSWER_PTRS_PTR(a), msg->pointers, sizeof(u_int16_t) * msg->pointerslen);
-	memcpy(ANSWER_RRS_PTR(a), msg->rrsetsoffs, sizeof(u_int16_t) * msg->rrsetsoffslen);
-	memcpy(ANSWER_DATA_PTR(a), msg->buf, datasize);
+	bcopy(msg->pointers, ANSWER_PTRS_PTR(a), sizeof(u_int16_t) * msg->pointerslen);
+	bcopy(msg->rrsetsoffs, ANSWER_RRS_PTR(a), sizeof(u_int16_t) * msg->rrsetsoffslen);
+	bcopy(msg->buf, ANSWER_DATA_PTR(a), datasize);
 
 	d->size += size;
 
@@ -410,8 +435,9 @@ zone_addanswer (struct domain *d, struct message *msg, int type)
  * Frees all the data structures associated with the zone
  *
  */
-void 
-zone_free (struct zone *z)
+void
+zone_free(z)
+	struct zone *z;
 {
 	if(z) {
 		if(z->dname) free(z->dname);
@@ -426,47 +452,38 @@ zone_free (struct zone *z)
  *
  */
 struct zone *
-zone_read (char *name, char *zonefile)
+zone_read(name, zonefile)
+	char *name;
+	char *zonefile;
 {
 	heap_t *h;
 	int i;
-	u_char *t, *dname;
 
 	struct zone *z;
-	struct zparser *parser;
-	struct RR *rr;
+	struct zf *zf;
+	struct zf_entry *rr;
 	struct rrset *rrset, *r;
 
 	/* Allocate new zone structure */
 	z = xalloc(sizeof(struct zone));
-	memset(z, 0, sizeof(struct zone));
+	bzero(z, sizeof(struct zone));
 
 	/* Get the zone name */
-	if((z->dname = dnamedup(strdname(name, ROOT))) == NULL) {
+	if((z->dname = strdname(name, ROOT_ORIGIN)) == NULL) {
 		zone_free(z);
 		return NULL;
 	}
-
-#ifndef ROOT_SERVER
-	/* Is it a root zone? Are we a root server then? Idiot proof. */
-	if(dnamecmp(z->dname, (u_char *)"\001") == 0) {
-		fprintf(stderr, "zonec: Not configured as a root server. See the documentation.\n");
-		zone_free(z);
-		return NULL;
-	}
-#endif
 
 	/* Open the zone file */
-	if((parser = zopen(zonefile, 3600, CLASS_IN, name)) == NULL) {
-		fprintf(stderr, "zonec: unable to open %s: %s\n", zonefile, strerror(errno));
+	if((zf = zf_open(zonefile, name)) == NULL) {
 		zone_free(z);
 		return NULL;
 	}
 
 	/* Two heaps: zone cuts and other data */
 #ifdef USE_HEAP_RBTREE
-	z->cuts = heap_create(xalloc, (int (*)(void *, void *))dnamecmp);
-	z->data = heap_create(xalloc, (int (*)(void *, void *))dnamecmp);
+	z->cuts = heap_create(xalloc, dnamecmp);
+	z->data = heap_create(xalloc, dnamecmp);
 #else
 # ifdef USE_HEAP_HASH
 	z->cuts = heap_create(xalloc, dnamecmp, dnamehash, NAMEDB_HASH_SIZE);
@@ -476,26 +493,26 @@ zone_read (char *name, char *zonefile)
 	z->soa = z->ns = NULL;
 
 	/* Read the file */
-	while((rr = zread(parser)) != NULL) {
+	while((rr = zf_read(zf)) != NULL) {
 
 		/* Report progress... */
 		if(vflag) {
-			if((parser->lines % 100000) == 0) {
-				printf("zonec: reading zone \"%s\": %lu\r", dnamestr(z->dname), parser->lines);
+			if((zf->lines % 100000) == 0) {
+				printf("zonec: reading zone \"%s\": %d\r", dnamestr(z->dname), zf->lines);
 				fflush(stdout);
 			}
 		}
 
 		/* We only support IN class */
 		if(rr->class != CLASS_IN) {
-			zerror(parser, "wrong class");
+			zf_error(zf, "wrong class");
 			continue;
 		}
 
 		/* Is this in-zone data? */
 		if((*z->dname > *rr->dname) ||
-			(memcmp(z->dname + 1, rr->dname + (*rr->dname - *z->dname) + 1, *z->dname) != 0)) {
-			zerror(parser, "out of zone data");
+			(bcmp(z->dname + 1, rr->dname + (*rr->dname - *z->dname) + 1, *z->dname) != 0)) {
+			zf_error(zf, "out of zone data");
 			continue;
 		}
 
@@ -519,80 +536,63 @@ zone_read (char *name, char *zonefile)
 		/* Do we have this particular rrset? */
 		if(r == NULL) {
 			r = xalloc(sizeof(struct rrset));
-			r->type = 0;
-		}
-		if(r->type == 0) {
+
 			r->next = NULL;
 			r->type = rr->type;
 			r->class = rr->class;
 			r->ttl = rr->ttl;
+			r->fmt = rr->rdatafmt;
 			r->rrslen = 1;
-			r->rrs = xalloc(sizeof(u_int16_t *) * 2);
+			r->rrs = xalloc(sizeof(union zf_rdatom *));
 			r->glue = r->color = 0;
 			r->rrs[0] = rr->rdata;
 
 			/* Add it */
 			if(rrset == NULL) {
 				/* XXX We can use this more smart... */
-				heap_insert(h, dnamedup(rr->dname), r, 1);
+				heap_insert(h, strdup(rr->dname), r, 1);
 			} else {
 				r->next = rrset->next;
 				rrset->next = r;
 			}
 		} else {
 			if(r->ttl != rr->ttl) {
-				zerror(parser, "ttl doesnt match the ttl of the rrset");
+				zf_error(zf, "rr ttl doesnt match the ttl of the rdataset");
 				continue;
 			}
-
 			/* Search for possible duplicates... */
 			for(i = 0; i < r->rrslen; i++) {
-				if(!zrdatacmp(r->rrs[i], rr->rdata))
+				if(!zf_cmp_rdata(r->rrs[i], rr->rdata, rr->rdatafmt))
 					break;
 			}
 
 			/* Discard the duplicates... */
 			if(i < r->rrslen) {
-				/* zerror(parser, "duplicate record"); */
-				zrdatafree(rr->rdata);
+				/* zf_error(zf, "duplicate record"); */
+				zf_free_rdata(rr->rdata, rr->rdatafmt);
 				continue;
 			}
 
 			/* Add it... */
-			r->rrs = xrealloc(r->rrs, ((r->rrslen + 2) * sizeof(u_int16_t *)));
+			r->rrs = xrealloc(r->rrs, ((r->rrslen + 1) * sizeof(union zf_rdatom *)));
 			r->rrs[r->rrslen++] = rr->rdata;
-			r->rrs[r->rrslen] = NULL;
 		}
-
-		/* Now create necessary empty nodes... */
-		dname = dnamedup(rr->dname);
-		for(t = dname + 2 + *(dname + 1); (t < (dname + 1 + *dname - *z->dname)); t += *t + 1) {
-			*(t - 1) = dname + *dname - t + 1;
-			if((rrset = heap_search(z->data, t - 1)) == NULL) {
-				r = xalloc(sizeof(struct rrset));
-				memset(r, 0, sizeof(struct rrset));
-
-				/* Add it */
-				heap_insert(z->data, dnamedup(t - 1), r, 1);
-			}
-		}
-		free(dname);
 
 		/* Check we have SOA */
 		if(z->soa == NULL) {
 			if(rr->type != TYPE_SOA) {
-				zerror(parser, "missing SOA record on top of the zone");
+				zf_error(zf, "missing SOA record on top of the zone");
 			} else {
 				if(dnamecmp(rr->dname, z->dname) != 0) {
-					zerror(parser, "SOA record with invalid domain name");
+					zf_error(zf, "SOA record with invalid domain name");
 				} else {
 					z->soa = r;
 				}
 			}
 		} else {
 			if(rr->type == TYPE_SOA) {
-				zerror(parser, "duplicate SOA record discarded");
-				zrdatafree(r->rrs[--r->rrslen]);
+				zf_error(zf, "duplicate SOA record discarded");
+				zf_free_rdata(r->rrs[--r->rrslen], r->fmt);
 			}
 		}
 
@@ -604,8 +604,8 @@ zone_read (char *name, char *zonefile)
 	}
 
 	fflush(stdout);
-	fprintf(stderr, "zonec: reading zone \"%s\": %d errors\n", dnamestr(z->dname), parser->errors);
-	totalerrors += parser->errors;
+	fprintf(stderr, "zonec: reading zone \"%s\": %d errors\n", dnamestr(z->dname), zf->errors);
+	totalerrors += zf->errors;
 	return z;
 }
 
@@ -655,7 +655,7 @@ zone_addzonecut(u_char *dkey, u_char *dname, struct rrset *rrset, struct zone *z
 
 		/* This is a glue record */
 		if((*dkey < *msg.dnames[i]) &&
-		    (memcmp(dkey + 1, msg.dnames[i] + (*msg.dnames[i] - *dkey) + 1, *dkey) == 0)) {
+		    (bcmp(dkey + 1, msg.dnames[i] + (*msg.dnames[i] - *dkey) + 1, *dkey) == 0)) {
 			if(additional == NULL) {
 				fprintf(stderr, "zonec: missing glue record for %s\n", dnamestr(msg.dnames[i]));
 			} else {
@@ -684,7 +684,7 @@ zone_addzonecut(u_char *dkey, u_char *dname, struct rrset *rrset, struct zone *z
 
 	/* Add a terminator... */
 	d = xrealloc(d, d->size + sizeof(u_int32_t));
-	memset((char *)d + d->size, 0, sizeof(u_int32_t));
+	bzero((char *)d + d->size, sizeof(u_int32_t));
 	d->size += sizeof(u_int32_t);
 
 	/* Store it */
@@ -713,116 +713,109 @@ zone_adddata(u_char *dname, struct rrset *rrset, struct zone *z, struct namedb *
 	/* This is not a wildcard */
 	star = 0;
 
-	/* Node with data? */
-	if(rrset->type != 0) {
-		/* Is this a CNAME */
-		if(rrset->type == TYPE_CNAME) {
-			/* XXX Not necessarily with NXT, BUT OH OH * assert(rrset->next == NULL); */
-			cnamerrset = rrset;
-			cname = (u_char *)(*cnamerrset->rrs[0]+1);
-			rrset = heap_search(z->data, cname);
-		} else {
+	/* Is this a CNAME */
+	if(rrset->type == TYPE_CNAME) {
+		assert(rrset->next == NULL);
+		cnamerrset = rrset;
+		cname = (*cnamerrset->rrs)[0].p;	/* The name of the target set */
+		rrset = heap_search(z->data, cname);
+	} else {
+		cnamerrset = NULL;
+		cname = NULL;
+	}
+
+	/* Initialize message for TYPE_ANY */
+	zone_initmsg(&msgany);
+
+	/* XXX This is a bit confusing, needs renaming:
+	 *
+	 * cname - name of the target set
+	 * rrset - target rr set
+	 * cnamerrset - cname own rrset 
+	 * dname - cname's rrset owner name
+	 */
+	while(rrset || cnamerrset) {
+		/* Initialize message */
+		zone_initmsg(&msg);
+
+		/* If we're done with the target sets, add CNAME itself */
+		if(rrset == NULL) {
+			rrset = cnamerrset;
 			cnamerrset = NULL;
-			cname = NULL;
 		}
 
-		/* Initialize message for TYPE_ANY */
-		zone_initmsg(&msgany);
-
-		/* XXX This is a bit confusing, needs renaming:
-		 *
-		 * cname - name of the target set
-		 * rrset - target rr set
-		 * cnamerrset - cname own rrset 
-		 * dname - cname's rrset owner name
-		 */
-		while(rrset || cnamerrset) {
-			/* Initialize message */
-			zone_initmsg(&msg);
-
-			/* If we're done with the target sets, add CNAME itself */
-			if(rrset == NULL) {
-				rrset = cnamerrset;
-				cnamerrset = NULL;
-			}
-
-			/* Put the dname into compression array */
-			for(namedepth = 0, nameptr = dname + 1; *nameptr; nameptr += *nameptr + 1, namedepth++) {
-				/* Do we have a wildcard? */
-				if((namedepth == 0) && (*(nameptr+1) == '*')) {
-					star = 1;
-				} else {
-					if((dname + *dname + 1 - nameptr) > 1) {
-						zone_addcompr(&msg, nameptr,
-							      (nameptr - (dname + 1)) | 0xc000,
-							      dname + *dname + 1 - nameptr);
-						zone_addcompr(&msgany, nameptr,
-							      (nameptr - (dname + 1)) | 0xc000,
-							      dname + *dname + 1 - nameptr);
-					}
-				}
-			}
-
-			/* Are we doing CNAME? */
-			if(cnamerrset) {
-				/* Add CNAME itself */
-				msg.ancount += zone_addrrset(&msg, dname, cnamerrset);
-
-				/* Add answer */
-				msg.ancount += zone_addrrset(&msg, cname, rrset);
+		/* Put the dname into compression array */
+		for(namedepth = 0, nameptr = dname + 1; *nameptr; nameptr += *nameptr + 1, namedepth++) {
+			/* Do we have a wildcard? */
+			if((namedepth == 0) && (*(nameptr+1) == '*')) {
+				star = 1;
 			} else {
-				/* Answer section */
-				msg.ancount += zone_addrrset(&msg, dname, rrset);
-
-				/* Answer section of message any */
-				msgany.ancount += zone_addrrset(&msgany, dname, rrset);
-			}
-
-			/* Authority section */
-			msg.nscount = zone_addrrset(&msg, z->dname, z->ns);
-
-			/* Additional section */
-			for(i = 0; i < msg.dnameslen; i++) {
-				additional = heap_search(z->data, msg.dnames[i]);
-				while(additional) {
-					if(additional->type == TYPE_A || additional->type == TYPE_AAAA) {
-						msg.arcount += zone_addrrset(&msg, msg.dnames[i], additional);
-					}
-					additional = additional->next;
+				if((dname + *dname + 1 - nameptr) > 1) {
+					zone_addcompr(&msg, nameptr,
+						      (nameptr - (dname + 1)) | 0xc000,
+						      dname + *dname + 1 - nameptr);
+					zone_addcompr(&msgany, nameptr,
+						      (nameptr - (dname + 1)) | 0xc000,
+						      dname + *dname + 1 - nameptr);
 				}
 			}
-
-			/* Add this answer */
-			d = zone_addanswer(d, &msg, rrset->type);
-
-			/* Set the masks */
-			if(rrset->type == TYPE_SOA)
-				NAMEDB_SETBITMASK(db, NAMEDB_AUTHMASK, namedepth);
-
-			rrset = rrset->next;
 		}
 
-		/* Authority section for TYPE_ANY */
-		msgany.nscount = zone_addrrset(&msgany, z->dname, z->ns);
+		/* Are we doing CNAME? */
+		if(cnamerrset) {
+			/* Add CNAME itself */
+			msg.ancount += zone_addrrset(&msg, dname, cnamerrset);
 
-		/* Additional section for TYPE_ANY */
-		for(i = 0; i < msgany.dnameslen; i++) {
-			additional = heap_search(z->data, msgany.dnames[i]);
+			/* Add answer */
+			msg.ancount += zone_addrrset(&msg, cname, rrset);
+		} else {
+			/* Answer section */
+			msg.ancount += zone_addrrset(&msg, dname, rrset);
+
+			/* Answer section of message any */
+			msgany.ancount += zone_addrrset(&msgany, dname, rrset);
+		}
+
+		/* Authority section */
+		msg.nscount = zone_addrrset(&msg, z->dname, z->ns);
+
+		/* Additional section */
+		for(i = 0; i < msg.dnameslen; i++) {
+			additional = heap_search(z->data, msg.dnames[i]);
 			while(additional) {
 				if(additional->type == TYPE_A || additional->type == TYPE_AAAA) {
-					msgany.arcount += zone_addrrset(&msgany, msgany.dnames[i], additional);
+					msg.arcount += zone_addrrset(&msg, msg.dnames[i], additional);
 				}
 				additional = additional->next;
 			}
 		}
 
 		/* Add this answer */
-		d = zone_addanswer(d, &msgany, TYPE_ANY);
-	} else {
-		/* This is an empty node...*/
-		d->flags |= NAMEDB_STEALTH;
-		for(namedepth = 0, nameptr = dname + 1; *nameptr; nameptr += *nameptr + 1, namedepth++);
+		d = zone_addanswer(d, &msg, rrset->type);
+
+		/* Set the masks */
+		if(rrset->type == TYPE_SOA)
+			NAMEDB_SETBITMASK(db, NAMEDB_AUTHMASK, namedepth);
+
+		rrset = rrset->next;
 	}
+
+	/* Authority section for TYPE_ANY */
+	msgany.nscount = zone_addrrset(&msgany, z->dname, z->ns);
+
+	/* Additional section for TYPE_ANY */
+	for(i = 0; i < msgany.dnameslen; i++) {
+		additional = heap_search(z->data, msgany.dnames[i]);
+		while(additional) {
+			if(additional->type == TYPE_A || additional->type == TYPE_AAAA) {
+				msgany.arcount += zone_addrrset(&msgany, msgany.dnames[i], additional);
+			}
+			additional = additional->next;
+		}
+	}
+
+	/* Add this answer */
+	d = zone_addanswer(d, &msgany, TYPE_ANY);
 
 	/* Set the data mask */
 	NAMEDB_SETBITMASK(db, NAMEDB_DATAMASK, namedepth);
@@ -832,7 +825,7 @@ zone_adddata(u_char *dname, struct rrset *rrset, struct zone *z, struct namedb *
 
 	/* Add a terminator... */
 	d = xrealloc(d, d->size + sizeof(u_int32_t));
-	memset((char *)d + d->size, 0, sizeof(u_int32_t));
+	bzero((char *)d + d->size, sizeof(u_int32_t));
 	d->size += sizeof(u_int32_t);
 
 	/* Store it */
@@ -848,8 +841,10 @@ zone_adddata(u_char *dname, struct rrset *rrset, struct zone *z, struct namedb *
  *
  * Returns zero if success.
  */
-int 
-zone_dump (struct zone *z, struct namedb *db)
+int
+zone_dump(z, db)
+	struct 	zone *z;
+	struct namedb *db;
 {
 	u_char dnamebuf[MAXDOMAINLEN+1];
 	struct rrset *rrset;
@@ -877,7 +872,7 @@ zone_dump (struct zone *z, struct namedb *db)
 	}
 
 	/* AUTHORITY CUTS */
-	HEAP_WALK(z->cuts, dname, rrset) {
+	HEAP_WALK(z->cuts, (char *)dname, rrset) {
 		/* Report progress... */
 		if(vflag) {
 			if((++progress % fraction) == 0) {
@@ -898,7 +893,7 @@ zone_dump (struct zone *z, struct namedb *db)
 	}
 
 	/* OTHER DATA */
-	HEAP_WALK(z->data, dname, rrset) {
+	HEAP_WALK(z->data, (char *)dname, rrset) {
 		/* Report progress... */
 		if(vflag) {
 			if((++progress % fraction) == 0) {
@@ -917,7 +912,7 @@ zone_dump (struct zone *z, struct namedb *db)
 			continue;
 
 		/* This is an ugly slow way to find out of zone data... */
-		memcpy(dnamebuf, dname, *dname + 1);
+		bcopy(dname, dnamebuf, *dname + 1);
 		for(nameptr = dnamebuf + 1; *(nameptr - 1) > *z->dname; 
 				nameptr += *nameptr + 1, *(nameptr - 1) = dnamebuf + *dnamebuf - nameptr + 1) {
 
@@ -934,13 +929,9 @@ zone_dump (struct zone *z, struct namedb *db)
 		/* CNAME & other data */
 		if((rrset->type == TYPE_CNAME && rrset->next != NULL) ||
 			(rrset->next != NULL && rrset->next->type == TYPE_CNAME)) {
-			if(rrset->type != TYPE_NXT && rrset->next->type != TYPE_NXT) {
-				if(rrset->type != TYPE_SIG && rrset->next->type != TYPE_SIG) {
-					fprintf(stderr, "CNAME and other data for %s\n", dnamestr(z->dname));
-					totalerrors++;
-					continue;
-				}
-			}
+			fprintf(stderr, "CNAME and other data for %s\n", dnamestr(z->dname));
+			totalerrors++;
+			continue;
 		}
 
 		/* Add it to the database */
@@ -953,8 +944,8 @@ zone_dump (struct zone *z, struct namedb *db)
 	return 0;
 }
 
-void 
-usage (void)
+int
+usage()
 {
 	fprintf(stderr, "usage: zonec [-f database] [-d directory] zone-list-file\n");
 	exit(1);
@@ -963,8 +954,10 @@ usage (void)
 extern char *optarg;
 extern int optind;
 
-int 
-main (int argc, char **argv)
+int
+main(argc, argv)
+	int argc;
+	char **argv;
 {
 	char *zonename, *zonefile, *s;
 	char buf[LINEBUFSZ];

@@ -1,7 +1,7 @@
 /*
- * $Id: heap.h,v 1.12 2002/05/23 13:20:57 alexis Exp $
+ * $Id: config.h,v 1.19.2.7 2003/06/12 08:37:13 erik Exp $
  *
- * heap.h -- generic heap
+ * config.h -- nsd(8) local configuration
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
@@ -38,57 +38,89 @@
  *
  */
 
-#ifndef _HEAP_H_
-#define	_HEAP_H_
+#ifndef	_CONFIG_H_
+#define	_CONFIG_H_
 
-#if !defined(__P)
-#	if defined(__STDC__)
-#		define __P(protos)     protos          /* full-blown ANSI C */
-# 	else
-# 		define __P(protos)
-# 	endif
+#ifndef CF_VERSION
+#define	CF_VERSION	"NSD-1.0.3"
 #endif
 
-#ifndef	NULL
-#define	NULL	(void *)0
+#ifndef	CF_IDENTITY
+#define	CF_IDENTITY	"unidentified nameserver"
 #endif
 
-#if !defined(USE_HEAP_RBTREE) && !defined(USE_HEAP_HASH)
-#define	USE_HEAP_RBTREE
+#ifndef	CF_USERNAME
+#define	CF_USERNAME	""
 #endif
 
-#if defined(USE_HEAP_RBTREE)
+#ifdef HOSTS_ACCESS
+#ifndef	AXFR_DAEMON
+#define	AXFR_DAEMON	"axfr"
+#endif
+#ifndef AXFR_DAEMON_PREFIX
+#define	AXFR_DAEMON_PREFIX "axfr-"
+#endif
+#endif /* HOSTS_ACCESS */
 
-#include "rbtree.h"
-
-#define	heap_t	rbtree_t
-#define	heap_create	rbtree_create
-#define	heap_insert	rbtree_insert
-#define	heap_search	rbtree_search
-#define	heap_delete	rbtree_delete
-#define	heap_destroy	rbtree_destroy
-#define	heap_first	rbtree_first
-#define	heap_next	rbtree_next
-#define	heap_last	rbtree_last
-#define	HEAP_WALK	RBTREE_WALK
-
-#else
-# if defined(USE_HEAP_HASH)
-
-#include "hash.h"
-
-#define	heap_t	hash_t
-#define	heap_create	hash_create
-#define	heap_insert	hash_insert
-#define	heap_search	hash_search
-#define	heap_delete	hash_delete
-#define	heap_destroy	hash_destroy
-#define	heap_first	hash_first
-#define	heap_next	hash_next
-#define	heap_last	hash_last
-#define	HEAP_WALK	HASH_WALK
-
-# endif
+#ifndef	CF_FACILITY
+#define	CF_FACILITY	LOG_DAEMON
 #endif
 
-#endif /* _HEAP_H_ */
+#define	MAXSYSLOGMSGLEN	512
+#define	CF_MAX_INTERFACES	8
+
+#ifdef	DEBUG
+
+#ifndef CF_DBFILE
+#define	CF_DBFILE	"nsd.db"
+#endif
+
+#ifndef CF_PIDFILE
+#define	CF_PIDFILE	"nsd.pid"
+#endif
+
+#define	CF_TCP_MAX_CONNECTIONS	8
+#define	CF_TCP_PORT		4096
+#define	CF_TCP_MAX_MESSAGE_LEN	16384
+#define	CF_UDP_PORT		4096
+#define	CF_UDP_MAX_MESSAGE_LEN	512
+#define	CF_EDNS_MAX_MESSAGE_LEN	4096
+
+#else	/* DEBUG */
+
+#ifndef CF_DBFILE
+#define	CF_DBFILE	"/var/db/nsd.db"
+#endif
+
+#ifndef CF_PIDFILE
+#define	CF_PIDFILE	"/var/run/nsd.pid"
+#endif
+
+#define	CF_TCP_BACKLOG		5
+#define	CF_TCP_MAX_CONNECTIONS	8
+#define	CF_TCP_PORT		53
+#define	CF_TCP_MAX_MESSAGE_LEN	16384
+#define	CF_TCP_TIMEOUT		120
+#define	CF_UDP_PORT		53
+#define	CF_UDP_MAX_MESSAGE_LEN	512
+#define	CF_EDNS_MAX_MESSAGE_LEN	4096
+
+#endif	/* DEBUG */
+
+#ifdef __sun
+typedef          char  int8_t;
+typedef          short int16_t;
+typedef          int   int32_t;
+typedef unsigned char  u_int8_t;
+typedef unsigned short u_int16_t;
+typedef unsigned int   u_int32_t;
+
+#define	USE_INET_ADDR
+#endif
+
+#ifdef __linux__
+#define _BSD_SOURCE
+#define	_POSIX_C_SOURCE 2
+#endif /* __linux__ */
+
+#endif /* _CONFIG_H_ */

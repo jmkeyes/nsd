@@ -1,11 +1,11 @@
 /*
- * $Id: zonec.h,v 1.22 2003/03/20 10:31:25 alexis Exp $
+ * $Id: zonec.h,v 1.16.4.1 2003/06/12 08:37:17 erik Exp $
  *
  * zone.h -- internal zone representation
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -38,18 +38,41 @@
  *
  */
 
-#ifndef _ZONEC_H_
-#define _ZONEC_H_
+#include "config.h"
+
+#include <sys/types.h>
+#include <sys/param.h>
+
+#include <assert.h>
+#include <fcntl.h>
+#include <ctype.h>
+#include <errno.h>
+#include <limits.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <syslog.h>
+#include <unistd.h>
+
+#include "heap.h"
+#include "dns.h"
+#include "zf.h"
+#include "namedb.h"
+
+#define	DEFAULT_DBFILE	"nsd.db"
 
 struct rrset {
 	struct rrset *next;
 	u_int16_t type;
 	u_int16_t class;
 	int32_t ttl;
+	char *fmt;
+	u_int16_t rrslen;
 	int glue;
 	int color;
-	u_int16_t rrslen;
-	u_int16_t ***rrs;
+	union zf_rdatom **rrs;
 };
 
 struct zone {
@@ -62,7 +85,6 @@ struct zone {
 
 #define MAXRRSPP	1024
 #define	IOBUFSZ		MAXRRSPP * 64
-#define	LINEBUFSZ	1024
 
 struct message {
 	u_char *bufptr;
@@ -85,19 +107,3 @@ struct message {
 	} compr[MAXRRSPP];
 	u_char buf[IOBUFSZ];
 };
-
-/* zonec.c */
-unsigned long dnamehash(register u_char *dname);
-void *xalloc(register size_t size);
-void *xrealloc(register void *p, register size_t size);
-void zone_initmsg(struct message *m);
-void zone_print(struct zone *z);
-u_int16_t zone_addname(struct message *msg, u_char *dname);
-u_int16_t zone_addrrset(struct message *msg, u_char *dname, struct rrset *rrset);
-struct domain *zone_addanswer(struct domain *d, struct message *msg, int type);
-void zone_free(struct zone *z);
-struct zone *zone_read(char *name, char *zonefile);
-int zone_dump(struct zone *z, struct namedb *db);
-void usage(void);
-
-#endif /* _ZONEC_H_ */

@@ -1,12 +1,11 @@
 /*
- * $Id: dns.h,v 1.11 2003/04/29 13:40:52 alexis Exp $
+ * $Id: dns.h,v 1.7 2002/09/09 10:59:15 alexis Exp $
  *
- * dns.h -- everything we wanted to know but were afraid
- *		to ask about DNS
+ * dns.h -- all we need to know about DNS protocol, nsd(8)
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -39,48 +38,6 @@
  *
  */
 
-#ifndef _DNS_H_
-#define _DNS_H_
-
-/*
- *                                    1  1  1  1  1  1
- *      0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5
- *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- *    |                      ID                       |
- *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- *    |QR|   Opcode  |AA|TC|RD|RA|   Z    |   RCODE   |
- *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- *    |                    QDCOUNT                    |
- *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- *    |                    ANCOUNT                    |
- *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- *    |                    NSCOUNT                    |
- *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- *    |                    ARCOUNT                    |
- *    +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
- *
- */
-
-struct dns_header {
-	u_int16_t	id;
-
-	u_int16_t	
-			rd:1,
-			tc:1,
-			aa:1,
-			opcode:4,
-			qr:1,
-			rcode:4,
-			z:3,
-			ra:1;
-
-	u_int16_t	qdcount,
-			ancount,
-			nscount,
-			arcount;
-};
-
-
 /* RFC1035 */
 #define	CLASS_IN	1	/* Class IN */
 #define	CLASS_CHAOS	3	/* Class CHAOS */
@@ -102,23 +59,18 @@ struct dns_header {
 #define TYPE_MINFO	14	/* mailbox or mail list information */
 #define TYPE_MX		15	/* mail exchange */
 #define TYPE_TXT	16	/* text strings */
-#define	TYPE_RP		17	/* RFC1183 */
-#define	TYPE_AFSDB	18	/* RFC1183 */
-#define	TYPE_SIG	24	/* RFC2065 */
-#define	TYPE_KEY	25	/* RFC2065 */
 #define TYPE_AAAA	28	/* ipv6 address */
 #define TYPE_LOC	29	/* LOC record  RFC1876 */
-#define	TYPE_NXT	30	/* RFC2065 */
 #define	TYPE_SRV	33	/* SRV record RFC2782 */
 #define	TYPE_NAPTR	35	/* NAPTR record RFC2915 */
-#define	TYPE_OPT	41	/* Pseudo OPT record... */
-#define	TYPE_DS		43	/* draft-ietf-dnsext-delegation */
-#define	TYPE_IXFR	251
+#define	TYPE_AFSDB	18	/* RFC1183 */
+#define	TYPE_RP		17	/* RFC1183 */
 #define	TYPE_AXFR	252
+#define	TYPE_IXFR	251
 #define	TYPE_MAILB	253 	/* A request for mailbox-related records (MB, MG or MR) */
 #define	TYPE_MAILA	254	/* A request for mail agent RRs (Obsolete - see MX) */
 #define TYPE_ANY	255	/* any type (wildcard) */
 
-#define MAXDOMAINLEN	255
+#define	TYPE_OPT	41	/* Pseudo OPT record... */
 
-#endif /* _DNS_H_ */
+#define MAXDOMAINLEN	255
