@@ -1,11 +1,11 @@
 /*
- * $Id: nsd.h,v 1.51 2003/03/20 10:52:11 alexis Exp $
+ * $Id: nsd.h,v 1.43.2.6 2003/06/12 08:41:52 erik Exp $
  *
  * nsd.h -- nsd(8) definitions and prototypes
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -41,6 +41,33 @@
 #ifndef	_NSD_H_
 #define	_NSD_H_
 
+#include "config.h"
+
+#include <sys/types.h>
+#include <sys/param.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/uio.h>
+#include <sys/wait.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#include <assert.h>
+#include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <pwd.h>
+#include <signal.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <syslog.h>
+#include <time.h>
+#include <unistd.h>
+
 #define	NSD_RUN	0
 #define	NSD_RELOAD 1
 #define	NSD_SHUTDOWN 2
@@ -51,7 +78,6 @@
 
 #ifdef BIND8_STATS
 
-/* Counter for statistics */
 typedef	unsigned long stc_t;
 
 #define	LASTELEM(arr)	(sizeof(arr) / sizeof(arr[0]) - 1)
@@ -71,7 +97,7 @@ typedef	unsigned long stc_t;
 /* NSD configuration and run-time variables */
 struct	nsd {
 	/* Run-time variables */
-	pid_t		pid[TCP_MAX_CONNECTIONS + 1];
+	pid_t		pid[CF_TCP_MAX_CONNECTIONS + 1];
 	int		mode;
 	struct namedb	*db;
 	int		debug;
@@ -100,7 +126,7 @@ struct	nsd {
 	struct	{
 		struct sockaddr_in	addr;
 		int		s;
-	} udp[MAX_INTERFACES];
+	} udp[CF_MAX_INTERFACES];
 
 #ifdef INET6
 	struct {
@@ -140,20 +166,23 @@ struct	nsd {
 #endif /* BIND8_STATS */
 };
 
-/* nsd.c */
-void *xalloc(register size_t size);
-void *xrealloc(register void *p, register size_t size);
-void usage(void);
-pid_t readpid(char *file);
-int writepid(struct nsd *nsd);
-void sig_handler(int sig);
-void bind8_stats(struct nsd *nsd);
+#include "dns.h"
+#include "namedb.h"
+#include "query.h"
+
+void *xalloc __P((size_t));
+void *xrealloc __P((void *, size_t));
+int server __P((struct nsd *));
+int writepid __P((struct nsd *));
+void bind8_stats __P((struct nsd *));
 
 /* server.c */
-int server_init(struct nsd *nsd);
-int server_start_tcp(struct nsd *nsd);
-void server_shutdown(struct nsd *nsd);
-void server_udp(struct nsd *nsd);
-void server_tcp(struct nsd *nsd);
+int server_init __P((struct nsd *nsd));
+int server_start_tcp __P((struct nsd *nsd));
+void server_shutdown __P((struct nsd *nsd));
+void server_udp __P((struct nsd *nsd));
+void server_tcp __P((struct nsd *nsd));
+int delete_tcp_child_pid __P((struct nsd *nsd, pid_t pid));
+int restart_tcp_child_servers __P((struct nsd *nsd));
 
 #endif	/* _NSD_H_ */

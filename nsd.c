@@ -1,11 +1,11 @@
 /*
- * $Id: nsd.c,v 1.68 2003/03/25 12:46:12 alexis Exp $
+ * $Id: nsd.c,v 1.56.2.15 2003/06/12 08:47:36 erik Exp $
  *
  * nsd.c -- nsd(8)
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -37,38 +37,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  *
  */
-#include <config.h>
-
-#include <sys/types.h>
-#include <sys/param.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/uio.h>
-#include <sys/wait.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
-#include <assert.h>
-#include <ctype.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <pwd.h>
-#include <signal.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <syslog.h>
-#include <time.h>
-#include <unistd.h>
-
-#include <dns.h>
-#include <dname.h>
-#include <namedb.h>
-#include <nsd.h>
-#include <query.h>
-
+#include "nsd.h"
 
 /* The server handler... */
 struct nsd nsd;
@@ -76,12 +45,14 @@ char hostname[MAXHOSTNAMELEN];
 
 /*
  * Allocates ``size'' bytes of memory, returns the
- * pointer to the allocated memory or exits on error.
- * Also reports the error via syslog().
+ * pointer to the allocated memory or NULL and errno
+ * set in case of error. Also reports the error via
+ * syslog().
  *
  */
 void *
-xalloc (register size_t size)
+xalloc(size)
+	register size_t size;
 {
 	register void *p;
 
@@ -93,7 +64,9 @@ xalloc (register size_t size)
 }
 
 void *
-xrealloc (register void *p, register size_t size)
+xrealloc(p, size)
+	register void *p;
+	register size_t size;
 {
 
 	if((p = realloc(p, size)) == NULL) {
@@ -103,15 +76,16 @@ xrealloc (register void *p, register size_t size)
 	return p;
 }
 
-void
-usage (void)
+int
+usage()
 {
 	fprintf(stderr, "usage: nsd [-d] [-p port] [-a address] [-i identity] [-n tcp_servers ] [-u user|uid] [-t chrootdir] -f database\n");
 	exit(1);
 }
 
-pid_t 
-readpid (char *file)
+pid_t
+readpid(file)
+	char *file;
 {
 	int fd;
 	pid_t pid;
@@ -144,8 +118,9 @@ readpid (char *file)
 	return pid;
 }
 
-int 
-writepid (struct nsd *nsd)
+int
+writepid(nsd)
+	struct nsd *nsd;
 {
 	int fd;
 	char pidbuf[16];
@@ -171,11 +146,13 @@ writepid (struct nsd *nsd)
 }
 	
 
-void 
-sig_handler (int sig)
+void
+sig_handler(sig)
+	int sig;
 {
 	int status, i;
-
+	pid_t child;
+	
 	/* Reinstall the signals... */
 	signal(SIGTERM, &sig_handler);
 	signal(SIGHUP, &sig_handler);
@@ -205,10 +182,22 @@ sig_handler (int sig)
 
 	switch(sig) {
 	case SIGCHLD:
-		/* Any tcp children willing to report? */
-		if(waitpid(0, &status, WNOHANG) != 0) {
-			if(nsd.tcp.open_conn)
-				nsd.tcp.open_conn--;
+		child = waitpid(0, &status, WNOHANG);
+		if (child == -1) {
+			syslog(LOG_WARNING, "waitpid failed: %m");
+		} else if (nsd.mode == NSD_QUIT || nsd.mode == NSD_SHUTDOWN) {
+			return;
+		} else if (child > 0) {
+			int is_tcp_child = delete_tcp_child_pid(&nsd, child);
+			if (is_tcp_child) {
+				syslog(LOG_WARNING,
+				       "TCP server %d died unexpectedly with status %d, restarting",
+				       (int) child, status);
+			} else {
+				syslog(LOG_WARNING,
+				       "Reload process %d failed with status %d, continuing with old database",
+				       (int) child, status);
+			}
 		}
 		return;
 	case SIGHUP:
@@ -236,8 +225,8 @@ sig_handler (int sig)
 	}
 
 	/* Distribute the signal to the servers... */
-	for(i = nsd.tcp.open_conn; i > 0; i--) {
-		if(kill(nsd.pid[i], sig) == -1) {
+	for (i = 1; i <= nsd.tcp.open_conn; ++i) {
+		if (kill(nsd.pid[i], sig) == -1) {
 			syslog(LOG_ERR, "problems killing %d: %m", nsd.pid[i]);
 		}
 	}
@@ -248,8 +237,9 @@ sig_handler (int sig)
  *
  */
 #ifdef BIND8_STATS
-void 
-bind8_stats (struct nsd *nsd)
+void
+bind8_stats(nsd)
+	struct nsd *nsd;
 {
 	char buf[MAXSYSLOGMSGLEN];
 	char *msg, *t;
@@ -296,7 +286,9 @@ bind8_stats (struct nsd *nsd)
 	time(&now);
 
 	/* NSTATS */
-	t = msg = buf + snprintf(buf, MAXSYSLOGMSGLEN, "NSTATS %lu %lu", now, nsd->st.boot);
+	t = msg = buf + snprintf(buf, MAXSYSLOGMSGLEN, "NSTATS %lu %lu",
+				 (unsigned long) now,
+				 (unsigned long) nsd->st.boot);
 	for(i = 0; i <= 255; i++) {
 		/* How much space left? */
 		if((len = buf + MAXSYSLOGMSGLEN - t) < 32) {
@@ -330,7 +322,7 @@ bind8_stats (struct nsd *nsd)
 		" RLame=%lu ROpts=%lu SSysQ=%lu SAns=%lu SFwdQ=%lu SDupQ=%lu SErr=%lu RQ=%lu"
 		" RIQ=%lu RFwdQ=%lu RDupQ=%lu RTCP=%lu SFwdR=%lu SFail=%lu SFErr=%lu SNaAns=%lu"
 		" SNXD=%lu RUQ=%lu RURQ=%lu RUXFR=%lu RUUpd=%lu",
-		now, nsd->st.boot,
+		(unsigned long) now, (unsigned long) nsd->st.boot,
 		nsd->st.dropped, (unsigned long)0, (unsigned long)0, (unsigned long)0, (unsigned long)0,
 		(unsigned long)0, (unsigned long)0, nsd->st.raxfr, (unsigned long)0, (unsigned long)0,
 		(unsigned long)0, nsd->st.qudp + nsd->st.qudp6 - nsd->st.dropped, (unsigned long)0,
@@ -348,45 +340,47 @@ bind8_stats (struct nsd *nsd)
 extern char *optarg;
 extern int optind;
 
-int 
-main (int argc, char *argv[])
+int
+main(argc, argv)
+	int argc;
+	char *argv[];
 {
 	/* Scratch variables... */
 	int i, c;
 	pid_t	oldpid;
 
 	/* Initialize the server handler... */
-	memset(&nsd, 0, sizeof(struct nsd));
-	nsd.dbfile	= DBFILE;
-	nsd.pidfile	= PIDFILE;
+	bzero(&nsd, sizeof(struct nsd));
+	nsd.dbfile	= CF_DBFILE;
+	nsd.pidfile	= CF_PIDFILE;
 	nsd.tcp.open_conn = 1;
 
-	for(i = 0; i < MAX_INTERFACES; i++) {
+	for(i = 0; i < CF_MAX_INTERFACES; i++) {
 		nsd.udp[i].addr.sin_addr.s_addr = INADDR_ANY;
-		nsd.udp[i].addr.sin_port = htons(UDP_PORT);
+		nsd.udp[i].addr.sin_port = htons(CF_UDP_PORT);
 		nsd.udp[i].addr.sin_family = AF_INET;
 	}
 
         nsd.tcp.addr.sin_addr.s_addr = INADDR_ANY;
-        nsd.tcp.addr.sin_port = htons(TCP_PORT);
+        nsd.tcp.addr.sin_port = htons(CF_TCP_PORT);
         nsd.tcp.addr.sin_family = AF_INET;
 
 #ifdef INET6
-        nsd.udp6.addr.sin6_port = htons(UDP_PORT);	/* XXX: SHOULD BE UDP6_PORT? */
+        nsd.udp6.addr.sin6_port = htons(CF_UDP_PORT);	/* XXX: SHOULD BE CF_UDP6_PORT? */
         nsd.udp6.addr.sin6_family = AF_INET6;
 
-        nsd.tcp6.addr.sin6_port = htons(TCP_PORT);	/* XXX: SHOULD BE TCP6_PORT? */
+        nsd.tcp6.addr.sin6_port = htons(CF_TCP_PORT);	/* XXX: SHOULD BE CF_TCP6_PORT? */
         nsd.tcp6.addr.sin6_family = AF_INET6;
 #endif /* INET6 */
 
-	nsd.tcp.max_msglen = TCP_MAX_MESSAGE_LEN;
-	nsd.identity	= IDENTITY;
-	nsd.version	= VERSION;
-	nsd.username	= USER;
+	nsd.tcp.max_msglen = CF_TCP_MAX_MESSAGE_LEN;
+	nsd.identity	= CF_IDENTITY;
+	nsd.version	= CF_VERSION;
+	nsd.username	= CF_USERNAME;
 	nsd.chrootdir	= NULL;
 
 	/* EDNS0 */
-	nsd.edns.max_msglen = EDNS_MAX_MESSAGE_LEN;
+	nsd.edns.max_msglen = CF_EDNS_MAX_MESSAGE_LEN;
 	nsd.edns.opt_ok[1] = (TYPE_OPT & 0xff00) >> 8;	/* type_hi */
 	nsd.edns.opt_ok[2] = TYPE_OPT & 0x00ff;	/* type_lo */
 	nsd.edns.opt_ok[3] = (nsd.edns.max_msglen & 0xff00) >> 8; 	/* size_hi */
@@ -409,7 +403,7 @@ main (int argc, char *argv[])
 #endif
 
 	/* Set up the logging... */
-	openlog("nsd", LOG_PERROR | LOG_PID, FACILITY);
+	openlog("nsd", LOG_PERROR | LOG_PID, CF_FACILITY);
 
 	/* Set up our default identity to gethostname(2) */
 	if(gethostname(hostname, MAXHOSTNAMELEN) == 0) {
@@ -435,7 +429,7 @@ main (int argc, char *argv[])
 			nsd.dbfile = optarg;
 			break;
 		case 'p':
-			for(i = 0; i < MAX_INTERFACES; i++) {
+			for(i = 0; i < CF_MAX_INTERFACES; i++) {
 				nsd.udp[i].addr.sin_port = htons(atoi(optarg));
 			}
 			nsd.tcp.addr.sin_port = htons(atoi(optarg));
@@ -457,9 +451,9 @@ main (int argc, char *argv[])
 			i = atoi(optarg);
 			if(i <= 0) {
 				syslog(LOG_ERR, "max number of tcp connections must be greather than zero");
-			} else if(i > TCP_MAX_CONNECTIONS) {
+			} else if(i > CF_TCP_MAX_CONNECTIONS) {
 				syslog(LOG_ERR, "max number of tcp connections must be less than %d",
-					TCP_MAX_CONNECTIONS);
+					CF_TCP_MAX_CONNECTIONS);
 			} else {
 				nsd.tcp.open_conn = i;
 			}
@@ -603,10 +597,8 @@ main (int argc, char *argv[])
 	nsd.mode = NSD_RUN;
 
 	/* Run the server... */
-	if(server_init(&nsd) != 0) {
-		(void)unlink(nsd.pidfile);
+	if(server_init(&nsd) != 0)
 		exit(1);
-	}
 
 	syslog(LOG_NOTICE, "nsd started, pid %d", nsd.pid[0]);
 

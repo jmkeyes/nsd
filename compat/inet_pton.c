@@ -15,7 +15,10 @@
  * ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
  * SOFTWARE.
  */
-#include <config.h>
+
+#if defined(LIBC_SCCS) && !defined(lint)
+static char rcsid[] = "$FreeBSD: src/lib/libc/net/inet_pton.c,v 1.6.2.1 2002/04/28 05:40:24 suz Exp $";
+#endif /* LIBC_SCCS and not lint */
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -24,35 +27,15 @@
 #include <arpa/inet.h>
 #include <arpa/nameser.h>
 #include <string.h>
-#include <stdio.h>
 #include <errno.h>
-
-#include <zparser.h>
 
 /*
  * WARNING: Don't even consider trying to compile this on a system where
  * sizeof(int) < 4.  sizeof(int) > 4 is fine; all the world's not a VAX.
  */
 
-static int	inet_pton4 (const char *src, u_char *dst);
-static int	inet_pton6 (const char *src, u_char *dst);
-
-/*
- *
- * The definitions we might miss.
- *
- */
-#ifndef NS_INT16SZ
-#define	NS_INT16SZ	2
-#endif
-
-#ifndef NS_IN6ADDRSZ
-#define NS_IN6ADDRSZ 16
-#endif
-
-#ifndef NS_INADDRSZ
-#define NS_INADDRSZ 4
-#endif
+static int	inet_pton4 __P((const char *src, u_char *dst));
+static int	inet_pton6 __P((const char *src, u_char *dst));
 
 /* int
  * inet_pton(af, src, dst)
@@ -231,3 +214,10 @@ inet_pton6(src, dst)
 	memcpy(dst, tmp, NS_IN6ADDRSZ);
 	return (1);
 }
+
+/*
+ * Weak aliases for applications that use certain private entry points,
+ * and fail to include <arpa/inet.h>.
+ */
+#undef inet_pton
+__weak_reference(__inet_pton, inet_pton);

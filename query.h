@@ -1,11 +1,11 @@
 /*
- * $Id: query.h,v 1.30 2003/05/08 10:30:36 alexis Exp $
+ * $Id: query.h,v 1.25 2002/09/26 14:18:36 alexis Exp $
  *
  * query.h -- manipulation with the queries
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -158,7 +158,7 @@
 #define	IP6ADDRLEN		128/8
 
 /* Miscelaneous limits */
-#define	QIOBUFSZ	65536+20	/* XXX: Is it too big now?? Input output buffer for queries */
+#define	QIOBUFSZ	1024	/* Input output buffer for queries */
 #define	MAXLABELLEN	63
 #define	MAXDOMAINLEN	255
 #define	MAXRRSPP	1024	/* Maximum number of rr's per packet */
@@ -182,12 +182,10 @@ struct query {
 };
 
 /* query.c */
-int query_axfr(struct query *q, struct nsd *nsd, u_char *qname, u_char *zname, int depth);
-void query_formerr(struct query *q);
-void query_init(struct query *q);
-void query_addtxt(struct query *q, u_char *dname, int class, int32_t ttl, char *txt);
-void query_addanswer(struct query *q, u_char *dname, struct answer *a, int trunc);
-int query_process(struct query *q, struct nsd *nsd);
-void query_addedns(struct query *q, struct nsd *nsd);
+int query_process __P((struct query *, struct nsd *));
+void query_init __P((struct query *));
+void query_addanswer __P((struct query *, u_char *, struct answer *, int));
+int query_axfr __P((struct query *, struct nsd *, u_char *, u_char *, int));
+void query_addedns __P((struct query *q, struct nsd *nsd));
 
 #endif /* _QUERY_H_ */

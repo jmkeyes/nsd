@@ -1,11 +1,11 @@
 /*
- * $Id: query.c,v 1.96 2003/04/22 11:08:59 alexis Exp $
+ * $Id: query.c,v 1.83.2.2 2003/06/11 10:00:18 erik Exp $
  *
  * query.c -- nsd(8) the resolver.
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -37,46 +37,22 @@
  * POSSIBILITY OF SUCH DAMAGE.
  *
  */
-#include <config.h>
+#include "nsd.h"
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
-#include <ctype.h>
-#include <errno.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <syslog.h>
-#include <time.h>
-#include <unistd.h>
-
-#include <dns.h>
-#include <dname.h>
-#include <nsd.h>
-#include <namedb.h>
-#include <query.h>
-
-
-#ifdef HAVE_LIBWRAP
+#ifdef HOSTS_ACCESS
 #include <tcpd.h>
 
 int allow_severity = LOG_INFO;
 int deny_severity = LOG_NOTICE;
-#endif /* HAVE_LIBWRAP */
-
-int
-query_filter (struct query *q) {
-	/* XXX Some matching/policy code is to be inserted here */
-
-	return 0;
-}
+#endif
 
 int 
-query_axfr (struct query *q, struct nsd *nsd, u_char *qname, u_char *zname, int depth)
+query_axfr(q, nsd, qname, zname, depth)
+	struct query *q;
+	struct nsd *nsd;
+	u_char *qname;
+	u_char *zname;
+	int depth;
 {
 	/* Per AXFR... */
 	static u_char *zone;
@@ -129,7 +105,7 @@ query_axfr (struct query *q, struct nsd *nsd, u_char *qname, u_char *zname, int 
 
 	/* Let get next domain */
 	do {
-		dname = (u_char *)d + *((u_int32_t *)d);
+		dname = (char *)d + *((u_int32_t *)d);
 		d = (struct domain *)(dname + (((u_int32_t)*dname + 1 + 3) & 0xfffffffc));
 	} while(*dname && (DOMAIN_FLAGS(d) & NAMEDB_STEALTH));
 
@@ -164,18 +140,16 @@ query_axfr (struct query *q, struct nsd *nsd, u_char *qname, u_char *zname, int 
 	query_addanswer(q, q->iobuf + QHEADERSZ, a, 0);
 
 	if(ANSWER_PTRS(a, 0) == 0) {
-		memcpy(q->iobuf + QHEADERSZ, dname + 1, *dname);
+		bcopy(dname + 1, q->iobuf + QHEADERSZ, *dname);
 	}
 
 	/* Truncate */
 	if(d && DOMAIN_FLAGS(d) & NAMEDB_DELEGATION) {
-		ANCOUNT(q) = htons(ntohs(NSCOUNT(q)) + ntohs(ARCOUNT(q)));
-	} else {
-		q->iobufptr = qptr + ANSWER_RRS(a, ntohs(ANCOUNT(q)));
+		ANCOUNT(q) = NSCOUNT(q);
 	}
-
-	ARCOUNT(q) = 0;
 	NSCOUNT(q) = 0;
+	ARCOUNT(q) = 0;
+	q->iobufptr = qptr + ANSWER_RRS(a, ntohs(ANCOUNT(q)));
 
 	/* More data... */
 	return 1;
@@ -185,8 +159,9 @@ query_axfr (struct query *q, struct nsd *nsd, u_char *qname, u_char *zname, int 
  * Stript the packet and set format error code.
  *
  */
-void 
-query_formerr (struct query *q)
+void
+query_formerr(q)
+	struct query *q;
 {
 	/* Setup the header... */
 	QR_SET(q);		/* This is an answer */
@@ -198,8 +173,9 @@ query_formerr (struct query *q)
 	q->iobufptr = q->iobuf + QHEADERSZ;
 }
 
-void 
-query_init (struct query *q)
+void
+query_init(q)
+	struct query *q;
 {
 	q->addrlen = sizeof(q->addr);
 	q->iobufsz = QIOBUFSZ;
@@ -209,8 +185,13 @@ query_init (struct query *q)
 	q->tcp = 0;
 }
 
-void 
-query_addtxt (struct query *q, u_char *dname, int class, int32_t ttl, char *txt)
+void
+query_addtxt(q, dname, class, ttl, txt)
+	struct query *q;
+	u_char *dname;
+	u_int16_t class;
+	int32_t ttl;
+	char *txt;
 {
 	u_int16_t pointer;
 	u_int16_t len = strlen(txt);
@@ -223,33 +204,37 @@ query_addtxt (struct query *q, u_char *dname, int class, int32_t ttl, char *txt)
 	/* Add the dname */
 	if(dname >= q->iobuf  && dname <= q->iobufptr) {
 		pointer = htons(0xc000 | (dname - q->iobuf));
-		memcpy(q->iobufptr, &pointer, 2);
+		bcopy(&pointer, q->iobufptr, 2);
 		q->iobufptr += 2;
 	} else {
-		memcpy(q->iobufptr, dname + 1, *dname);
+		bcopy(dname + 1, q->iobufptr, *dname);
 		q->iobufptr += *dname;
 	}
 
-	memcpy(q->iobufptr, &type, 2);
+	bcopy(&type, q->iobufptr, 2);
 	q->iobufptr += 2;
 
-	memcpy(q->iobufptr, &class, 2);
+	bcopy(&class, q->iobufptr, 2);
 	q->iobufptr += 2;
 
-	memcpy(q->iobufptr, &ttl, 4);
+	bcopy(&ttl, q->iobufptr, 4);
 	q->iobufptr += 4;
 
-	memcpy(q->iobufptr, &rdlength, 2);
+	bcopy(&rdlength, q->iobufptr, 2);
 	q->iobufptr += 2;
 
 	*q->iobufptr++ = (u_char)len;
 
-	memcpy(q->iobufptr, txt, len);
+	bcopy(txt, q->iobufptr, len);
 	q->iobufptr += len;
 }
 
-void 
-query_addanswer (struct query *q, u_char *dname, struct answer *a, int trunc)
+void
+query_addanswer(q, dname, a, truncate)
+	struct query *q;
+	u_char *dname;
+	struct answer *a;
+	int truncate;
 {
 	u_char *qptr;
 	u_int16_t pointer;
@@ -268,12 +253,12 @@ query_addanswer (struct query *q, u_char *dname, struct answer *a, int trunc)
 	ARCOUNT(q) = ANSWER_ARCOUNT(a);
 
 	/* Then copy the data */
-	memcpy(q->iobufptr, ANSWER_DATA_PTR(a), ANSWER_DATALEN(a));
+	bcopy(ANSWER_DATA_PTR(a), q->iobufptr, ANSWER_DATALEN(a));
 
 	/* Walk the pointers */
 	for(j = 0; j < ANSWER_PTRSLEN(a); j++) {
 		qptr = q->iobufptr + ANSWER_PTRS(a, j);
-		memcpy(&pointer, qptr, 2);
+		bcopy(qptr, &pointer, 2);
 		switch((pointer & 0xf000)) {
 		case 0xc000:			/* This pointer is relative to the name in the query.... */
 			/* XXX Check if dname is within packet */
@@ -286,11 +271,11 @@ query_addanswer (struct query *q, u_char *dname, struct answer *a, int trunc)
 			/* This pointer is relative to the answer that we have in the database... */
 			pointer = htons(0xc000 | (u_int16_t)(pointer + q->iobufptr - q->iobuf));
 		}
-		memcpy(qptr, &pointer, 2);
+		bcopy(&pointer, qptr, 2);
 	}
 
 	/* If we dont need truncation, return... */
-	if(!trunc) {
+	if(!truncate) {
 		q->iobufptr += ANSWER_DATALEN(a);
 		return;
 	}
@@ -299,7 +284,7 @@ query_addanswer (struct query *q, u_char *dname, struct answer *a, int trunc)
 	if(q->maxlen < (q->iobufptr - q->iobuf + ANSWER_DATALEN(a))) {
 
 		/* Start with the additional section, record by record... */
-		for(i = ntohs(ANSWER_ARCOUNT(a)), j = ANSWER_RRSLEN(a) - 1; i > 0 && j > 0; j--, i--) {
+		for(i = ntohs(ANSWER_ARCOUNT(a)) - 1, j = ANSWER_RRSLEN(a) - 2; i > 0 && j > 0; j--, i--) {
 			if(q->maxlen >= (q->iobufptr - q->iobuf + ANSWER_RRS(a, j - 1))) {
 				/* Make sure we remove the entire RRsets... */
 				while(ANSWER_RRS_COLOR(a, j - 1) == ANSWER_RRS_COLOR(a, j - 2)) {
@@ -336,8 +321,10 @@ query_addanswer (struct query *q, u_char *dname, struct answer *a, int trunc)
  * -1 if the query has to be silently discarded.
  *
  */
-int 
-query_process (struct query *q, struct nsd *nsd)
+int
+query_process(q, nsd)
+	struct query *q;
+	struct nsd *nsd;
 {
 	u_char qstar[2] = "\001*";
 	u_char qnamebuf[MAXDOMAINLEN + 3];
@@ -349,6 +336,7 @@ query_process (struct query *q, struct nsd *nsd)
 	u_int16_t qclass;
 	u_char *qptr;
 	int qdepth, i;
+	int recursion_desired;
 
 	/* OPT record type... */
 	u_int16_t opt_type, opt_class, opt_rdlen;
@@ -356,11 +344,6 @@ query_process (struct query *q, struct nsd *nsd)
 	struct domain *d;
 	struct answer *a;
 	int match;
-
-	/* Drop the query on the floor if bogus... */
-	if(query_filter(q) != 0) {
-		return -1;
-	}
 
 	/* Sanity checks */
 	if(QR(q))
@@ -374,6 +357,7 @@ query_process (struct query *q, struct nsd *nsd)
 		/* Setup the header... */
 		QR_SET(q);		/* This is an answer */
 
+#ifdef LOG_NOTIFIES
 		if(OPCODE(q) == OPCODE_NOTIFY) {
 #ifdef INET6
 			if(q->addr.ss_family != AF_INET)
@@ -383,6 +367,7 @@ query_process (struct query *q, struct nsd *nsd)
 				syslog(LOG_INFO, "notify from %s",
 					inet_ntoa( ((struct sockaddr_in *)(&q->addr))->sin_addr));
 		}
+#endif /* LOG_NOTIFIES */
 
 		RCODE_SET(q, RCODE_IMPL);
 
@@ -401,12 +386,16 @@ query_process (struct query *q, struct nsd *nsd)
 		return 0;
 	}
 
+	/* Save the RD flag (RFC1034 4.1.1).  */
+	recursion_desired = RD(q);
+
 	/* Zero the flags... */
 	*(u_int16_t *)(q->iobuf + 2) = 0;
-
-	/* Setup the header... */
+	
 	QR_SET(q);		/* This is an answer */
-
+	if (recursion_desired)
+		RD_SET(q);   /* Restore the RD flag (RFC1034 4.1.1) */
+	
 	/* Lets parse the qname and convert it to lower case */
 	qdepth = 0;
 	qnamelow = qnamebuf + 3;
@@ -438,8 +427,8 @@ query_process (struct query *q, struct nsd *nsd)
 	/* Prepend qnamelen to qnamelow */
 	*(qnamelow - 1) = qnamelen;
 
-	memcpy(&qtype, qptr, 2); qptr += 2;
-	memcpy(&qclass, qptr, 2); qptr += 2;
+	bcopy(qptr, &qtype, 2); qptr += 2;
+	bcopy(qptr, &qclass, 2); qptr += 2;
 
 	/* Update the type and class */
 	STATUP2(nsd, qtype, ntohs(qtype));
@@ -466,7 +455,7 @@ query_process (struct query *q, struct nsd *nsd)
 		}
 
 		/* Must be of the type OPT... */
-		memcpy(&opt_type, qptr + 1, 2);
+		bcopy(qptr + 1, &opt_type, 2);
 		if(ntohs(opt_type) != TYPE_OPT) {
 			query_formerr(q);
 			return 0;
@@ -476,7 +465,7 @@ query_process (struct query *q, struct nsd *nsd)
 		q->edns = 1;
 
 		/* Get the UDP size... */
-		memcpy(&opt_class, qptr + 3, 2);
+		bcopy(qptr + 3, &opt_class, 2);
 		opt_class = ntohs(opt_class);
 
 		/* Check the version... */
@@ -484,7 +473,7 @@ query_process (struct query *q, struct nsd *nsd)
 			q->edns = -1;
 		} else {
 			/* Make sure there are no other options... */
-			memcpy(&opt_rdlen, qptr + 9, 2);
+			bcopy(qptr + 9, &opt_rdlen, 2);
 			if(opt_rdlen != 0) {
 				q->edns = -1;
 			} else {
@@ -537,12 +526,12 @@ query_process (struct query *q, struct nsd *nsd)
 		switch(ntohs(qtype)) {
 		case TYPE_ANY:
 		case TYPE_TXT:
-			if(qnamelen == 11 && memcmp(qnamelow, "\002id\006server", 11) == 0) {
+			if(qnamelen == 11 && bcmp(qnamelow, "\002id\006server", 11) == 0) {
 				/* Add ID */
 				query_addtxt(q, q->iobuf + 12, CLASS_CHAOS, 0, nsd->identity);
 				ANCOUNT(q) = htons(ntohs(ANCOUNT(q)) + 1);
 				return 0;
-			} else if(qnamelen == 16 && memcmp(qnamelow, "\007version\006server", 16) == 0) {
+			} else if(qnamelen == 16 && bcmp(qnamelow, "\007version\006server", 16) == 0) {
 				/* Add version */
 				query_addtxt(q, q->iobuf + 12, CLASS_CHAOS, 0, nsd->version);
 				ANCOUNT(q) = htons(ntohs(ANCOUNT(q)) + 1);
@@ -560,7 +549,7 @@ query_process (struct query *q, struct nsd *nsd)
 	case TYPE_AXFR:
 #ifndef DISABLE_AXFR		/* XXX Should be a run-time flag */
 		if(q->tcp) {
-#ifdef HAVE_LIBWRAP
+#ifdef HOSTS_ACCESS
 			struct request_info request;
 #ifdef AXFR_DAEMON_PREFIX
 			char *t;
@@ -592,7 +581,7 @@ query_process (struct query *q, struct nsd *nsd)
 				}
 #endif /* AXFR_DAEMON_PREFIX */
 			}
-#endif /* HAVE_LIBWRAP */
+#endif /* HOSTS_ACCESS */
 			return query_axfr(q, nsd, qname, qnamelow - 1, qdepth);
 		}
 #endif	/* DISABLE_AXFR */
@@ -684,7 +673,7 @@ query_process (struct query *q, struct nsd *nsd)
 		/* Only look for wildcards if we did not have any match before */
 		if(match == 0 && NAMEDB_TSTBITMASK(nsd->db, NAMEDB_STARMASK, qdepth + 1)) {
 			/* Prepend star */
-			memcpy(qnamelow - 2, qstar, 2);
+			bcopy(qstar, qnamelow - 2, 2);
 
 			/* Lookup star */
 			*(qnamelow - 3) = qnamelen + 2;
@@ -774,7 +763,7 @@ query_addedns(struct query *q, struct nsd *nsd) {
 	switch(q->edns) {
 	case 1:	/* EDNS(0) packet... */
 		if((q->iobufptr - q->iobuf + OPT_LEN) <= q->iobufsz) {
-			memcpy(q->iobufptr, nsd->edns.opt_ok, OPT_LEN);
+			bcopy(nsd->edns.opt_ok, q->iobufptr, OPT_LEN);
 			q->iobufptr += OPT_LEN;
 			ARCOUNT((q)) = htons(ntohs(ARCOUNT((q))) + 1);
 		}
@@ -783,7 +772,7 @@ query_addedns(struct query *q, struct nsd *nsd) {
 		break;
 	case -1: /* EDNS(0) error... */
 		if((q->iobufptr - q->iobuf + OPT_LEN) <= q->iobufsz) {
-			memcpy(q->iobufptr, nsd->edns.opt_err, OPT_LEN);
+			bcopy(nsd->edns.opt_err, q->iobufptr, OPT_LEN);
 			q->iobufptr += OPT_LEN;
 			ARCOUNT((q)) = htons(ntohs(ARCOUNT((q))) + 1);
 		}

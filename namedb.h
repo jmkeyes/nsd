@@ -1,11 +1,11 @@
 /*
- * $Id: namedb.h,v 1.30 2003/03/20 10:31:25 alexis Exp $
+ * $Id: namedb.h,v 1.27 2002/05/30 13:55:52 alexis Exp $
  *
  * namedb.h -- nsd(8) internal namespace database definitions
  *
  * Alexis Yushin, <alexis@nlnetlabs.nl>
  *
- * Copyright (c) 2001, 2002, 2003, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001, NLnet Labs. All rights reserved.
  *
  * This software is an open source.
  *
@@ -108,9 +108,7 @@ struct domain {
 #define	NAMEDB_RRSET_BLACK	0x0000
 #define	NAMEDB_RRSET_COLOR	0x8000
 
-#define	DOMAIN_WALK(d, a)	for(a = (struct answer *)(d + 1); \
-					ANSWER_SIZE(a) != 0; \
-					a = (struct answer *)((char *)a + ANSWER_SIZE(a)))
+#define	DOMAIN_WALK(d, a)	for(a = (struct answer *)(d + 1); ANSWER_SIZE(a) != 0; ((char *)a) += ANSWER_SIZE(a))
 #define	DOMAIN_SIZE(d)		d->size
 #define	DOMAIN_FLAGS(d)		d->flags
 
@@ -146,23 +144,20 @@ struct namedb {
 
 #endif	/* USE_BERKELEY_DB */
 
-/* dbcreate.c */
-struct namedb *namedb_new(char *filename);
-int namedb_put(struct namedb *db, u_char *dname, struct domain *d);
-int namedb_save(struct namedb *db);
-void namedb_discard(struct namedb *db);
+/* Routines for creating the database, dbcreate.c */
+struct namedb *namedb_new __P((char *));
+int namedb_put __P((struct namedb *, u_char *, struct domain *));
+int namedb_save __P((struct namedb *));
+void namedb_discard __P((struct namedb *));
 
-
-/* dbaccess.c */
-int domaincmp(register u_char *a, register u_char *b);
-unsigned long domainhash(register u_char *dname);
-struct domain *namedb_lookup(struct namedb *db, u_char *dname);
-struct answer *namedb_answer(struct domain *d, int type);
-struct namedb *namedb_open(char *filename);
-void namedb_close(struct namedb *db);
+/* Routines for accessing the database, dbaccess.c */
+struct namedb *namedb_open __P((char *));
+struct domain *namedb_lookup __P((struct namedb *, u_char *key));
+struct answer *namedb_answer __P((struct domain *, u_int16_t type));
+void namedb_close __P((struct namedb *));
 
 /* Routines that the calling program must provide... */
-extern void *xalloc (size_t size);
-extern void *xrealloc(void *p, size_t size);
+void *xalloc __P((size_t));
+void *xrealloc __P((void *, size_t));
 
 #endif
