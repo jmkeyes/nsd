@@ -1,0 +1,179 @@
+#!/bin/sh
+#
+# $Id: nsdc.sh.in,v 1.15 2002/09/19 11:37:16 alexis Exp $
+#
+# nsdc.sh -- a shell script to manage the beast
+#
+# Alexis Yushin, <alexis@nlnetlabs.nl>
+#
+# Copyright (c) 2001, NLnet Labs. All rights reserved.
+#
+# This software is an open source.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#
+# Redistributions of source code must retain the above copyright notice,
+# this list of conditions and the following disclaimer.
+#
+# Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+#
+# Neither the name of the NLNET LABS nor the names of its contributors may
+# be used to endorse or promote products derived from this software without
+# specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#
+#
+
+# Optional configuration file for nsdc
+NSDCCONF="@@NSDCCONF@@"
+
+#
+# Default values in absense of ${NSDCCONF} (Usually ``/etc/nsd/nsdc.conf'')
+#
+NSDBINDIR="@@NSDBINDIR@@"
+NSDZONESDIR="@@NSDZONESDIR@@"
+NSDFLAGS="@@NSDFLAGS@@"
+NSDDB="@@NSDDB@@"
+NSDZONES="@@NSDZONES@@"
+NSDKEYSDIR="@@NSDKEYSDIR@@"
+NSDNOTIFY="@@NSDNOTIFY@@"
+NAMEDXFER="@@NAMEDXFER@@"
+
+#
+# Read in configuration file if any
+#
+if [ -f ${NSDCCONF} ]
+then
+	. ${NSDCCONF}
+fi
+
+#
+# You sure heard this many times before: NO USER SERVICEABLE PARTS BELOW
+#
+
+# This one cannot be changed after compilation time
+NSDPIDFILE="@@NSDPIDFILE@@"
+
+signal() {
+	if [ -s ${NSDPIDFILE} ]
+	then
+		kill -"$1" `cat ${NSDPIDFILE}` && return 0
+	else
+		echo "nsd is not running"
+	fi
+	return 1
+}
+
+case "$1" in
+start)
+	[ -x ${NSDBINDIR}/nsd ] && ${NSDBINDIR}/nsd -f ${NSDDB} ${NSDFLAGS}
+	$0 notify
+	;;
+stop)
+	signal "TERM"
+	;;
+stats)
+	signal "ILL"
+	;;
+reload)
+	signal "HUP"
+	$0 notify
+	;;
+running)
+	signal "0"
+	;;
+rebuild)
+	${NSDBINDIR}/zonec -v -d ${NSDZONESDIR} -f ${NSDDB}.$$ ${NSDZONES} && mv ${NSDDB}.$$ ${NSDDB}
+	result=$?
+	rm -f ${NSDDB}.$$
+	exit ${result}
+	;;
+update)
+	#
+	if [ ! -x "${NAMEDXFER}" ]
+	then
+		echo "named-xfer program is not available, aborting..."
+		exit 1
+	fi
+
+	# read the nsd.zones file
+	while read zonekw zone file masterskw masters
+	do	
+		if [ "X$zonekw" = "Xzone" -a "X$masterskw" = "Xmasters" ]
+		then
+			# now get the serial number
+			serial=`awk '/.*IN[ \t]+SOA.*\($/ { getline; print $1 }' ${NSDZONESDIR}/$file`
+			serial=${serial:-0}
+
+ 			# take care of tsig info file if any
+ 			unset tsiginfoarg
+ 			if [ -f "${NSDKEYSDIR}/${masters}.tsiginfo" ]
+ 			then
+ 				ln "${NSDKEYSDIR}/${masters}.tsiginfo" "${NSDKEYSDIR}/${masters}.tsiginfo.$$"
+ 				tsiginfoarg="-T \"${NSDKEYSDIR}/${masters}.tsiginfo.$$\""
+			fi
+
+			$NAMEDXFER -z $zone -f ${NSDZONESDIR}/$file ${tsiginfoarg} -s $serial $masters
+
+			# Do we need to rebuild the database?
+			if [ ${NSDZONESDIR}/$file -nt ${NSDDB} ]
+			then
+				rebuild="yes"
+				export $rebuild
+			fi
+
+			# clean up
+			rm -f -- "${NSDKEYSDIR}"/*.tsiginfo.*
+		fi
+	done < $NSDZONES
+
+	# Wait for everybody to terminate
+	wait
+
+	# Rebuild and reload?
+	if [ ! -f ${NSDDB} -o "x$rebuild" = "xyes" ]
+	then
+		echo "rebuilding the database...."
+		sh $0 rebuild && sh $0 reload
+	fi
+	;;
+notify)
+	if [ ! -x "${NSDNOTIFY}" ]
+	then
+		echo "nsd-notify was not installed on this system"
+		exit 1
+	fi
+
+	# read the nsd.zones file
+	while read zonekw zone file notifykw slaves
+	do	
+		if [ "X$zonekw" = "Xzone" -a "X$notifykw" = "Xnotify" ]
+		then
+			$NSDNOTIFY -z "$zone" $slaves
+		fi
+	done < $NSDZONES
+	;;
+restart)
+	sh $0 stop && sh $0 start
+	;;
+*)
+	echo "Usage: `basename $0` {start|stop|reload|rebuild|restart|running|update|notify}" >&2
+	;;
+esac
+
+exit $?
