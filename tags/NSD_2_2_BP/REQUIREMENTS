@@ -1,4 +1,4 @@
-$Id: REQUIREMENTS,v 1.20 2004/08/18 11:45:34 erik Exp $
+$Id$
 
 
 NSD Requirements and Specifications
@@ -932,6 +932,6 @@ RFC Standards
   zone control is not implemented in NSD itself.
 
 ______________________________________________________________________
-$Id: REQUIREMENTS,v 1.20 2004/08/18 11:45:34 erik Exp $
+$Id$
 
 
