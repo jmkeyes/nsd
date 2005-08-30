@@ -244,8 +244,8 @@ sub do_nsd {
 sub do_misc() {
 	my ( $opt, %opts ) = (@_);
 	my $retval = 0;
-	my $ldate = '$Date: 2003/02/26 11:09:15 $';
-	my $lauthor = '$Author: alexis $';
+	my $ldate = '$Date$';
+	my $lauthor = '$Author$';
 	if( $opt eq "warranty" ){
 		$retval = 1;
 		print << 'EOM' ;

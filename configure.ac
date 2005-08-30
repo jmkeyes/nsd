@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,2.3-devel,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,2.2.0,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -66,7 +66,7 @@ AC_SUBST(dbfile)
 #
 # Determine location of nsd config file
 #
-configfile=$configdir/nsd.conf
+configfile=$configdir/nsdc.conf
 AC_ARG_WITH([configfile],
 	AC_HELP_STRING([--with-configfile=path], [Pathname to the NSD configuration file]),
 	[configfile=$withval])
@@ -97,14 +97,6 @@ AC_PROG_LN_S
 AC_PROG_INSTALL
 AC_PROG_LEX
 AC_PROG_YACC
-
-AC_PATH_PROG(LIBXML2_CONFIG, xml2-config, [no])
-if test $LIBXML2_CONFIG = no; then
-   AC_MSG_ERROR([libxml2 is required, please ensure it is installed and xml2-config is in the PATH])
-fi
-
-AC_SUBST(LIBXML2_CFLAGS, [`$LIBXML2_CONFIG --cflags`])
-AC_SUBST(LIBXML2_LIBS, [`$LIBXML2_CONFIG --libs`])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST
@@ -156,75 +148,15 @@ if test $ac_cv_c_unused_attribute = yes; then
 fi
 ])dnl
 
-AC_DEFUN([AC_CHECK_NORETURN_ATTRIBUTE],
-[AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING(whether the C compiler (${CC-cc}) accepts the "noreturn" attribute)
-AC_CACHE_VAL(ac_cv_c_noreturn_attribute,
-[ac_cv_c_noreturn_attribute=no
-AC_TRY_COMPILE(
-[#include <stdio.h>
-void f (void) __attribute__ ((noreturn));
-], [
-   f ();
-],
-[ac_cv_c_noreturn_attribute="yes"],
-[ac_cv_c_noreturn_attribute="no"])
-])
-
-AC_MSG_RESULT($ac_cv_c_noreturn_attribute)
-if test $ac_cv_c_noreturn_attribute = yes; then
-  AC_DEFINE(HAVE_ATTR_NORETURN, 1, [Whether the C compiler accepts the "noreturn" attribute])
-fi
-])dnl
-
 AC_CHECK_FORMAT_ATTRIBUTE
 AC_CHECK_UNUSED_ATTRIBUTE
-AC_CHECK_NORETURN_ATTRIBUTE
 
 # Checks for libraries.
-
-# Check for SSL, original taken from
-# http://www.gnu.org/software/ac-archive/htmldoc/check_ssl.html and
-# modified for NSD.
-AC_DEFUN([CHECK_SSL], [
-    AC_ARG_WITH(ssl, AC_HELP_STRING([--with-ssl=pathname],
-                                    [enable SSL (will check /usr/local/ssl
-                            /usr/lib/ssl /usr/ssl /usr/pkg /usr/local /usr)]),[
-        ],[
-            withval="yes"
-        ])
-    if test x_$withval != x_no; then
-        AC_MSG_CHECKING(for SSL)
-        if test x_$withval = x_ -o x_$withval = x_yes; then
-            withval="/usr/local/ssl /usr/lib/ssl /usr/ssl /usr/pkg /usr/local /usr"
-        fi
-        for dir in $withval; do
-            ssldir="$dir"
-            if test -f "$dir/include/openssl/ssl.h"; then
-                found_ssl="yes";
-                AC_DEFINE_UNQUOTED([HAVE_SSL], [], [Define if you have the SSL libraries installed.])
-                CPPFLAGS="$CPPFLAGS -I$ssldir/include";
-                break;
-            fi
-        done 
-        if test x_$found_ssl != x_yes; then
-            AC_MSG_ERROR(Cannot find the SSL libraries in $withval)
-        else
-            AC_MSG_RESULT(found in $ssldir)
-            HAVE_SSL=yes 
-            LDFLAGS="$LDFLAGS -L$ssldir/lib";
-            AC_CHECK_LIB(crypto, HMAC_CTX_init,, [
-                    AC_MSG_ERROR([OpenSSL found in $ssldir, but version 0.9.7 or higher is required])
-                ])
-        fi
-        AC_SUBST(HAVE_SSL)
-    fi
-])dnl
 
 # Checks for header files.
 AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS([arpa/inet.h signal.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h dlfcn.h tcpd.h])
+AC_CHECK_HEADERS([arpa/inet.h signal.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h dlfcn.h tcpd.h openssl/hmac.h])
 
 AC_SEARCH_LIBS(inet_pton, [nsl])
 AC_SEARCH_LIBS(socket, [socket])
@@ -354,12 +286,13 @@ dnl
 AC_DEFINE_UNQUOTED([IDENTITY], ["unindentified server"], [Define to the default nsd identity.])
 AC_DEFINE_UNQUOTED([VERSION], [PACKAGE_STRING], [Define to the NSD version to answer version.server query.])
 AC_DEFINE_UNQUOTED([TCP_BACKLOG], [5], [Define to the backlog to be used with listen.])
-AC_DEFINE_UNQUOTED([DEFAULT_DNS_PORT], ["53"], [Define to the default port to listen on for DNS data.])
-AC_DEFINE_UNQUOTED([DEFAULT_CONTROL_PORT], ["853"], [Define to the default port to listen on for control data.])
+AC_DEFINE_UNQUOTED([TCP_PORT], ["53"], [Define to the default tcp port.])
 AC_DEFINE_UNQUOTED([TCP_MAX_MESSAGE_LEN], [65535], [Define to the default maximum message length.])
 AC_DEFINE_UNQUOTED([TCP_TIMEOUT], [120], [Define to the default tcp timeout.])
+AC_DEFINE_UNQUOTED([UDP_PORT], ["53"], [Define to the default udp port.])
 AC_DEFINE_UNQUOTED([UDP_MAX_MESSAGE_LEN], [512], [Define to the default maximum udp message length.])
 AC_DEFINE_UNQUOTED([EDNS_MAX_MESSAGE_LEN], [4096], [Define to the default maximum message length with EDNS.])
+AC_DEFINE_UNQUOTED([MAX_INTERFACES], [8], [Define to the maximum interfaces to serve.])
 dnl AC_DEFINE_UNQUOTED([FACILITY], [LOG_DAEMON], [Define to the default facility for syslog.])
 AC_DEFINE_UNQUOTED([MAXSYSLOGMSGLEN], [512], [Define to the maximum message length to pass to syslog.])
 AC_DEFINE_UNQUOTED([AXFR_DAEMON], ["axfr"], [Define to the default daemon name to check for axfr.])
@@ -446,10 +379,7 @@ case "$enable_tsig" in
         no)
 		;;
         yes|*)
-                CHECK_SSL
-                if test x_$HAVE_SSL != x_yes; then
-                   AC_MSG_ERROR(SSL is required to enable TSIG support.  Use --with-ssl to specify the location of the SSL libraries or --disable-tsig to disable TSIG support.)
-                fi
+                AC_CHECK_LIB(crypto, HMAC_CTX_init,, [AC_MSG_ERROR(TSIG requires OpenSSL crypto libraries.)])
                 AC_DEFINE([TSIG], [], [Define this to enable TSIG support.])
                 ;;
 esac
@@ -502,7 +432,6 @@ AH_BOTTOM([
 #else /* !HAVE_ATTR_FORMAT */
 #define ATTR_FORMAT(archetype, string_index, first_to_check) /* empty */
 #endif /* !HAVE_ATTR_FORMAT */
-
 #if defined(__cplusplus)
 #define ATTR_UNUSED(x)
 #elif defined(HAVE_ATTR_UNUSED)
@@ -510,13 +439,6 @@ AH_BOTTOM([
 #else /* !HAVE_ATTR_UNUSED */
 #define ATTR_UNUSED(x)  x
 #endif /* !HAVE_ATTR_UNUSED */
-
-#ifdef HAVE_ATTR_NORETURN
-#define ATTR_NORETURN \
-    __attribute__ ((noreturn))
-#else /* !HAVE_ATTR_NORETURN */
-#define ATTR_NORETURN /* empty */
-#endif /* !HAVE_ATTR_NORETURN */
 ])
 
 AH_BOTTOM([

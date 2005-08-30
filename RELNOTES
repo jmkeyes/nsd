@@ -1,45 +1,11 @@
 NSD RELEASE NOTES
 
-2.3.0
-=============
-FEATURES:
-        - NSD now preserves the case of domain names instead of
-          converting them all to lower case.  If a domain name is
-          spelled with differing case in the same zone file the first
-          spelling is used.
-
-CODE CHANGES:
-        - Each zone is now stored separately instead of combining all
-          domain names into a single searchable tree.  This eliminates
-          some correctness (wildcard matches) and performance (AXFR,
-          NSEC lookup) corner cases.
-
-2.2.1
-=============
-FEATURES:
-        - The message priority is now included when logging to a file.
-
-BUG FIXES:
-        - Zero length RDATA using the unknown RR notation was not
-          working (except for the APL RR type).
-        - Bug #93: './configure' error message containing a comma must
-          be properly bracketed.
-        - Bug #94: nsd-xfer: Handle unexpected EOF when receiving AXFR
-          data.  Timeout if no data is received for more than 120
-          seconds (see the TCP_TIMEOUT parameter in config.h).
-        - Bug #95: An owner starting with an asterisk label ("*") was
-          being treated as its own wildcard child.
-
 2.2.0
 =============
 FEATURES:
         - nsd-xfer: replacement program for named-xfer to perform zone
           transfers using AXFR. TSIG is supported by nsd-xfer but not
-          yet by the nsd server. DNSSEC is also supported.  TSIG
-          requires OpenSSL version 0.9.7 or higher, configure using
-          --disable-tsig if you do not have OpenSSL installed.
-          Configure using --with-ssl=path if OpenSSL is not installed
-          at a standard location.
+          yet by the nsd server. DNSSEC is also supported.
 
 CODE CHANGES:
         - New data structure 'buffer_type' for representing binary
@@ -61,10 +27,6 @@ BUG FIXES:
         - The TSIG key for AXFRs can now also be stored in the file
           <zonename>.tsiginfo.  This makes it possible to use TSIG
           with multiple master servers.
-        - Signals are no longer blocked while performing I/O so the
-          server should respond quicker to signals.
-        - Fixed parsing of LOC rdata.  Fractions and altitude were not
-          handled correctly.
 
 2.1.5
 =============
