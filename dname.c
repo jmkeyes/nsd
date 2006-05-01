@@ -94,15 +94,6 @@ dname_make_from_packet(region_type *region, buffer_type *packet,
 		       int allow_pointers, int normalize)
 {
 	uint8_t buf[MAXDOMAINLEN + 1];
-	if(!dname_make_wire_from_packet(buf, packet, allow_pointers))
-		return 0;
-	return dname_make(region, buf, normalize);
-}
-
-int
-dname_make_wire_from_packet(uint8_t *buf, buffer_type *packet,
-                       int allow_pointers)
-{
 	int done = 0;
 	uint8_t visited[(MAX_PACKET_SIZE+7)/8];
 	size_t dname_length = 0;
@@ -114,12 +105,12 @@ dname_make_wire_from_packet(uint8_t *buf, buffer_type *packet,
 	while (!done) {
 		if (!buffer_available(packet, 1)) {
 /* 			error("dname out of bounds"); */
-			return 0;
+			return NULL;
 		}
 
 		if (get_bit(visited, buffer_position(packet))) {
 /* 			error("dname loops"); */
-			return 0;
+			return NULL;
 		}
 		set_bit(visited, buffer_position(packet));
 
@@ -127,16 +118,16 @@ dname_make_wire_from_packet(uint8_t *buf, buffer_type *packet,
 		if (label_is_pointer(label)) {
 			size_t pointer;
 			if (!allow_pointers) {
-				return 0;
+				return NULL;
 			}
 			if (!buffer_available(packet, 2)) {
 /* 				error("dname pointer out of bounds"); */
-				return 0;
+				return NULL;
 			}
 			pointer = label_pointer_location(label);
 			if (pointer >= buffer_limit(packet)) {
 /* 				error("dname pointer points outside packet"); */
-				return 0;
+				return NULL;
 			}
 			buffer_skip(packet, 2);
 			if (mark == -1) {
@@ -148,17 +139,17 @@ dname_make_wire_from_packet(uint8_t *buf, buffer_type *packet,
 			done = label_is_root(label);
 			if (!buffer_available(packet, length)) {
 /* 				error("dname label out of bounds"); */
-				return 0;
+				return NULL;
 			}
-			if (dname_length + length >= MAXDOMAINLEN+1) {
+			if (dname_length + length >= sizeof(buf)) {
 /* 				error("dname too large"); */
-				return 0;
+				return NULL;
 			}
 			buffer_read(packet, buf + dname_length, length);
 			dname_length += length;
 		} else {
 /* 			error("bad label type"); */
-			return 0;
+			return NULL;
 		}
 	}
 
@@ -166,20 +157,14 @@ dname_make_wire_from_packet(uint8_t *buf, buffer_type *packet,
 		buffer_set_position(packet, mark);
 	}
 
-	return dname_length;
+	return dname_make(region, buf, normalize);
 }
 
 const dname_type *
 dname_parse(region_type *region, const char *name)
 {
 	uint8_t dname[MAXDOMAINLEN];
-	if(!dname_parse_wire(dname, name))
-		return 0;
-	return dname_make(region, dname, 1);
-}
 
-int dname_parse_wire(uint8_t* dname, const char* name)
-{
 	const uint8_t *s = (const uint8_t *) name;
 	uint8_t *h;
 	uint8_t *p;
@@ -189,23 +174,23 @@ int dname_parse_wire(uint8_t* dname, const char* name)
 	if (strcmp(name, ".") == 0) {
 		/* Root domain.  */
 		dname[0] = 0;
-		return 1;
+		return dname_make(region, dname, 1);
 	}
 	
 	for (h = d, p = h + 1; *s; ++s, ++p) {
 		if (p - dname >= MAXDOMAINLEN) {
-			return 0;
+			return NULL;
 		}
 		
 		switch (*s) {
 		case '.':
 			if (p == h + 1) {
 				/* Empty label.  */
-				return 0;
+				return NULL;
 			} else {
 				label_length = p - h - 1;
 				if (label_length > MAXLABELLEN) {
-					return 0;
+					return NULL;
 				}
 				*h = label_length;
 				h = p;
@@ -237,7 +222,7 @@ int dname_parse_wire(uint8_t* dname, const char* name)
 		/* Terminate last label.  */
 		label_length = p - h - 1;
 		if (label_length > MAXLABELLEN) {
-			return 0;
+			return NULL;
 		}
 		*h = label_length;
 		h = p;
@@ -246,7 +231,7 @@ int dname_parse_wire(uint8_t* dname, const char* name)
 	/* Add root label.  */
 	*h = 0;
 	
-	return p-dname;
+	return dname_make(region, dname, 1);
 }
 
 
@@ -413,7 +398,7 @@ dname_to_string(const dname_type *dname, const dname_type *origin)
 				*dst++ = '\\';
 				*dst++ = ch;
 			} else {
-				snprintf(dst, 5, "\\%03u", (unsigned int)ch);
+				snprintf(dst, 5, "\\%03u", ch);
 				dst += 4;
 			}
 		}

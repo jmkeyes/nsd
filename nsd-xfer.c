@@ -41,6 +41,8 @@
  */
 #define MAX_WAITING_TIME TCP_TIMEOUT
 
+#define SERIAL_BITS      32
+
 /*
  * Exit codes are based on named-xfer for now.  See ns_defs.h in
  * bind8.
@@ -80,7 +82,9 @@ struct axfr_state
 	 * Region used to store owner and origin of previous RR (used
 	 * for pretty printing of zone data).
 	 */
-	struct state_pretty_rr *pretty_rr;
+	region_type *previous_owner_region;
+	const dname_type *previous_owner;
+	const dname_type *previous_owner_origin;
 };
 typedef struct axfr_state axfr_state_type;
 
@@ -179,6 +183,12 @@ to_alarm(int ATTR_UNUSED(sig))
 	timeout_flag = 1;
 }
 
+static void
+cleanup_addrinfo(void *data)
+{
+	freeaddrinfo((struct addrinfo *) data);
+}
+
 /*
  * Read a line from IN.  If successful, the line is stripped of
  * leading and trailing whitespace and non-zero is returned.
@@ -195,12 +205,13 @@ read_line(FILE *in, char *line, size_t size)
 }
 
 static tsig_key_type *
-read_tsig_key_data(region_type *region, FILE *in, 
-	int ATTR_UNUSED(default_family))
+read_tsig_key_data(region_type *region, FILE *in, int default_family)
 {
 	char line[4000];
 	tsig_key_type *key = (tsig_key_type *) region_alloc(
 		region, sizeof(tsig_key_type));
+	struct addrinfo hints;
+	int gai_rc;
 	int size;
 	uint8_t data[4000];
 
@@ -209,7 +220,21 @@ read_tsig_key_data(region_type *region, FILE *in,
 		      strerror(errno));
 		return NULL;
 	}
-	/* server name unused */
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_flags |= AI_NUMERICHOST;
+	hints.ai_family = default_family;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+	gai_rc = getaddrinfo(line, NULL, &hints, &key->server);
+	if (gai_rc) {
+		error("cannot parse address '%s': %s",
+		      line,
+		      gai_strerror(gai_rc));
+		return NULL;
+	}
+
+	region_add_cleanup(region, cleanup_addrinfo, key->server);
 
 	if (!read_line(in, line, sizeof(line))) {
 		error("failed to read TSIG key name: '%s'", strerror(errno));
@@ -277,6 +302,34 @@ read_tsig_key(region_type *region,
 }
 
 /*
+ * Write the complete buffer to the socket, irrespective of short
+ * writes or interrupts.
+ */
+static int
+write_socket(int s, const void *buf, size_t size)
+{
+	const char *data = (const char *) buf;
+	size_t total_count = 0;
+
+	while (total_count < size) {
+		ssize_t count
+			= write(s, data + total_count, size - total_count);
+		if (count == -1) {
+			if (errno != EAGAIN) {
+				error("network write failed: %s",
+				      strerror(errno));
+				return 0;
+			} else {
+				continue;
+			}
+		}
+		total_count += count;
+	}
+
+	return 1;
+}
+
+/*
  * Read SIZE bytes from the socket into BUF.  Keep reading unless an
  * error occurs (except for EAGAIN) or EOF is reached.
  */
@@ -307,6 +360,110 @@ read_socket(int s, void *buf, size_t size)
 
 	return 1;
 }
+
+static int
+print_rdata(buffer_type *output, rrtype_descriptor_type *descriptor,
+	    rr_type *record)
+{
+	size_t i;
+	size_t saved_position = buffer_position(output);
+
+	for (i = 0; i < record->rdata_count; ++i) {
+		if (i == 0) {
+			buffer_printf(output, "\t");
+		} else if (descriptor->type == TYPE_SOA && i == 2) {
+			buffer_printf(output, " (\n\t\t");
+		} else {
+			buffer_printf(output, " ");
+		}
+		if (!rdata_atom_to_string(
+			    output,
+			    (rdata_zoneformat_type) descriptor->zoneformat[i],
+			    record->rdatas[i]))
+		{
+			buffer_set_position(output, saved_position);
+			return 0;
+		}
+	}
+	if (descriptor->type == TYPE_SOA) {
+		buffer_printf(output, " )");
+	}
+
+	return 1;
+}
+
+static void
+set_previous_owner(axfr_state_type *state, const dname_type *dname)
+{
+	region_free_all(state->previous_owner_region);
+	state->previous_owner = dname_copy(state->previous_owner_region, dname);
+	state->previous_owner_origin = dname_origin(
+		state->previous_owner_region, state->previous_owner);
+}
+
+static int
+print_rr(FILE *out,
+	 axfr_state_type *state,
+	 rr_type *record)
+{
+	buffer_type *output = buffer_create(state->rr_region, 1000);
+	rrtype_descriptor_type *descriptor
+		= rrtype_descriptor_by_type(record->type);
+	int result;
+	const dname_type *owner = domain_dname(record->owner);
+	const dname_type *owner_origin
+		= dname_origin(state->rr_region, owner);
+	int owner_changed
+		= (!state->previous_owner
+		   || dname_compare(state->previous_owner, owner) != 0);
+	if (owner_changed) {
+		int origin_changed = (!state->previous_owner_origin
+				      || dname_compare(
+					      state->previous_owner_origin,
+					      owner_origin) != 0);
+		if (origin_changed) {
+			buffer_printf(
+				output,
+				"$ORIGIN %s\n",
+				dname_to_string(owner_origin, NULL));
+		}
+
+		set_previous_owner(state, owner);
+		buffer_printf(output,
+			      "%s",
+			      dname_to_string(owner,
+					      state->previous_owner_origin));
+	}
+
+	buffer_printf(output,
+		      "\t%lu\t%s\t%s",
+		      (unsigned long) record->ttl,
+		      rrclass_to_string(record->klass),
+		      rrtype_to_string(record->type));
+
+	result = print_rdata(output, descriptor, record);
+	if (!result) {
+		/*
+		 * Some RDATA failed to print, so print the record's
+		 * RDATA in unknown format.
+		 */
+		result = rdata_atoms_to_unknown_string(output,
+						       descriptor,
+						       record->rdata_count,
+						       record->rdatas);
+	}
+
+	if (result) {
+		buffer_printf(output, "\n");
+		buffer_flip(output);
+		fwrite(buffer_current(output), buffer_remaining(output), 1,
+		       out);
+/* 		fflush(out); */
+	}
+
+	return result;
+}
+
 
 static int
 parse_response(FILE *out, axfr_state_type *state)
@@ -350,7 +507,7 @@ parse_response(FILE *out, axfr_state_type *state)
 
 		++state->rr_count;
 
-		if (!print_rr(out, state->pretty_rr, record)) {
+		if (!print_rr(out, state, record)) {
 			return 0;
 		}
 
@@ -366,12 +523,10 @@ send_query(int s, query_type *q)
 	uint16_t size = htons(buffer_remaining(q->packet));
 
 	if (!write_socket(s, &size, sizeof(size))) {
-		error("network write failed: %s", strerror(errno));
 		return 0;
 	}
 	if (!write_socket(s, buffer_begin(q->packet), buffer_limit(q->packet)))
 	{
-		error("network write failed: %s", strerror(errno));
 		return 0;
 	}
 	return 1;
@@ -464,6 +619,26 @@ check_response_tsig(query_type *q, tsig_record_type *tsig)
 	return 1;
 }
 
+
+/*
+ * Compares two 32-bit serial numbers as defined in RFC1982.  Returns
+ * <0 if a < b, 0 if a == b, and >0 if a > b.  The result is undefined
+ * if a != b but neither is greater or smaller (see RFC1982 section
+ * 3.2.).
+ */
+static int
+compare_serial(uint32_t a, uint32_t b)
+{
+	const uint32_t cutoff = ((uint32_t) 1 << (SERIAL_BITS - 1));
+
+	if (a == b) {
+		return 0;
+	} else if ((a < b && b - a < cutoff) || (a > b && a - b > cutoff)) {
+		return -1;
+	} else {
+		return 1;
+	}
+}
 
 /*
  * Query the server for the zone serial. Return 1 if the zone serial
@@ -795,8 +970,11 @@ main(int argc, char *argv[])
 	state.done = 0;
 	state.rr_count = 0;
 	state.rr_region = region_create(xalloc, free);
-	state.pretty_rr = create_pretty_rr(region);
+	state.previous_owner_region = region_create(xalloc, free);
+	state.previous_owner = NULL;
+	state.previous_owner_origin = NULL;
 
+	region_add_cleanup(region, cleanup_region, state.previous_owner_region);
 	region_add_cleanup(region, cleanup_region, state.rr_region);
 
 	srandom((unsigned long) getpid() * (unsigned long) time(NULL));

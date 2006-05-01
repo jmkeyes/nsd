@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,3.0.0,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,2.3.4,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -30,14 +30,6 @@ AC_ARG_WITH([configdir],
 	AC_HELP_STRING([--with-configdir=dir], [NSD configuration directory]),
 	[configdir=$withval])
 AC_SUBST(configdir)
-
-#
-# Determine configuration file
-nsd_conf_file=${configdir}/nsd.conf
-AC_ARG_WITH([nsd_conf_file],
-	AC_HELP_STRING([--with-nsd_conf_file=path], [Pathname to the NSD configuration file]),
-	[nsd_conf_file=$withval])
-AC_SUBST(nsd_conf_file)
 
 #
 # Determine the pidfile location. Check if /var/run exists, if so set pidfile
@@ -76,7 +68,7 @@ AC_SUBST(dbfile)
 #
 configfile=$configdir/nsdc.conf
 AC_ARG_WITH([configfile],
-	AC_HELP_STRING([--with-configfile=path], [Pathname to the nsdc configuration file]),
+	AC_HELP_STRING([--with-configfile=path], [Pathname to the NSD configuration file]),
 	[configfile=$withval])
 AC_SUBST(configfile)
 
@@ -156,32 +148,6 @@ if test $ac_cv_c_unused_attribute = yes; then
 fi
 ])dnl
 
-AC_DEFUN([CHECK_COMPILER_FLAG],
-[
-AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING(whether $CC supports -$1)
-cache=`echo $1 | sed 'y%.=/+-%___p_%'`
-AC_CACHE_VAL(cv_prog_cc_flag_$cache,
-[
-echo 'void f(){}' >conftest.c
-if test -z "`$CC -$1 -c conftest.c 2>&1`"; then
-eval "cv_prog_cc_flag_$cache=yes"
-else
-eval "cv_prog_cc_flag_$cache=no"
-fi
-rm -f conftest*
-])
-if eval "test \"`echo '$cv_prog_cc_flag_'$cache`\" = yes"; then
-AC_MSG_RESULT(yes)
-:
-$2
-else
-AC_MSG_RESULT(no)
-:
-$3
-fi
-])
-
 AC_DEFUN([AC_CHECK_CTIME_R],
 [AC_REQUIRE([AC_PROG_CC])
 AC_MSG_CHECKING(whether ctime_r works with two arguments)
@@ -202,6 +168,7 @@ if test $ac_cv_c_ctime_c = no; then
         CPPFLAGS="$CPPFLAGS -D_POSIX_PTHREAD_SEMANTICS"
 fi
 ])dnl
+
 
 AC_CHECK_FORMAT_ATTRIBUTE
 AC_CHECK_UNUSED_ATTRIBUTE
@@ -251,62 +218,6 @@ AC_DEFUN([CHECK_SSL], [
 AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
 AC_CHECK_HEADERS([arpa/inet.h signal.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h dlfcn.h tcpd.h])
-
-AC_DEFUN([CHECK_VALIST_DEF],
-[
-AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING(for double definition of struct va_list)
-AC_CACHE_VAL(ac_cv_c_va_list_def,
-[
-cat >conftest.c <<EOF
-#include <stdio.h>
-#include <stdarg.h>
-int foo(void);
-EOF
-if test -z "`$CC -Werror -D_XOPEN_SOURCE=600 -c conftest.c 2>&1`"; then
-eval "ac_cv_c_va_list_def=no"
-else
-eval "ac_cv_c_va_list_def=yes"
-fi
-rm -f conftest*
-])
-if test $ac_cv_c_va_list_def = yes; then
-AC_MSG_RESULT(yes)
-:
-AC_DEFINE_UNQUOTED([HAVE_VA_LIST_DOUBLE_DEF], [], [Define this if you have double va_list definitions.])
-else
-AC_MSG_RESULT(no)
-:
-
-fi
-])
-
-CHECK_VALIST_DEF
-
-AC_DEFUN([AC_CHECK_STRPTIME],
-[AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING(whether strptime needs defines)
-AC_CACHE_VAL(ac_cv_c_strptime_needs_defs,
-[
-cat >conftest.c <<EOF
-#include <time.h>
-void testing (void) { struct tm t; char *timestr; strptime(timestr, "%Y%m", &t); }
-EOF
-if test -z "`$CC -Wall -Werror -c conftest.c 2>&1`"; then
-eval "ac_cv_c_strptime_needs_defs=no"
-else
-eval "ac_cv_c_strptime_needs_defs=yes"
-fi
-rm -f conftest*
-])
-
-AC_MSG_RESULT($ac_cv_c_strptime_needs_defs)
-if test $ac_cv_c_strptime_needs_defs = yes; then
-AC_DEFINE_UNQUOTED([STRPTIME_NEEDS_DEFINES], 1, [strptime is available from time.h with some defines.])
-fi
-])dnl
-
-AC_CHECK_STRPTIME
 
 AC_SEARCH_LIBS(inet_pton, [nsl])
 AC_SEARCH_LIBS(socket, [socket])
@@ -385,7 +296,7 @@ AC_FUNC_CHOWN
 AC_FUNC_FORK
 AC_FUNC_MALLOC
 AC_TYPE_SIGNAL
-AC_CHECK_FUNCS([alarm chroot dup2 endpwent gethostname memset memcpy socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask dlopen dlerror dlsym dlclose strptime])
+AC_CHECK_FUNCS([alarm chroot dup2 endpwent gethostname memset memcpy mmap socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask dlopen dlerror dlsym dlclose])
 
 #
 # Checking for missing functions we can replace
@@ -397,18 +308,42 @@ AC_REPLACE_FUNCS(b64_pton)
 AC_REPLACE_FUNCS(b64_ntop)
 AC_REPLACE_FUNCS(pselect)
 
-AC_MSG_CHECKING(for pselect prototype in sys/select.h)
-AC_EGREP_HEADER([[^a-zA-Z_]*pselect[^a-zA-Z_]], sys/select.h, AC_DEFINE(HAVE_PSELECT_PROTO, 1, 
-	[if sys/select.h provides pselect prototype]) AC_MSG_RESULT(yes), AC_MSG_RESULT(no))
+dnl dnl Check for libwrap.  Note that libwrap requires 
+dnl yp_get_default_domain on Linux but that normally the required nsl 
+dnl library isn't linked in (and no error occurs when dynamically linking)
+AC_ARG_WITH(libwrap,
+	AC_HELP_STRING([--with-libwrap=[pathname]],
+		[Compile in libwrap (tcp_wrappers) support.]), [], [withval="yes"])
 
-AC_MSG_CHECKING(for ctime_r prototype in time.h)
-AC_EGREP_HEADER([[^a-zA-Z_]*ctime_r[^a-zA-Z_]], time.h, AC_DEFINE(HAVE_CTIME_R_PROTO, 1, 
-	[if time.h provides ctime_r prototype]) AC_MSG_RESULT(yes), AC_MSG_RESULT(no))
+case "$withval" in
+	no|'')
+		;;
+	yes)
+		AC_CHECK_LIB(wrap, request_init, [
+			AC_DEFINE_UNQUOTED([LIBWRAP], [], [Define to use hosts_access() from -lwrap.])
+			LIBWRAP="-lwrap"
+                        AC_SEARCH_LIBS(yp_get_default_domain, [nsl])
+                        ])
+		;;
+	*)
+		LIBWRAP="-L$withval -lwrap"
+		OLDLIBS="$LIBS"
+		LIBS="$LIBWRAP $LIBS"
+		AC_TRY_LINK([ int allow_severity; int deny_severity; ],
+			[ hosts_access(); ],
+			[AC_DEFINE_UNQUOTED([LIBWRAP], [], [Define to use hosts_access() from -lwrap.])
+                         AC_SEARCH_LIBS(yp_get_default_domain, [nsl])
+                        ],
+			[ AC_MSG_ERROR(Could not find the $withval library.  You must first install tcp_wrappers.) ])
+		LIBS="$OLDLIBS"
+		;;
+esac
+AC_SUBST(LIBWRAP)
 
 dnl
 dnl Some random defines's
 dnl
-AC_DEFINE_UNQUOTED([IDENTITY], ["unidentified server"], [Define to the default nsd identity.])
+AC_DEFINE_UNQUOTED([IDENTITY], ["unindentified server"], [Define to the default nsd identity.])
 AC_DEFINE_UNQUOTED([VERSION], [PACKAGE_STRING], [Define to the NSD version to answer version.server query.])
 AC_DEFINE_UNQUOTED([TCP_BACKLOG], [5], [Define to the backlog to be used with listen.])
 AC_DEFINE_UNQUOTED([TCP_PORT], ["53"], [Define to the default tcp port.])
@@ -420,6 +355,8 @@ AC_DEFINE_UNQUOTED([EDNS_MAX_MESSAGE_LEN], [4096], [Define to the default maximu
 AC_DEFINE_UNQUOTED([MAX_INTERFACES], [8], [Define to the maximum interfaces to serve.])
 dnl AC_DEFINE_UNQUOTED([FACILITY], [LOG_DAEMON], [Define to the default facility for syslog.])
 AC_DEFINE_UNQUOTED([MAXSYSLOGMSGLEN], [512], [Define to the maximum message length to pass to syslog.])
+AC_DEFINE_UNQUOTED([AXFR_DAEMON], ["axfr"], [Define to the default daemon name to check for axfr.])
+AC_DEFINE_UNQUOTED([AXFR_DAEMON_PREFIX], ["axfr-"], [Define to the default daemon prefix to check for axfr.])
 
 dnl
 dnl Determine the syslog facility to use
@@ -479,12 +416,27 @@ case "$enable_bind8_stats" in
 		;;
 esac
 
+AC_ARG_ENABLE(nsid, AC_HELP_STRING([--enable-nsid], [Enable NSID support]))
+case "$enable_nsid" in
+        yes)
+               AC_DEFINE([NSID], [], [Define this to enable NSID support.])
+               ;;
+        no|*)
+                ;;
+esac
+
+AC_ARG_ENABLE(plugins, AC_HELP_STRING([--enable-plugins], [Enable plugin support]))
+case "$enable_plugins" in
+        yes)
+		AC_DEFINE([PLUGINS], [], [Define this to enable plugin support.])
+		;;
+        no|*)
+                ;;
+esac
+
 AC_ARG_ENABLE(checking, AC_HELP_STRING([--enable-checking], [Enable internal runtime checks]))
 case "$enable_checking" in
         yes)
-		CHECK_COMPILER_FLAG(W, [ CFLAGS="$CFLAGS -W" ])
-		CHECK_COMPILER_FLAG(Wall, [ CFLAGS="$CFLAGS -Wall" ])
-		CHECK_COMPILER_FLAG(Wextra, [ CFLAGS="$CFLAGS -Wextra" ])
 		;;
         no|*)
                 AC_DEFINE([NDEBUG], [], [Undefine this to enable internal runtime checks.])
@@ -504,55 +456,17 @@ case "$enable_tsig" in
                 ;;
 esac
 
-AC_ARG_ENABLE(nsec3, AC_HELP_STRING([--enable-nsec3], [Enable NSEC3 support]))
-case "$enable_nsec3" in
+AC_ARG_ENABLE(mmap, AC_HELP_STRING([--enable-mmap], [Configure NSD to load the database using mmap(2).]))
+case "$enable_mmap" in
         yes)
-		AC_DEFINE_UNQUOTED([NSEC3], [], [Define this to enable NSEC3 support.])
-                ;;
-        no|*)
+                if test "$ac_cv_func_mmap" != yes; then
+                    AC_MSG_ERROR(mmap support requested but mmap not found)
+                fi
+		AC_DEFINE_UNQUOTED([USE_MMAP], [], [Define this to load the database using mmap(2).])
 		;;
-esac
-
-AC_ARG_ENABLE(nsid, AC_HELP_STRING([--enable-nsid], [Enable NSID support]))
-case "$enable_nsid" in
-        yes)
-               AC_DEFINE([NSID], [], [Define this to enable NSID support.])
-               ;;
         no|*)
                 ;;
 esac
-
-AH_BOTTOM([
-/* define before includes as it specifies what standard to use. */
-#if (defined(HAVE_PSELECT) && !defined (HAVE_PSELECT_PROTO)) \
-	|| !defined (HAVE_CTIME_R_PROTO) \
-	|| defined (STRPTIME_NEEDS_DEFINES)
-#  ifndef _XOPEN_SOURCE
-#    define _XOPEN_SOURCE 600
-#  endif
-#  ifndef _POSIX_C_SOURCE
-#    define _POSIX_C_SOURCE 200112
-#  endif
-#  ifndef _BSD_SOURCE
-#    define _BSD_SOURCE 1
-#  endif
-#  ifndef __EXTENSIONS__
-#    define __EXTENSIONS__ 1
-#  endif 
-/* Get 64-bit file size support */
-#  undef FILE_OFFSET_BITS
-#  define FILE_OFFSET_BITS 64
-#endif
-])
-
-AH_BOTTOM([
-#ifdef HAVE_VA_LIST_DOUBLE_DEF
-/* workaround double va_list definition on some platforms */
-#  ifndef _VA_LIST_DEFINED
-#    define _VA_LIST_DEFINED
-#  endif
-#endif
-])
 
 AH_BOTTOM([
 #include <sys/types.h>
@@ -610,11 +524,6 @@ AH_BOTTOM([
 ])
 
 AH_BOTTOM([
-/* maximum nesting of included files */
-#define MAXINCLUDES 10
-])
-
-AH_BOTTOM([
 #ifndef B64_PTON
 int b64_ntop(uint8_t const *src, size_t srclength,
 	     char *target, size_t targsize);
@@ -632,7 +541,6 @@ if [[ "$enable_checking" == "yes" ]]; then
         echo "* This will instruct NSD to be stricter        *"
         echo "* when validating its input. This could lead   *"
         echo "* to a reduced service level.                  *"
-        echo "*                                              *"
         echo "************************************************"
 fi
 

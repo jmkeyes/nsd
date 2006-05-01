@@ -12,6 +12,8 @@
 3.3 Keeping in sync the secondary zones with ``nsdc update''
 3.4 Sending notify to the secondaries on reload or restart
 
+
+
 1.0 Introduction
 
 This is NSD Name Server Daemon (NSD) version @version@.
@@ -149,6 +151,12 @@ addition to standard configure options, one may use the following:
 
         Disables IPv6 support in NSD.
 
+  --enable-plugins
+
+        Enable plugin support (experimental).  See nsd-plugin.h for
+        the plugin API defined by NSD.  See contrib/example-plugin.c
+        for an example plugin.
+
   --enable-checking
 
         Enable some internal development checks.  Useful if you want
@@ -201,6 +209,10 @@ addition to standard configure options, one may use the following:
   --with-user=username
 
         User name or ID to answer the queries with, default is nsd
+
+  --with-libwrap=pathname
+
+        Compile in libwrap (tcp_wrappers) support.
 
   --with-facility=facility
 
@@ -395,15 +407,31 @@ A sample output of a slightly modified version:
 
 3.2 AXFR access
 
-The access list for AXFR should be set with provide-xfr:
-in the nsd config file. This is per zone. See nsd.conf(5).
-For example to grant zone 'example.com' AXFR right to localhost for
-IPv4 and IPv6, use the below config options.
+When compiled with libwrap nsd will use daemon name ``axfr'' and
+``axfr-zone'' to verify access privileges for the client trying to
+initiate the transfer.  Since NSD doesn't do any hostname resolution
+internally the access list provided in the /etc/hosts.allow or
+/etc/hosts.deny should be ip number based.
 
-zone:
-	name: "example.com"
-	provide-xfr: 127.0.0.1 NOKEY
-	provide-xfr: ::1 NOKEY
+Example:
+
+axfr-nlnetlabs.nl. : ns.sidn.nl : allow
+axfr : 127.0.0.1 : allow
+axfr : ns1.ripe.net : allow
+axfr : ns1.sidn.nl : allow
+axfr : ALL : deny
+
+At first a check is made whether the particular client is allowed to
+do transfer of the particular zone.
+
+NOTE: Make sure you don't forget the trailing dot. So for example
+``axfr-se.''  and NOT ``axfr-se''
+
+If -DAXFR_DAEMON_PREFIX is defined (which is the case by default) and
+the first lookup for ``axfr'' has failed (denied) then nsd will try
+second lookup in hosts.allow or hosts.deny for the daemon name
+axfr-zone.name.tld.  (with trailing dot).
+
 
 3.3 Keeping in sync the secondary zones with ``nsdc update''
 
@@ -445,6 +473,10 @@ database with the master servers:
 It is as well possible to update the master zone files (in bound AXFR)
 with nsdc(8) update using TSIG.
 
+PLEASE NOTE: nsd-xfer(8) can use TSIG to update its zone file(s) from
+*dns servers that support TSIG*, such as BIND, but NOT nsd(8), which
+does not yet support TSIG.
+
 This is done by passing the tsig key to nsd-xfer(8).
 
 nsd-xfer(8) uses the same cryptic file format as named-xfer(8) (to
@@ -472,7 +504,6 @@ Y87923jksdXlsdv+LeXpUA==
 Cryptic? Yes. The first line tells this key is to be used for
 213.53.69.1 Second one is the name of the key. 157 stands for hmac-md5
 algorithm and the last line is the secret.
-
 
 3.4 Sending notify to the secondaries on reload or restart
 

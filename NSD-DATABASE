@@ -1,5 +1,4 @@
 NSD 1.4-2.0 DATABASE FORMAT
-NSD 3.0 DATABASE FORMAT (adds crc at end).
 
 As of NSD release 1.4 the database is extensively redesigned.  The main goal
 for the redesign was to accomodate DNSSEC.
@@ -39,7 +38,6 @@ The database is constructed as follows.
                                 ...
                                 rdata_N
         NULL TERMINATED
-	CRC (32 bits crc sum over all previous bytes)
         MAGIC
 
 Dname's that can be compressed at compile time are compressed. Those are stored

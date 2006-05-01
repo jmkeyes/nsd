@@ -35,7 +35,7 @@
 #include <unistd.h>
 
 #include "nsd.h"
-#include "options.h"
+#include "plugins.h"
 
 
 /* The server handler... */
@@ -55,15 +55,14 @@ usage (void)
 		"  -6              Only listen to IPv6 connections.\n"
 		"  -a ip-address   Listen to the specified incoming IP address (may be\n"
 		"                  specified multiple times).\n"
-		"  -c configfile   Read specified configfile instead of %s.\n"
 		"  -d              Enable debug mode (do not fork as a daemon process).\n"
 		"  -f database     Specify the database to load.\n"
 		"  -h              Print this help information.\n"
-		, CONFIGFILE);
+		);
 	fprintf(stderr,
 		"  -i identity     Specify the identity when queried for id.server CHAOS TXT.\n"
 #ifdef NSID
-                "  -I nsid         Specify the NSID. This must be a hex string.\n"
+		"  -I nsid         Specify the NSID. This must be a hex string.\n"
 #endif /* NSID */
 		"  -l filename     Specify the log file.\n"
 		"  -N server-count The number of servers to start.\n"
@@ -76,8 +75,10 @@ usage (void)
 	fprintf(stderr,
 		"  -u user         Change effective uid to the specified user.\n"
 		"  -v              Print version information.\n"
+		"  -X plugin       Load a plugin (may be specified multiple times).\n\n"
 		);
 	fprintf(stderr, "Report bugs to <%s>.\n", PACKAGE_BUGREPORT);
+	exit(1);
 }
 
 static void
@@ -140,7 +141,7 @@ int
 writepid (struct nsd *nsd)
 {
 	FILE * fd;
-	char pidbuf[32];
+	char pidbuf[16];
 
 	snprintf(pidbuf, sizeof(pidbuf), "%lu\n", (unsigned long) nsd->pid);
 
@@ -168,24 +169,27 @@ writepid (struct nsd *nsd)
 void 
 sig_handler (int sig)
 {
+	size_t i;
 	/* To avoid race cond. We really don't want to use log_msg() in this handler */
 	
 	/* Are we a child server? */
 	if (nsd.server_kind != NSD_SERVER_MAIN) {
 		switch (sig) {
 		case SIGCHLD:
-			nsd.signal_hint_child = 1;
+			/* Plugins may fork, reap all terminated children.  */
+			while (waitpid(0, NULL, WNOHANG) > 0)
+				;
 			break;
 		case SIGALRM:
 			break;
 		case SIGHUP:
 		case SIGINT:
 		case SIGTERM:
-			nsd.signal_hint_quit = 1;
+			nsd.mode = NSD_QUIT;
 			break;
 		case SIGILL:
 		case SIGUSR1:	/* Dump stats on SIGUSR1.  */
-			nsd.signal_hint_statsusr = 1;
+			nsd.mode = NSD_STATS;
 			break;
 		default:
 			break;
@@ -195,33 +199,44 @@ sig_handler (int sig)
 
 	switch (sig) {
 	case SIGCHLD:
-		nsd.signal_hint_child = 1;
 		return;
 	case SIGHUP:
-		nsd.signal_hint_reload = 1;
+		nsd.mode = NSD_RELOAD;
 		return;
 	case SIGALRM:
-		nsd.signal_hint_stats = 1;
+#ifdef BIND8_STATS
+		alarm(nsd.st.period);
+#endif
+		sig = SIGUSR1;
 		break;
 	case SIGILL:
 		/*
 		 * For backwards compatibility with BIND 8 and older
 		 * versions of NSD.
 		 */
-		nsd.signal_hint_statsusr = 1;
+		sig = SIGUSR1;
 		break;
 	case SIGUSR1:
 		/* Dump statistics.  */
-		nsd.signal_hint_statsusr = 1;
 		break;
 	case SIGINT:
 		/* Silent shutdown... */
-		nsd.signal_hint_quit = 1;
+		nsd.mode = NSD_QUIT;
 		break;
 	case SIGTERM:
 	default:
-		nsd.signal_hint_shutdown = 1;
+		nsd.mode = NSD_SHUTDOWN;
+		sig = SIGTERM;
 		break;
+	}
+
+	/* Distribute the signal to the servers... */
+	for (i = 0; i < nsd.child_count; ++i) {
+		if (nsd.children[i].pid > 0 && kill(nsd.children[i].pid, sig) == -1) {
+			/* we're so in trouble here, so do log this! */
+			log_msg(LOG_ERR, "problems killing %d: %s",
+				(int) nsd.children[i].pid, strerror(errno));
+		}
 	}
 }
 
@@ -236,6 +251,43 @@ bind8_stats (struct nsd *nsd)
 	char buf[MAXSYSLOGMSGLEN];
 	char *msg, *t;
 	int i, len;
+
+	/* XXX A bit ugly but efficient. Should be somewhere else. */
+	static const char *types[] = {
+		NULL, "A", "NS", "MD", "MF", "CNAME", "SOA", "MB", "MG",		/* 8 */
+		"MR", "NULL", "WKS", "PTR", "HINFO", "MINFO", "MX", "TXT",		/* 16 */
+		"RP", "AFSDB", "X25", "ISDN", "RT", "NSAP", "NSAP_PTR", "SIG",		/* 24 */
+		"KEY", "PX", "GPOS", "AAAA", "LOC", "NXT", "EID", "NIMLOC",		/* 32 */
+		"SRV", "ATMA", "NAPTR", "KX", "CERT", "A6", "DNAME", "SINK",		/* 40 */
+		"OPT", "APL", "DS", "SSHFP", NULL, "RRSIG", "NSEC", "DNSKEY",		/* 48 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 56 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 64 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 72 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 80 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 88 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 96 */
+		NULL, NULL, "SPF", NULL, NULL, NULL, NULL, NULL,			/* 104 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 112 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 120 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 128 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 136 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 144 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 152 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 160 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 168 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 176 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 184 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 192 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 200 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 208 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 216 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 224 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 232 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 240 */
+		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,				/* 248 */
+		"TKEY", "TSIG", "IXFR", "AXFR", "MAILB", "MAILA", "ANY"			/* 255 */
+	};
+
 
 	/* Current time... */
 	time_t now;
@@ -253,7 +305,11 @@ bind8_stats (struct nsd *nsd)
 		}
 
 		if (nsd->st.qtype[i] != 0) {
-			t += snprintf(t, len, " %s=%lu", rrtype_to_string(i), nsd->st.qtype[i]);
+			if (types[i] == NULL) {
+				t += snprintf(t, len, " TYPE%d=%lu", i, nsd->st.qtype[i]);
+			} else {
+				t += snprintf(t, len, " %s=%lu", types[i], nsd->st.qtype[i]);
+			}
 		}
 	}
 	if (t > msg)
@@ -303,21 +359,30 @@ main (int argc, char *argv[])
 	/* For initialising the address info structures */
 	struct addrinfo hints[MAX_INTERFACES];
 	const char *nodes[MAX_INTERFACES];
-	const char *udp_port = 0;
-	const char *tcp_port = 0;
+	const char *udp_port;
+	const char *tcp_port;
 
 	const char *log_filename = NULL;
-	const char *configfile = CONFIGFILE;
 	
+#ifdef PLUGINS
+	nsd_plugin_id_type plugin_count = 0;
+	char **plugins = (char **) xalloc(sizeof(char *));
+	maximum_plugin_count = 1;
+#endif /* PLUGINS */
+
 	log_init("nsd");
 
 	/* Initialize the server handler... */
 	memset(&nsd, 0, sizeof(struct nsd));
 	nsd.region      = region_create(xalloc, free);
-	nsd.dbfile	= 0;
-	nsd.pidfile	= 0;
+	nsd.dbfile	= DBFILE;
+	nsd.pidfile	= PIDFILE;
 	nsd.server_kind = NSD_SERVER_MAIN;
 	
+	/* Initialise the ports */
+	udp_port = UDP_PORT;
+	tcp_port = TCP_PORT;
+
 	for (i = 0; i < MAX_INTERFACES; i++) {
 		memset(&hints[i], 0, sizeof(hints[i]));
 		hints[i].ai_family = DEFAULT_AI_FAMILY;
@@ -325,15 +390,15 @@ main (int argc, char *argv[])
 		nodes[i] = NULL;
 	}
 
-	nsd.identity	= 0;
+	nsd.identity	= IDENTITY;
+	nsd.nsid        = NULL;
+	nsd.nsid_len  	= 0;
 	nsd.version	= VERSION;
-	nsd.username	= 0;
-	nsd.chrootdir	= 0;
-	nsd.nsid 	= NULL;
-	nsd.nsid_len 	= 0;
+	nsd.username	= USER;
+	nsd.chrootdir	= NULL;
 
-	nsd.child_count = 0;
-	nsd.maximum_tcp_count = 0;
+	nsd.child_count = 1;
+	nsd.maximum_tcp_count = 10;
 	nsd.current_tcp_count = 0;
 	
 	/* EDNS0 */
@@ -357,7 +422,7 @@ main (int argc, char *argv[])
 
 
 	/* Parse the command line... */
-	while ((c = getopt(argc, argv, "46a:c:df:hi:I:l:N:n:P:p:s:u:t:X:vF:L:")) != -1) {
+	while ((c = getopt(argc, argv, "46a:df:hi:I:l:N:n:P:p:s:u:t:X:vF:L:")) != -1) {
 		switch (c) {
 		case '4':
 			for (i = 0; i < MAX_INTERFACES; ++i) {
@@ -381,9 +446,6 @@ main (int argc, char *argv[])
 				error("too many interfaces ('-a') specified.");
 			}
 			break;
-		case 'c':
-			configfile = optarg;
-			break;
 		case 'd':
 			nsd.debug = 1;
 			break;
@@ -392,7 +454,7 @@ main (int argc, char *argv[])
 			break;
 		case 'h':
 			usage();
-			exit(0);
+			break;
 		case 'i':
 			nsd.identity = optarg;
 			break;
@@ -421,7 +483,7 @@ main (int argc, char *argv[])
 				++t;
 			}
 #endif /* NSID */
-                       break;
+			break;
 		case 'l':
 			log_filename = optarg;
 			break;
@@ -468,9 +530,23 @@ main (int argc, char *argv[])
 		case 'u':
 			nsd.username = optarg;
 			break;
+		case 'X':
+#ifdef PLUGINS
+			if (plugin_count == maximum_plugin_count) {
+				maximum_plugin_count *= 2;
+				plugins = (char **) xrealloc(
+					plugins,
+					maximum_plugin_count * sizeof(char *));
+			}
+			plugins[plugin_count] = optarg;
+			++plugin_count;
+#else /* !PLUGINS */
+			error("plugin support not enabled.");
+#endif /* !PLUGINS */
+			break;
 		case 'v':
 			version();
-			/* version exits */
+			break;
 #ifndef NDEBUG
 		case 'F':
 			sscanf(optarg, "%x", &nsd_debug_facilities);
@@ -482,125 +558,34 @@ main (int argc, char *argv[])
 		case '?':
 		default:
 			usage();
-			exit(1);
 		}
 	}
 	argc -= optind;
 	argv += optind;
 
-	if (argc != 0) {
+	if (argc != 0)
 		usage();
-		exit(1);
-	}
 
 	if (strlen(nsd.identity) > UCHAR_MAX) {
 		error("server identity too long (%u characters)",
 		      (unsigned) strlen(nsd.identity));
 	}
-
-        /* Read options */
-        nsd.options = nsd_options_create(region_create(xalloc, free));
-        if(!parse_options_file(nsd.options, configfile)) {
-                error("nsd: could not read config: %s\n", configfile);
-        }
-	if(nsd.options->ip4_only) {
-		for (i = 0; i < MAX_INTERFACES; ++i) {
-			hints[i].ai_family = AF_INET;
-		}
-	}
-#ifdef INET6
-	if(nsd.options->ip6_only) {
-		for (i = 0; i < MAX_INTERFACES; ++i) {
-			hints[i].ai_family = AF_INET6;
-		}
-	}
-#endif /* !INET6 */
-	if(nsd.options->ip_addresses)
-	{
-		ip_address_option_t* ip = nsd.options->ip_addresses;
-		while(ip) {
-			if (nsd.ifs < MAX_INTERFACES) {
-				nodes[nsd.ifs] = ip->address;
-				++nsd.ifs;
-			} else {
-				error("too many interfaces ('-a' + 'ip-address:') specified.");
-				break;
-			}
-			ip = ip->next;
-		}
-	}
-	if(nsd.options->debug_mode) nsd.debug=1;
-	if(!nsd.dbfile)
-	{
-		if(nsd.options->database) nsd.dbfile = nsd.options->database;
-		else nsd.dbfile = DBFILE;
-	}
-	if(!nsd.pidfile)
-	{
-		if(nsd.options->pidfile) nsd.pidfile = nsd.options->pidfile;
-		else nsd.pidfile = PIDFILE;
-	}
-	if(!nsd.identity)
-	{
-		if(nsd.options->identity) nsd.identity = nsd.options->identity;
-		else nsd.identity = IDENTITY;
-	}
-	if (nsd.options->logfile && !log_filename) {
-		log_filename = nsd.options->logfile;
-	}
-	if(nsd.child_count == 0) {
-		nsd.child_count = nsd.options->server_count;
-	}
-	if(nsd.maximum_tcp_count == 0) {
-		nsd.maximum_tcp_count = nsd.options->tcp_count;
-	}
-	if(udp_port == 0)
-	{
-		if(nsd.options->port != 0) {
-			udp_port = nsd.options->port;
-			tcp_port = nsd.options->port;
-		} else {
-			udp_port = UDP_PORT;
-			tcp_port = TCP_PORT;
-		}
-	}
-#ifdef BIND8_STATS
-	if(nsd.st.period == 0) {
-		nsd.st.period = nsd.options->statistics;
-	}
-#endif /* !BIND8_STATS */
-#ifdef HAVE_CHROOT
-	if(nsd.chrootdir == 0) nsd.chrootdir = nsd.options->chroot;
-#endif
-	if(nsd.username == 0) {
-		if(nsd.options->username) nsd.username = nsd.options->username;
-		else nsd.username = USER;
-	}
-	if(nsd.options->zonesdir) {
-		if(chdir(nsd.options->zonesdir)) {
-			error("cannot chdir to '%s': %s", 
-				nsd.options->zonesdir, strerror(errno));
-		}
-	}
-	/* get it from the config file */
 #ifdef NSID
+	if (nsd.nsid_len > UCHAR_MAX) {
+		error("NSID to long (%u characters)", nsd.nsid_len);
+	}
 	edns_init_nsid(&nsd.edns_ipv4, nsd.nsid_len);
-#if defined(INET6)
+ #if defined(INET6)
 	edns_init_nsid(&nsd.edns_ipv6, nsd.nsid_len);
-#endif
-#endif
+ #endif /* INET6 */
+#endif /* NSID */
+	
 	/* Number of child servers to fork.  */
 	nsd.children = (struct nsd_child *) region_alloc(
 		nsd.region, nsd.child_count * sizeof(struct nsd_child));
 	for (i = 0; i < nsd.child_count; ++i) {
 		nsd.children[i].kind = NSD_SERVER_BOTH;
-		nsd.children[i].pid = -1;
-		nsd.children[i].child_fd = -1;
-		nsd.children[i].parent_fd = -1;
-		nsd.children[i].handler = NULL;
 	}
-
-	nsd.this_child = NULL;
 	
 	/* We need at least one active interface */
 	if (nsd.ifs == 0) {
@@ -700,14 +685,6 @@ main (int argc, char *argv[])
 			log_msg(LOG_ERR, "%s is not relative to %s: will not chroot",
 				nsd.dbfile, nsd.chrootdir);
 			nsd.chrootdir = NULL;
-		} else if (nsd.options->xfrdfile && strncmp(nsd.chrootdir, nsd.options->xfrdfile, l) != 0) {
-			log_msg(LOG_ERR, "%s is not relative to %s: will not chroot",
-				nsd.options->xfrdfile, nsd.chrootdir);
-			nsd.chrootdir = NULL;
-		} else if (nsd.options->difffile && strncmp(nsd.chrootdir, nsd.options->difffile, l) != 0) {
-			log_msg(LOG_ERR, "%s is not relative to %s: will not chroot",
-				nsd.options->difffile, nsd.chrootdir);
-			nsd.chrootdir = NULL;
 		}
 	}
 
@@ -788,12 +765,6 @@ main (int argc, char *argv[])
 
 	/* Initialize... */
 	nsd.mode = NSD_RUN;
-	nsd.signal_hint_child = 0;
-	nsd.signal_hint_reload = 0;
-	nsd.signal_hint_quit = 0;
-	nsd.signal_hint_shutdown = 0;
-	nsd.signal_hint_stats = 0;
-	nsd.signal_hint_statsusr = 0;
 
 	/* Run the server... */
 	if (server_init(&nsd) != 0) {
@@ -801,6 +772,25 @@ main (int argc, char *argv[])
 		exit(1);
 	}
 
+#ifdef PLUGINS
+	maximum_plugin_count = plugin_count;
+	plugin_init(&nsd);
+	for (i = 0; i < plugin_count; ++i) {
+		const char *arg = "";
+		char *eq = strchr(plugins[i], '=');
+		if (eq) {
+			*eq = '\0';
+			arg = eq + 1;
+		}
+		if (!plugin_load(&nsd, plugins[i], arg)) {
+			plugin_finalize_all();
+			unlink(nsd.pidfile);
+			exit(1);
+		}
+	}
+	free(plugins);
+#endif /* PLUGINS */
+	
 	log_msg(LOG_NOTICE, "nsd started, pid %d", (int) nsd.pid);
 
 	if (nsd.server_kind == NSD_SERVER_MAIN) {
