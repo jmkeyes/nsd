@@ -32,11 +32,9 @@
 #include "dname.h"
 #include "nsd.h"
 #include "namedb.h"
+#include "plugins.h"
 #include "query.h"
 #include "util.h"
-#include "options.h"
-#include "nsec3.h"
-#include "tsig.h"
 
 static int add_rrset(struct query  *query,
 		     answer_type    *answer,
@@ -44,8 +42,7 @@ static int add_rrset(struct query  *query,
 		     domain_type    *owner,
 		     rrset_type     *rrset);
 
-static void answer_authoritative(struct nsd	  *nsd,
-				 struct query     *q,
+static void answer_authoritative(struct query     *q,
 				 answer_type      *answer,
 				 uint32_t          domain_number,
 				 int               exact,
@@ -160,17 +157,6 @@ query_create(region_type *region, uint16_t *compressed_dname_offsets)
 void 
 query_reset(query_type *q, size_t maxlen, int is_tcp)
 {
-	/* 
-	 * As long as less than 4Kb (region block size) has been used,
-	 * this call to free_all is free, the block is saved for re-use,
-	 * so no malloc() or free() calls are done. 
-	 * at present use of the region is for:
-	 *   o query qname dname_type (255 max).
-	 *   o wildcard expansion domain_type (7*ptr+u32+2bytes)+(5*ptr nsec3)
-	 *   o wildcard expansion for additional section domain_type.
-	 *   o nsec3 hashed name(s) (3 dnames for a nonexist_proof, 
-	 *     one proof per wildcard and for nx domain).
-	 */
 	region_free_all(q->region);
 	q->addrlen = sizeof(q->addr);
 	q->maxlen = maxlen;
@@ -236,13 +222,44 @@ process_query_section(query_type *query)
 {
 	uint8_t qnamebuf[MAXDOMAINLEN];
 
-	buffer_set_position(query->packet, QHEADERSZ);
+	uint8_t *dst = qnamebuf;
+	uint8_t *query_name = buffer_at(query->packet, QHEADERSZ);
+	uint8_t *src = query_name;
+	size_t len;
+	
 	/* Lets parse the query name and convert it to lower case.  */
-	if(!packet_read_query_section(query->packet, qnamebuf,
-		&query->qtype, &query->qclass))
+	while (*src) {
+		/*
+		 * If we are out of buffer limits or we have a pointer
+		 * in question dname or the domain name is longer than
+		 * MAXDOMAINLEN ...
+		 */
+		if ((*src & 0xc0) ||
+		    (src + *src + 1 > buffer_end(query->packet)) || 
+		    (src + *src + 1 > query_name + MAXDOMAINLEN))
+		{
+			return NSD_RC_FORMAT;
+		}
+		memcpy(dst, src, *src + 1);
+		dst += *src + 1;
+		src += *src + 1;
+	}
+	*dst++ = *src++;
+
+	/* Make sure name is not too long or we have stripped packet... */
+	len = src - query_name;
+	if (len > MAXDOMAINLEN ||
+	    (src + 2*sizeof(uint16_t) > buffer_end(query->packet)))
+	{
 		return NSD_RC_FORMAT;
+	}
+	buffer_set_position(query->packet, src - buffer_begin(query->packet));
+
 	query->qname = dname_make(query->region, qnamebuf, 1);
+	query->qtype = buffer_read_u16(query->packet);
+	query->qclass = buffer_read_u16(query->packet);
 	query->opcode = OPCODE(query->packet);
+
 	return NSD_RC_OK;
 }
 
@@ -294,80 +311,28 @@ process_edns(struct query *q)
 }
 
 /*
- * Check notify acl and forward to xfrd (or return an error).
+ * Log notifies and return an RCODE_IMPL error to the client.
+ *
+ * XXX: erik: Is this the right way to handle notifies?
  */
 static query_state_type
-answer_notify (struct nsd* nsd, struct query *query)
+answer_notify (struct query *query)
 {
-	int acl_num;
-	acl_options_t *why;
+	char namebuf[BUFSIZ];
 
-	zone_options_t* zone_opt;
-	log_msg(LOG_INFO, "got notify %s processing acl",
-		dname_to_string(query->qname, NULL));
-
-	zone_opt = zone_options_find(nsd->options, query->qname);
-	if(!zone_opt) 
-		return query_error(query, NSD_RC_NXDOMAIN);
-	
-	if(!nsd->this_child) /* we are in debug more or something */
-		return query_error(query, NSD_RC_SERVFAIL);
-	
-	/* check if it passes acl */
-	if((acl_num = acl_check_incoming(zone_opt->allow_notify, query,
-		&why)) != -1)
+	if (getnameinfo((struct sockaddr *) &(query->addr),
+			query->addrlen, namebuf, sizeof(namebuf), 
+			NULL, 0, NI_NUMERICHOST)
+	    != 0)
 	{
-		sig_atomic_t mode = NSD_PASS_TO_XFRD;
-		int s = nsd->this_child->parent_fd;
-		uint16_t sz;
-		uint32_t acl_send = htonl(acl_num);
-		assert(why);
-		log_msg(LOG_INFO, "got notify %s passed acl %s %s",
-			dname_to_string(query->qname, NULL),
-			why->ip_address_spec, why->key_name);
-		sz = buffer_limit(query->packet);
-		if(buffer_limit(query->packet) > MAX_PACKET_SIZE)
-			return query_error(query, NSD_RC_SERVFAIL);
-		/* forward to xfrd for processing
-		   Note. Blocking IPC I/O, but acl is OK. */
-		sz = htons(sz);
-		if(!write_socket(s, &mode, sizeof(mode)) || 
-			!write_socket(s, &sz, sizeof(sz)) ||
-			!write_socket(s, buffer_begin(query->packet),
-				buffer_limit(query->packet)) ||
-			!write_socket(s, &acl_send, sizeof(acl_send))) {
-			log_msg(LOG_ERR, "error in IPC notify server2main, %s",
-				strerror(errno));
-			return query_error(query, NSD_RC_SERVFAIL);
-		}
-
-		/* create notify reply - keep same query contents */
-		QR_SET(query->packet);         /* This is an answer.  */
-		AA_SET(query->packet);	   /* we are authoritative. */
-		RCODE_SET(query->packet, RCODE_OK); /* Error code.  */
-#ifdef TSIG
-		if(why && why->key_options) { /* sign reply */
-			log_msg(LOG_INFO, "tsig sign");
-			buffer_clear(query->packet);
-			buffer_set_position(query->packet, query->tsig.position);
-			tsig_prepare(&query->tsig);
-			tsig_update(&query->tsig, query->packet,
-				buffer_limit(query->packet));
-			tsig_sign(&query->tsig);
-			tsig_append_rr(&query->tsig, query->packet);
-			ARCOUNT_SET(query->packet, ARCOUNT(query->packet) + 1);
-		}
-#endif /* TSIG */
-		return QUERY_PROCESSED;
+		log_msg(LOG_INFO, "notify for %s from unknown remote address",
+			dname_to_string(query->qname, NULL));
+	} else {
+		log_msg(LOG_INFO, "notify for %s from %s",
+			dname_to_string(query->qname, NULL), namebuf);
 	}
-#ifndef NDEBUG
-	if(nsd_debug_level>=1)
-		log_msg(LOG_INFO, "got notify %s refused acl: %s %s",
-			dname_to_string(query->qname, NULL),
-			why?why->key_name:"no acl matches", 
-			why?why->ip_address_spec:".");
-#endif
-	return query_error(query, NSD_RC_NOTAUTH);
+
+	return query_error(query, NSD_RC_IMPL);
 }
 
 
@@ -503,6 +468,9 @@ add_additional_rrsets(struct query *query, answer_type *answer,
 			temp->parent = match;
 			temp->wildcard_child_closest_match = temp;
 			temp->rrsets = wildcard_child->rrsets;
+#ifdef PLUGINS
+			temp->plugin_data = wildcard_child->plugin_data;
+#endif
 			temp->is_existing = wildcard_child->is_existing;
 			additional = temp;
 		}
@@ -584,10 +552,6 @@ answer_delegation(query_type *query, answer_type *answer)
 		if ((rrset = domain_find_rrset(query->delegation_domain, query->zone, TYPE_DS))) {
 			add_rrset(query, answer, AUTHORITY_SECTION,
 				  query->delegation_domain, rrset);
-#ifdef NSEC3
-		} else if (query->zone->nsec3_rrset) {
-			nsec3_answer_delegation(query, answer);
-#endif
 		} else if ((rrset = domain_find_rrset(query->delegation_domain, query->zone, TYPE_NSEC))) {
 			add_rrset(query, answer, AUTHORITY_SECTION,
 				  query->delegation_domain, rrset);
@@ -630,11 +594,6 @@ answer_nodata(struct query *query, answer_type *answer, domain_type *original)
 		answer_soa(query, answer);
 	}
 	
-#ifdef NSEC3
-	if (query->edns.dnssec_ok && query->zone->nsec3_rrset) {
-		nsec3_answer_nodata(query, answer, original);
-	} else 
-#endif
 	if (query->edns.dnssec_ok && zone_is_secure(query->zone)) {
 		domain_type *nsec_domain;
 		rrset_type *nsec_rrset;
@@ -661,7 +620,7 @@ answer_nxdomain(query_type *query, answer_type *answer)
  * the type specified by the query).
  */
 static void
-answer_domain(struct nsd* nsd, struct query *q, answer_type *answer,
+answer_domain(struct query *q, answer_type *answer,
 	      domain_type *domain, domain_type *original)
 {
 	rrset_type *rrset;
@@ -708,7 +667,7 @@ answer_domain(struct nsd* nsd, struct query *q, answer_type *answer,
 				while (!closest_encloser->is_existing)
 					closest_encloser = closest_encloser->parent;
 				
-				answer_authoritative(nsd, q, answer, closest_match->number,
+				answer_authoritative(q, answer, closest_match->number,
 						     closest_match == closest_encloser,
 						     closest_match, closest_encloser);
 			}
@@ -737,8 +696,7 @@ answer_domain(struct nsd* nsd, struct query *q, answer_type *answer,
  * domain name does not exist and/or a wildcard match does not exist.
  */
 static void
-answer_authoritative(struct nsd   *nsd,
-		     struct query *q,
+answer_authoritative(struct query *q,
 		     answer_type  *answer,
 		     uint32_t      domain_number,
 		     int           exact,
@@ -761,15 +719,10 @@ answer_authoritative(struct nsd   *nsd,
 		match->wildcard_child_closest_match = match;
 		match->number = domain_number;
 		match->rrsets = wildcard_child->rrsets;
-		match->is_existing = wildcard_child->is_existing;
-#ifdef NSEC3
-		match->nsec3_exact = wildcard_child->nsec3_exact;
-		match->nsec3_cover = wildcard_child->nsec3_cover;
-		match->nsec3_wcard_child_cover = wildcard_child->nsec3_wcard_child_cover;
-		match->nsec3_ds_parent_exact = wildcard_child->nsec3_ds_parent_exact;
-		match->nsec3_ds_parent_cover = wildcard_child->nsec3_ds_parent_cover;
-		nsec3_answer_wildcard(q, answer, wildcard_child, nsd->db);
+#ifdef PLUGINS
+		match->plugin_data = wildcard_child->plugin_data;
 #endif
+		match->is_existing = wildcard_child->is_existing;
 
 		/*
 		 * Remember the original domain in case a Wildcard No
@@ -783,12 +736,6 @@ answer_authoritative(struct nsd   *nsd,
 	}
 
 	/* Authorative zone.  */
-#ifdef NSEC3
-	if (q->edns.dnssec_ok && q->zone->nsec3_rrset) {
-		nsec3_answer_authoritative(&match, q, answer, 
-			closest_encloser, nsd->db);
-	} else 
-#endif
 	if (q->edns.dnssec_ok && zone_is_secure(q->zone)) {
 		if (match != closest_encloser) {
 			domain_type *nsec_domain;
@@ -818,13 +765,8 @@ answer_authoritative(struct nsd   *nsd,
 		}
 	}
 	
-#ifdef NSEC3
-	if (RCODE(q->packet)!=RCODE_OK) {
-		return; /* nsec3 collision failure */
-	}
-#endif
 	if (match) {
-		answer_domain(nsd, q, answer, match, original);
+		answer_domain(q, answer, match, original);
 	} else {
 		answer_nxdomain(q, answer);
 	}
@@ -871,13 +813,6 @@ answer_query(struct nsd *nsd, struct query *q)
 			q->zone = zone;
 	}
 
-	/* see if the zone has expired (for secondary zones) */
-	if(q->zone && q->zone->opts && zone_is_slave(q->zone->opts)
-		&& !q->zone->is_ok) {
-		RCODE_SET(q->packet, RCODE_SERVFAIL);
-		return;
-	}
-
 	if (exact && q->qtype == TYPE_DS && closest_encloser == q->zone->apex) {
 		/*
 		 * Type DS query at the zone apex (and the server is
@@ -901,7 +836,7 @@ answer_query(struct nsd *nsd, struct query *q)
 			} else {
 				AA_SET(q->packet);
 			}
-			answer_authoritative(nsd, q, &answer, 0, exact,
+			answer_authoritative(q, &answer, 0, exact,
 					     closest_match, closest_encloser);
 		}
 		else {
@@ -979,7 +914,7 @@ query_process(query_type *q, nsd_type *nsd)
 
 	if (q->opcode != OPCODE_QUERY) {
 		if (q->opcode == OPCODE_NOTIFY) {
-			return answer_notify(nsd, q);
+			return answer_notify(q);
 		} else {
 			return query_error(q, NSD_RC_IMPL);
 		}
@@ -1054,10 +989,11 @@ query_add_optional(query_type *q, nsd_type *nsd)
 		break;
 	case EDNS_OK:
 		buffer_write(q->packet, edns->ok, OPT_LEN);
-		/* check if nsid data should be written */
+		/* if nsid data should be written */
 #ifdef NSID
 		if (nsd->nsid_len > 0 && q->edns.nsid == 1 &&
-				!query_overflow_nsid(q, nsd->nsid_len)) {
+				!query_overflow_nsid(q, nsd->nsid_len)) { 
+
 			/* rdata length */
 			buffer_write(q->packet, edns->rdata_nsid, OPT_RDATA);
 			/* nsid opt header */
@@ -1071,13 +1007,14 @@ query_add_optional(query_type *q, nsd_type *nsd)
 #else
 		buffer_write(q->packet, edns->rdata_none, OPT_RDATA);
 #endif /* NSID */
-		
+
 		ARCOUNT_SET(q->packet, ARCOUNT(q->packet) + 1);
 
 		STATUP(nsd, edns);
 		break;
 	case EDNS_ERROR:
 		buffer_write(q->packet, edns->error, OPT_LEN);
+		buffer_write(q->packet, edns->rdata_none, OPT_RDATA);
 		ARCOUNT_SET(q->packet, ARCOUNT(q->packet) + 1);
 
 		STATUP(nsd, ednserr);

@@ -99,19 +99,6 @@ rdata_short_to_string(buffer_type *output, rdata_atom_type rdata)
 }
 
 static int
-rdata_24bit_to_string(buffer_type *output, rdata_atom_type rdata)
-{
-	uint32_t data =	
-		(rdata_atom_data(rdata)[0]<<16)
-		| (rdata_atom_data(rdata)[1]<<8)
-		| (rdata_atom_data(rdata)[2]);
-	/* nsec3 remove optout bit */
-	data &= 0x7fffff;
-	buffer_printf(output, "%lu", (unsigned long) data);
-	return 1;
-}
-
-static int
 rdata_long_to_string(buffer_type *output, rdata_atom_type rdata)
 {
 	uint32_t data = read_uint32(rdata_atom_data(rdata));
@@ -202,20 +189,6 @@ rdata_time_to_string(buffer_type *output, rdata_atom_type rdata)
 }
 
 static int
-rdata_base32_to_string(buffer_type *output, rdata_atom_type rdata)
-{
-	int length;
-	size_t size = rdata_atom_size(rdata);
-	buffer_reserve(output, size * 2 + 1);
-	length = b32_ntop(rdata_atom_data(rdata), size,
-			  (char *) buffer_current(output), size * 2);
-	if (length > 0) {
-		buffer_skip(output, length);
-	}
-	return length != -1;
-}
-
-static int
 rdata_base64_to_string(buffer_type *output, rdata_atom_type rdata)
 {
 	int length;
@@ -250,18 +223,6 @@ static int
 rdata_hex_to_string(buffer_type *output, rdata_atom_type rdata)
 {
 	hex_to_string(output, rdata_atom_data(rdata), rdata_atom_size(rdata));
-	return 1;
-}
-
-static int
-rdata_hexlen_to_string(buffer_type *output, rdata_atom_type rdata)
-{
-	if(rdata_atom_size(rdata) <= 1) {
-		/* NSEC3 salt hex can be empty */
-		buffer_printf(output, "-");
-		return 1;
-	}
-	hex_to_string(output, rdata_atom_data(rdata)+1, rdata_atom_size(rdata)-1);
 	return 1;
 }
 
@@ -429,7 +390,6 @@ static rdata_to_string_type rdata_to_string_table[RDATA_ZF_UNKNOWN + 1] = {
 	rdata_text_to_string,
 	rdata_byte_to_string,
 	rdata_short_to_string,
-	rdata_24bit_to_string,
 	rdata_long_to_string,
 	rdata_a_to_string,
 	rdata_aaaa_to_string,
@@ -439,9 +399,7 @@ static rdata_to_string_type rdata_to_string_table[RDATA_ZF_UNKNOWN + 1] = {
 	rdata_period_to_string,
 	rdata_time_to_string,
 	rdata_base64_to_string,
-	rdata_base32_to_string,
 	rdata_hex_to_string,
-	rdata_hexlen_to_string,
 	rdata_nsap_to_string,
 	rdata_apl_to_string,
 	rdata_services_to_string,
@@ -496,14 +454,10 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 		case RDATA_WF_SHORT:
 			length = sizeof(uint16_t);
 			break;
-		case RDATA_WF_24BIT:
-			length = 3;
-			break;
 		case RDATA_WF_LONG:
 			length = sizeof(uint32_t);
 			break;
 		case RDATA_WF_TEXT:
-		case RDATA_WF_BINARYWITHLENGTH:
 			/* Length is stored in the first byte.  */
 			length = 1;
 			if (buffer_position(packet) + length <= end) {
@@ -519,9 +473,6 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 		case RDATA_WF_BINARY:
 			/* Remaining RDATA is binary.  */
 			length = end - buffer_position(packet);
-			break;
-		case RDATA_WF_BINARY20:
-			length = 20;
 			break;
 		case RDATA_WF_APL:
 			length = (sizeof(uint16_t)    /* address family */
@@ -620,42 +571,3 @@ rdata_atoms_to_unknown_string(buffer_type *output,
 	}
 	return 1;
 }
-
-int
-print_rdata(buffer_type *output, rrtype_descriptor_type *descriptor,
-	    rr_type *record)
-{
-	size_t i;
-	size_t saved_position = buffer_position(output);
-
-	for (i = 0; i < record->rdata_count; ++i) {
-		if (i == 0) {
-			buffer_printf(output, "\t");
-		} else if (descriptor->type == TYPE_SOA && i == 2) {
-			buffer_printf(output, " (\n\t\t");
-		} else {
-			buffer_printf(output, " ");
-		}
-		if (descriptor->type == TYPE_NSEC3 && i == 0)
-		{
-			/* print nsec3 optout bit */
-			buffer_printf(output, "%u ", (unsigned)
-				rdata_atom_data(record->rdatas[1])[0]&0x80>>7);
-		}
-		if (!rdata_atom_to_string(
-			    output,
-			    (rdata_zoneformat_type) descriptor->zoneformat[i],
-			    record->rdatas[i]))
-		{
-			buffer_set_position(output, saved_position);
-			return 0;
-		}
-	}
-	if (descriptor->type == TYPE_SOA) {
-		buffer_printf(output, " )");
-	}
-
-	return 1;
-}
-
-

@@ -57,6 +57,7 @@ struct dname
 const dname_type *dname_make(region_type *region, const uint8_t *name,
 			     int normalize);
 
+
 /*
  * Construct a new domain name based on wire format dname stored at
  * PACKET's current position.  Compression pointers are followed.  The
@@ -68,14 +69,6 @@ const dname_type *dname_make_from_packet(region_type *region,
 					 int allow_pointers,
 					 int normalize);
 
-/*
- * parse wireformat from packet (following pointers) into the
- * given buffer. Returns length in buffer or 0 on error.
- * buffer must be MAXDOMAINLEN+1 long.
- */
-int dname_make_wire_from_packet(uint8_t *buf, 
-				buffer_type *packet, 
-				int allow_pointers);
 
 /*
  * Construct a new domain name based on the ASCII representation NAME.
@@ -90,13 +83,6 @@ int dname_make_wire_from_packet(uint8_t *buf,
  */
 const dname_type *dname_parse(region_type *region, const char *name);
 
-/*
- * parse ascii string to wireformat domain name (without compression ptrs)
- * returns 0 on failure, the length of the wireformat on success. 
- * the result is stored in the wirefmt which must be at least MAXDOMAINLEN 
- * in size. On failure, the wirefmt can be altered.
- */
-int dname_parse_wire(uint8_t* wirefmt, const char* name);
 
 /*
  * Return NULL if DNAME is NULL or a copy of DNAME otherwise.

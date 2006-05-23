@@ -235,17 +235,6 @@ tsig_from_query(tsig_record_type *tsig)
 		return 0;
 	}
 
-	if ((tsig->algorithm && algorithm != tsig->algorithm)
-	    || (tsig->key && key != tsig->key))
-	{
-		/*
-		 * Algorithm or key changed during a single connection,
-		 *return error.
-		 */
-		tsig->error_code = TSIG_ERROR_BADKEY;
-		return 0;
-	}
-
 	signed_time = ((((uint64_t) tsig->signed_time_high) << 32) |
 		       ((uint64_t) tsig->signed_time_low));
 
@@ -253,12 +242,10 @@ tsig_from_query(tsig_record_type *tsig)
 	if ((current_time < signed_time - tsig->signed_time_fudge)
 	    || (current_time > signed_time + tsig->signed_time_fudge))
 	{
-		uint16_t current_time_high;
-		uint32_t current_time_low;
-
-#if 0				/* debug */
 		char current_time_text[26];
 		char signed_time_text[26];
+		uint16_t current_time_high;
+		uint32_t current_time_low;
 		time_t clock;
 
 		clock = (time_t) current_time;
@@ -269,6 +256,7 @@ tsig_from_query(tsig_record_type *tsig)
 		ctime_r(&clock, signed_time_text);
 		signed_time_text[24] = '\0';
 
+#if 0				/* XXX */
 		log_msg(LOG_ERR,
 			"current server time %s is outside the range of TSIG"
 			" signed time %s with fudge %u",

@@ -286,7 +286,7 @@ static void dopr (char *buffer, size_t maxlen, const char *format, va_list args)
       case 'u':
 	flags &= ~DP_F_PLUS;
 	if (cflags == DP_C_SHORT)
-	  value = va_arg (args, unsigned int);
+	  value = va_arg (args, unsigned short int);
 	else if (cflags == DP_C_LONG)
 	  value = va_arg (args, unsigned long int);
 	else

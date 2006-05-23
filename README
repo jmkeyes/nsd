@@ -12,6 +12,8 @@
 3.3 Keeping in sync the secondary zones with ``nsdc update''
 3.4 Sending notify to the secondaries on reload or restart
 
+
+
 1.0 Introduction
 
 This is NSD Name Server Daemon (NSD) version @version@.
@@ -23,7 +25,7 @@ consult the REQUIREMENTS document which is a part of this distribution
 
 The source code is available for download from:
 
-         http://www.nlnetlabs.nl/downloads
+        http://www.nlnetlabs.nl/downloads
 
 
 1.1 Basic Theory of Operation
@@ -53,24 +55,31 @@ Step 4: make all
 
 Step 5: make install
 
-Step 6: Create and edit /etc/nsd/nsd.conf file possibly from
-        nsd.conf.sample template that comes with the distribution.
+Step 6: Add "axfr" and/or "axfr-zone.name.tld" entries to your
+        hosts.allow and/or hosts deny
 
-Step 7: Copy necessary master zone files into appropriate directories
+        Example:
+
+                axfr: ALL : allow
+
+Step 7: Create and edit /etc/nsd/nsd.zones file possibly from
+        nsd.zones.sample template that comes with the distribution.
+
+Step 8: Copy necessary master zone files into appropriate directories
         under /etc/nsd/primary & /etc/nsd/secondary You might consider
-        using contrib/build-nsdzones.pl script to automate task 6 & 7.
+        using contrib/build-nsdzones.pl script to automate task 7 & 8.
 
-Step 8: Run nsdc update if necessary
+Step 9: Run nsdc update if necessary
 
-Step 9: Run nsdc rebuild
+Step 10: Run nsdc rebuild
 
-Step 10: Run nsdc start
+Step 11: Run nsdc start
 
-Step 11: Test the NSD with dig or host.
+Step 12: Test the NSD with dig or host.
 
-Step 12: If you're happy add nsdc start into your OS boot up sequence.
+Step 13: If you're happy add nsdc start into your OS boot up sequence.
 
-Step 13: If desired add nsdc update to your superuser crontab to
+Step 14: If desired add nsdc update to your superuser crontab to
          update the zones from master servers periodically.
 
          Got any problems or questions with the steps above? Read the
@@ -142,6 +151,12 @@ addition to standard configure options, one may use the following:
 
         Disables IPv6 support in NSD.
 
+  --enable-plugins
+
+        Enable plugin support (experimental).  See nsd-plugin.h for
+        the plugin API defined by NSD.  See contrib/example-plugin.c
+        for an example plugin.
+
   --enable-checking
 
         Enable some internal development checks.  Useful if you want
@@ -169,10 +184,6 @@ addition to standard configure options, one may use the following:
 
         Specified, NSD configuration directory, default /etc/nsd
 
-  --with-nsd_conf_file=path
-
-	Pathname to the NSD configuration file, default /ect/nsd/nsd.conf
-
   --with-pidfile=path
 
         Pathname to the NSD pidfile, default is platform specific,
@@ -198,6 +209,10 @@ addition to standard configure options, one may use the following:
   --with-user=username
 
         User name or ID to answer the queries with, default is nsd
+
+  --with-libwrap=pathname
+
+        Compile in libwrap (tcp_wrappers) support.
 
   --with-facility=facility
 
@@ -230,11 +245,10 @@ nsdc            - a shell script to control the daemon
 zonec           - zone compiler
 nsd-notify      - a simple C program to send outbound notifies
 nsd-xfer        - a program to receive zones from a master server
-                  using AXFR from the command line.
-nsd-checkconf	- simple C program to check nsd.conf before use.
-nsd-patch	- simple program that cleans IXFR changes back to zone files.
+                  using AXFR.
 
 Plus the manual pages.
+
 
 
 3.0 Running NSD
@@ -393,17 +407,30 @@ A sample output of a slightly modified version:
 
 3.2 AXFR access
 
-The access list for AXFR should be set with provide-xfr:
-in the nsd config file. This is per zone. See nsd.conf(5).
-For example to grant zone 'example.com' AXFR right to localhost for
-IPv4 and IPv6, use the below config options.
+When compiled with libwrap nsd will use daemon name ``axfr'' and
+``axfr-zone'' to verify access privileges for the client trying to
+initiate the transfer.  Since NSD doesn't do any hostname resolution
+internally the access list provided in the /etc/hosts.allow or
+/etc/hosts.deny should be ip number based.
 
-zone:
-	name: "example.com"
-	provide-xfr: 127.0.0.1 NOKEY
-	provide-xfr: ::1 NOKEY
+Example:
 
-You can use dig @localhost example.com axfr to test this.
+axfr-nlnetlabs.nl. : ns.sidn.nl : allow
+axfr : 127.0.0.1 : allow
+axfr : ns1.ripe.net : allow
+axfr : ns1.sidn.nl : allow
+axfr : ALL : deny
+
+At first a check is made whether the particular client is allowed to
+do transfer of the particular zone.
+
+NOTE: Make sure you don't forget the trailing dot. So for example
+``axfr-se.''  and NOT ``axfr-se''
+
+If -DAXFR_DAEMON_PREFIX is defined (which is the case by default) and
+the first lookup for ``axfr'' has failed (denied) then nsd will try
+second lookup in hosts.allow or hosts.deny for the daemon name
+axfr-zone.name.tld.  (with trailing dot).
 
 
 3.3 Keeping in sync the secondary zones with ``nsdc update''
@@ -446,6 +473,10 @@ database with the master servers:
 It is as well possible to update the master zone files (in bound AXFR)
 with nsdc(8) update using TSIG.
 
+PLEASE NOTE: nsd-xfer(8) can use TSIG to update its zone file(s) from
+*dns servers that support TSIG*, such as BIND, but NOT nsd(8), which
+does not yet support TSIG.
+
 This is done by passing the tsig key to nsd-xfer(8).
 
 nsd-xfer(8) uses the same cryptic file format as named-xfer(8) (to
@@ -473,7 +504,6 @@ Y87923jksdXlsdv+LeXpUA==
 Cryptic? Yes. The first line tells this key is to be used for
 213.53.69.1 Second one is the name of the key. 157 stands for hmac-md5
 algorithm and the last line is the secret.
-
 
 3.4 Sending notify to the secondaries on reload or restart
 

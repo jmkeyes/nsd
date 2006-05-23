@@ -16,7 +16,6 @@
 #include "namedb.h"
 #include "nsd.h"
 #include "packet.h"
-#include "tsig.h"
 
 enum query_state {
 	QUERY_PROCESSED,
@@ -55,11 +54,6 @@ struct query {
 
 	/* EDNS information provided by the client.  */
 	edns_record_type edns;
-
-#ifdef TSIG
-	/* TSIG record information and running hash for query-response */
-	tsig_record_type tsig;
-#endif /* TSIG */
 
 	int tcp;
 	uint16_t tcplen;
@@ -201,6 +195,7 @@ query_overflow(query_type *q)
 {
 	return buffer_position(q->packet) > (q->maxlen - q->reserved_space);
 }
+
 static inline int
 query_overflow_nsid(query_type *q, uint16_t nsid_len)
 {
