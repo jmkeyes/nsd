@@ -39,12 +39,8 @@ allocate_domain_info(domain_table_type *table,
 	result->wildcard_child_closest_match = result;
 	result->rrsets = NULL;
 	result->number = 0;
-#ifdef NSEC3
-	result->nsec3_exact = NULL;
-	result->nsec3_cover = NULL;
-	result->nsec3_wcard_child_cover = NULL;
-	result->nsec3_ds_parent_exact = NULL;
-	result->nsec3_ds_parent_cover = NULL;
+#ifdef PLUGINS
+	result->plugin_data = NULL;
 #endif
 	result->is_existing = 0;
 	result->is_apex = 0;
@@ -68,23 +64,19 @@ domain_table_create(region_type *region)
 	root->parent = NULL;
 	root->wildcard_child_closest_match = root;
 	root->rrsets = NULL;
-	root->number = 1; /* 0 is used for after header */
+	root->number = 0;
+#ifdef PLUGINS
+	root->plugin_data = NULL;
+#endif
 	root->is_existing = 0;
 	root->is_apex = 0;
-#ifdef NSEC3
-	root->nsec3_exact = NULL;
-	root->nsec3_cover = NULL;
-	root->nsec3_wcard_child_cover = NULL;
-	root->nsec3_ds_parent_exact = NULL;
-	root->nsec3_ds_parent_cover = NULL;
-#endif
 	
 	result = (domain_table_type *) region_alloc(region,
 						    sizeof(domain_table_type));
 	result->region = region;
-	result->names_to_domains = rbtree_create(
+	result->names_to_domains = heap_create(
 		region, (int (*)(const void *, const void *)) dname_compare);
-	rbtree_insert(result->names_to_domains, (rbnode_t *) root);
+	heap_insert(result->names_to_domains, (rbnode_t *) root);
 
 	result->root = root;
 
@@ -162,8 +154,7 @@ domain_table_insert(domain_table_type *table,
 			result = allocate_domain_info(table,
 						      dname,
 						      closest_encloser);
-			rbtree_insert(table->names_to_domains, (rbnode_t *) result);
-			result->number = table->names_to_domains->count;
+			heap_insert(table->names_to_domains, (rbnode_t *) result);
 
 			/*
 			 * If the newly added domain name is larger
@@ -198,7 +189,7 @@ domain_table_iterate(domain_table_type *table,
 
 	assert(table);
 
-	RBTREE_WALK(table->names_to_domains, dname, node) {
+	HEAP_WALK(table->names_to_domains, dname, node) {
 		iterator((domain_type *) node, user_data);
 	}
 }
@@ -206,17 +197,8 @@ domain_table_iterate(domain_table_type *table,
 void
 domain_add_rrset(domain_type *domain, rrset_type *rrset)
 {
-#if 0 	/* fast */
 	rrset->next = domain->rrsets;
 	domain->rrsets = rrset;
-#else
-	/* preserve ordering, add at end */
-	rrset_type** p = &domain->rrsets;
-	while(*p) 
-		p = &((*p)->next);
-	*p = rrset;
-	rrset->next = 0;
-#endif
 
 	while (domain && !domain->is_existing) {
 		domain->is_existing = 1;

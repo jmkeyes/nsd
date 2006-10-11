@@ -11,25 +11,20 @@
 #define _UTIL_H_
 
 #include <config.h>
+
 #include <sys/time.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <syslog.h>
 #include <time.h>
-struct rr;
 
-#ifdef HAVE_SYSLOG_H
-#  include <syslog.h>
-#else
-#  define LOG_ERR 3
-#  define LOG_WARNING 4
-#  define LOG_NOTICE 5
-#  define LOG_INFO 6
-#endif
+#include <dns.h>
 
 #define ALIGN_UP(n, alignment)  \
 	(((n) + (alignment) - 1) & (~((alignment) - 1)))
 #define PADDING(n, alignment)   \
 	(ALIGN_UP((n), (alignment)) - (n))
+
 
 /*
  * Initialize the logging system.  All messages are logged to stderr
@@ -115,7 +110,7 @@ lookup_table_type *lookup_by_id(lookup_table_type table[], int id);
 /*
  * (Re-)allocate SIZE bytes of memory.  Report an error if the memory
  * could not be allocated and exit the program.  These functions never
- * return NULL.
+ * returns NULL.
  */
 void *xalloc(size_t size);
 void *xalloc_zero(size_t size);
@@ -128,17 +123,6 @@ void *xrealloc(void *ptr, size_t size);
  */
 int write_data(FILE *file, const void *data, size_t size);
 
-/*
- * like write_data, but keeps track of crc
- */
-int write_data_crc(FILE *file, const void *data, size_t size, uint32_t* crc);
-
-/*
- * Write the complete buffer to the socket, irrespective of short
- * writes or interrupts. This function blocks to write the data.
- * Returns 0 on error, 1 on success.
- */
-int write_socket(int s, const void *data, size_t size);
 
 /*
  * Copy data allowing for unaligned accesses in network byte order
@@ -197,17 +181,13 @@ read_uint32(const void *src)
 }
 
 /*
- * Print debugging information using log_msg, 
- * set the logfile as /dev/stdout or /dev/stderr if you like.
- * nsd -F 0xFFFF -L 3 gives max debug output.
+ * Print debugging information using fprintf(3).
  */
 #define DEBUG_PARSER           0x0001U
 #define DEBUG_ZONEC            0x0002U
 #define DEBUG_QUERY            0x0004U
 #define DEBUG_DBACCESS         0x0008U
 #define DEBUG_NAME_COMPRESSION 0x0010U
-#define DEBUG_XFRD             0x0020U
-#define DEBUG_IPC              0x0040U
 
 #ifdef NDEBUG
 #define DEBUG(facility, level, args)  /* empty */
@@ -218,7 +198,7 @@ extern int nsd_debug_level;
 	do {							\
 		if ((facility) & nsd_debug_facilities &&	\
 		    (level) <= nsd_debug_level) {		\
-			log_msg args ;				\
+			fprintf args ;				\
 		}						\
 	} while (0)
 #endif
@@ -263,15 +243,6 @@ long strtottl(const char *nptr, const char **endptr);
  */
 ssize_t hex_ntop(uint8_t const *src, size_t srclength, char *target,
 		 size_t targsize);
-ssize_t hex_pton(const char* src, uint8_t* target, size_t targsize);
-
-/*
- * convert base32 data from and to string. Returns length.
- * -1 on error. Use (byte count*8)%5==0.
- */
-int b32_pton(char const *src, uint8_t *target, size_t targsize);
-int b32_ntop(uint8_t const *src, size_t srclength, char *target,
-	size_t targsize);
 
 /*
  * Strip trailing and leading whitespace from str.
@@ -290,55 +261,8 @@ int hexdigit_to_int(char ch);
 time_t mktime_from_utc(const struct tm *tm);
 
 /*
- * Add bytes to given crc. Returns new CRC sum.
- * Start crc val with 0xffffffff on first call. XOR crc with
- * 0xffffffff at the end again to get final POSIX 1003.2 checksum.
- */
-uint32_t compute_crc(uint32_t crc, uint8_t* data, size_t len);
-
-/*
- * Compares two 32-bit serial numbers as defined in RFC1982.  Returns
- * <0 if a < b, 0 if a == b, and >0 if a > b.  The result is undefined
- * if a != b but neither is greater or smaller (see RFC1982 section
- * 3.2.).
- */
-int compare_serial(uint32_t a, uint32_t b);
-
-/*
- * call region_destroy on (region*)data, useful for region_add_cleanup().
- */
-void cleanup_region(void *data);
-
-/* 
- * Region used to store owner and origin of previous RR (used
- * for pretty printing of zone data).
- * Keep the same between calls to print_rr.
- */
-struct state_pretty_rr {
-	struct region *previous_owner_region;
-	const struct dname *previous_owner;
-	const struct dname *previous_owner_origin;
-};
-struct state_pretty_rr* create_pretty_rr(struct region* region);
-/* print rr to file, returns 0 on failure(nothing is written) */
-int print_rr(FILE *out, struct state_pretty_rr* state, struct rr *record);
-
-/*
- * Convert a numeric rcode value to a human readable string
+ * Convert a numeric rcode value to a human readable string 
  */
 const char* rcode2str(int rc);
-
-/* 
- * Stack of pointers.
- * Stack is fixed size on start. More elems fall off stack.
- */
-struct stack {
-	void** data;
-	size_t num, capacity;
-};
-typedef struct stack stack_type;
-stack_type* stack_create(struct region* region, size_t size);
-void stack_push(stack_type* stack, void* elem);
-void* stack_pop(stack_type* stack);
 
 #endif /* _UTIL_H_ */

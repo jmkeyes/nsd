@@ -6,6 +6,7 @@
  * See LICENSE for the license.
  *
  */
+
 #include <config.h>
 
 #include <assert.h>
@@ -21,8 +22,6 @@
 #ifndef HAVE_PSELECT
 int pselect(int n, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	    const struct timespec *timeout, const sigset_t *sigmask);
-#else
-#include <sys/select.h>
 #endif
 
 
@@ -43,7 +42,6 @@ netio_create(region_type *region)
 	result->region = region;
 	result->handlers = NULL;
 	result->deallocated = NULL;
-	result->dispatch_next = NULL;
 	return result;
 }
 
@@ -86,8 +84,6 @@ netio_remove_handler(netio_type *netio, netio_handler_type *handler)
 	for (elt_ptr = &netio->handlers; *elt_ptr; elt_ptr = &(*elt_ptr)->next) {
 		if ((*elt_ptr)->handler == handler) {
 			netio_handler_list_type *next = (*elt_ptr)->next;
-			if ((*elt_ptr) == netio->dispatch_next)
-				netio->dispatch_next = next;
 			(*elt_ptr)->handler = NULL;
 			(*elt_ptr)->next = netio->deallocated;
 			netio->deallocated = *elt_ptr;
@@ -202,11 +198,6 @@ netio_dispatch(netio_type *netio, const struct timespec *timeout, const sigset_t
 		     have_timeout ? &minimum_timeout : NULL,
 		     sigmask);
 	if (rc == -1) {
-		if(errno == EINVAL || errno == EACCES || errno == EBADF) {
-			log_msg(LOG_ERR, "fatal error pselect: %s.", 
-				strerror(errno));
-			exit(1);
-		}
 		return -1;
 	}
 
@@ -231,10 +222,9 @@ netio_dispatch(netio_type *netio, const struct timespec *timeout, const sigset_t
 		 * deinstall itself, so store the next handler before
 		 * calling the current handler!
 		 */
-		assert(netio->dispatch_next == NULL);
 		for (elt = netio->handlers; elt; ) {
+			netio_handler_list_type *next = elt->next;
 			netio_handler_type *handler = elt->handler;
-			netio->dispatch_next = elt->next;
 			if (handler->fd >= 0) {
 				netio_event_types_type event_types
 					= NETIO_EVENT_NONE;
@@ -253,9 +243,8 @@ netio_dispatch(netio_type *netio, const struct timespec *timeout, const sigset_t
 					++result;
 				}
 			}
-			elt = netio->dispatch_next;
+			elt = next;
 		}
-		netio->dispatch_next = NULL;
 	}
 
 	return result;

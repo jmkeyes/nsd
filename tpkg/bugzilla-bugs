@@ -15,7 +15,7 @@ M  - Moet nog
 - 6   "different name encodiungs?"
 - 7   "sometimes label compression skip some parts"
 - 8   "do not exit on sendto buffer exhaustion"
-- 10   "Segmentation violation while trying to destroy the database on exit" 
+- 10   "Segmentation violation while trying to destroy the database on exit"
 - 11   "EDNS(0) spurious formerr"
 - 14   "Magic string alignment"
 - 15   "nsd hangs on some queries..."
@@ -70,13 +70,7 @@ T 102   "direct NSEC query response"
 T 103   "NXDOMAIN SOA TTL"       
 T 105   "nsdc lacks locking"
 T 107   "segfault when encountering bad hex data in rfc3597 rdata"
-T 118	"nsd-notify should send notifies"
-T 119	"don't crash on -p non-numeric"
-T 128	"Test for backslash at the end of a string"
-T 134	"no reply from nsd with many servers"
-T 135   "Typo in locking code nsdc" in bug105 test.
-T 137   "Build in separate obj-dir" in long dir.
+T 135	"Typo in locking code nsdc" in bug105 test.
 T 140   "NSD does not clear CD bit" in copy_cd test.
 T 141   "NSD does not clear flags on formerr"
 T 144	"Defaults in LOC records not RFC 1876 compliant"
-T 145	"NSD doesn't support multiple AXFR simultaneously" in long dir.
