@@ -67,15 +67,6 @@ pop_parser_state(void)
 	yy_delete_buffer(YY_CURRENT_BUFFER);
 	yy_switch_to_buffer(include_stack[include_stack_ptr]);
 }
-
-#ifndef yy_set_bol /* compat definition, for flex 2.4.6 */
-#define yy_set_bol(at_bol) \
-	{ \
-		if ( ! yy_current_buffer ) \
-			yy_current_buffer = yy_create_buffer( yyin, YY_BUF_SIZE ); \
-		yy_current_buffer->yy_ch_buf[0] = ((at_bol)?'\n':' '); \
-	}
-#endif
 	
 %}
 
@@ -355,7 +346,6 @@ parse_token(int token, char *yytext, enum lexer_state *lexer_state)
 		token = rrtype_to_token(str, &yylval.type);
 		if (token != 0) {
 			*lexer_state = PARSING_RDATA;
-			LEXOUT(("%d[%s] ", token, yytext));
 			return token;
 		}
 
@@ -378,6 +368,6 @@ parse_token(int token, char *yytext, enum lexer_state *lexer_state)
 	yylval.data.str = str;
 	yylval.data.len = len;
 	
-	LEXOUT(("%d[%s] ", token, yytext));
+	LEXOUT(("%d ", token));
 	return token;
 }

@@ -16,7 +16,6 @@
 #include "namedb.h"
 #include "nsd.h"
 #include "packet.h"
-#include "tsig.h"
 
 enum query_state {
 	QUERY_PROCESSED,
@@ -56,13 +55,6 @@ struct query {
 	/* EDNS information provided by the client.  */
 	edns_record_type edns;
 
-#ifdef TSIG
-	/* TSIG record information and running hash for query-response */
-	tsig_record_type tsig;
-	/* tsig actions can be overridden, for axfr transfer. */
-	int tsig_prepare_it, tsig_update_it, tsig_sign_it;
-#endif /* TSIG */
-
 	int tcp;
 	uint16_t tcplen;
 
@@ -95,7 +87,6 @@ struct query {
 	 * we no longer change the RCODE to NXDOMAIN and no longer add
 	 * SOA records to the authority section in case of NXDOMAIN
 	 * and NODATA.
-	 * Also includes number of DNAMES followed.
 	 */
 	int cname_count;
 	
@@ -108,10 +99,6 @@ struct query {
 	  * query name when generated from a wildcard record.
 	  */
 	uint16_t    *compressed_dname_offsets;
-	uint32_t compressed_dname_offsets_size;
-
-	/* number of temporary domains used for the query */
-	uint32_t number_temporary_domains;
 
 	/*
 	 * Used for AXFR processing.
@@ -171,8 +158,7 @@ void query_add_compression_domain(struct query *query,
  * Create a new query structure.
  */
 query_type *query_create(region_type *region,
-			 uint16_t *compressed_dname_offsets,
-			 uint32_t compressed_dname_size);
+			 uint16_t *compressed_dname_offsets);
 
 /*
  * Reset a query structure so it is ready for receiving and processing
@@ -209,6 +195,7 @@ query_overflow(query_type *q)
 {
 	return buffer_position(q->packet) > (q->maxlen - q->reserved_space);
 }
+
 static inline int
 query_overflow_nsid(query_type *q, uint16_t nsid_len)
 {
