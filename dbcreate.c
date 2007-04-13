@@ -1,7 +1,7 @@
 /*
  * dbcreate.c -- routines to create an nsd(8) name database 
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -19,26 +19,19 @@
 #include "namedb.h"
 
 static int write_db (namedb_type *db);
-static int write_number(struct namedb *db, uint32_t number);
 
 struct namedb *
 namedb_new (const char *filename)
 {
 	namedb_type *db;
-	region_type *region = region_create_custom(xalloc, free, 
-		DEFAULT_CHUNK_SIZE, DEFAULT_LARGE_OBJECT_SIZE, 
-		DEFAULT_INITIAL_CLEANUP_SIZE, 1);
+	region_type *region = region_create(xalloc, free);
 	
 	/* Make a new structure... */
 	db = (namedb_type *) region_alloc(region, sizeof(namedb_type));
 	db->region = region;
 	db->domains = domain_table_create(region);
 	db->zones = NULL;
-	db->zone_count = 0;
 	db->filename = region_strdup(region, filename);
-	db->crc = 0xffffffff;
-	db->diff_skip = 0;
-	db->fd = NULL;
 
 	/*
 	 * Unlink the old database, if it exists.  This is useful to
@@ -57,7 +50,7 @@ namedb_new (const char *filename)
 	}
 
 
-	if (!write_data_crc(db->fd, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE, &db->crc)) {
+	if (!write_data(db->fd, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE)) {
 		fclose(db->fd);
 		namedb_discard(db);
 		return NULL;
@@ -73,15 +66,9 @@ namedb_save (struct namedb *db)
 	if (write_db(db) != 0) {
 		return -1;
 	}		
-
-	/* Finish up and write the crc */
-	if (!write_number(db, ~db->crc)) {
-		fclose(db->fd);
-		return -1;
-	}
 	
 	/* Write the magic... */
-	if (!write_data_crc(db->fd, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE, &db->crc)) {
+	if (!write_data(db->fd, NAMEDB_MAGIC, NAMEDB_MAGIC_SIZE)) {
 		fclose(db->fd);
 		return -1;
 	}
@@ -107,10 +94,10 @@ write_dname(struct namedb *db, domain_type *domain)
 {
 	const dname_type *dname = domain_dname(domain);
 	
-	if (!write_data_crc(db->fd, &dname->name_size, sizeof(dname->name_size), &db->crc))
+	if (!write_data(db->fd, &dname->name_size, sizeof(dname->name_size)))
 		return 0;
 
-	if (!write_data_crc(db->fd, dname_name(dname), dname->name_size, &db->crc))
+	if (!write_data(db->fd, dname_name(dname), dname->name_size))
 		return 0;
 
 	return 1;
@@ -120,7 +107,7 @@ static int
 write_number(struct namedb *db, uint32_t number)
 {
 	number = htonl(number);
-	return write_data_crc(db->fd, &number, sizeof(number), &db->crc);
+	return write_data(db->fd, &number, sizeof(number));
 }
 
 static int
@@ -144,14 +131,14 @@ write_rrset(struct namedb *db, domain_type *domain, rrset_type *rrset)
 		return 0;
 	
 	type = htons(rrset_rrtype(rrset));
-	if (!write_data_crc(db->fd, &type, sizeof(type), &db->crc))
+	if (!write_data(db->fd, &type, sizeof(type)))
 		return 0;
 
 	klass = htons(rrset_rrclass(rrset));
-	if (!write_data_crc(db->fd, &klass, sizeof(klass), &db->crc))
+	if (!write_data(db->fd, &klass, sizeof(klass)))
 		return 0;
 
-	if (!write_data_crc(db->fd, &rr_count, sizeof(rr_count), &db->crc))
+	if (!write_data(db->fd, &rr_count, sizeof(rr_count)))
 		return 0;
 		
 	for (i = 0; i < rrset->rr_count; ++i) {
@@ -160,11 +147,11 @@ write_rrset(struct namedb *db, domain_type *domain, rrset_type *rrset)
 		uint16_t rdata_count;
 		
 		rdata_count = htons(rr->rdata_count);
-		if (!write_data_crc(db->fd, &rdata_count, sizeof(rdata_count), &db->crc))
+		if (!write_data(db->fd, &rdata_count, sizeof(rdata_count)))
 			return 0;
 
 		ttl = htonl(rr->ttl);
-		if (!write_data_crc(db->fd, &ttl, sizeof(ttl), &db->crc))
+		if (!write_data(db->fd, &ttl, sizeof(ttl)))
 			return 0;
 
 		for (j = 0; j < rr->rdata_count; ++j) {
@@ -174,11 +161,11 @@ write_rrset(struct namedb *db, domain_type *domain, rrset_type *rrset)
 					return 0;
 			} else {
 				uint16_t size = htons(rdata_atom_size(atom));
-				if (!write_data_crc(db->fd, &size, sizeof(size), &db->crc))
+				if (!write_data(db->fd, &size, sizeof(size)))
 					return 0;
-				if (!write_data_crc(db->fd,
+				if (!write_data(db->fd,
 						rdata_atom_data(atom),
-						rdata_atom_size(atom), &db->crc))
+						rdata_atom_size(atom)))
 					return 0;
 			}
 		}
@@ -258,12 +245,12 @@ write_db(namedb_type *db)
 		return -1;
 
 	DEBUG(DEBUG_ZONEC, 1,
-	      (LOG_INFO, "Storing %lu domain names\n", (unsigned long) dname_count));
+	      (stderr, "Storing %lu domain names\n", (unsigned long) dname_count));
 	
 	domain_table_iterate(db->domains, write_dname_iterator, db);
 		   
 	domain_table_iterate(db->domains, write_domain_iterator, db);
-	if (!write_data_crc(db->fd, &terminator, sizeof(terminator), &db->crc))
+	if (!write_data(db->fd, &terminator, sizeof(terminator)))
 		return -1;
 
 	return 0;

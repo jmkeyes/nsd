@@ -1,7 +1,7 @@
 /*
  * rdata.h -- RDATA conversion functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -21,7 +21,7 @@ extern lookup_table_type dns_certificate_types[];
 extern lookup_table_type dns_algorithms[];
 
 int rdata_atom_to_string(buffer_type *output, rdata_zoneformat_type type,
-			 rdata_atom_type rdata, rr_type *rr);
+			 rdata_atom_type rdata);
 
 /*
  * Split the wireformat RDATA into an array of rdata atoms. Domain
@@ -50,11 +50,5 @@ int rdata_atoms_to_unknown_string(buffer_type *out,
 				  rrtype_descriptor_type *descriptor,
 				  size_t rdata_count,
 				  rdata_atom_type *rdatas);
-
-/* print rdata to a text string (as for a zone file) returns 0
-  on a failure (bufpos is reset to original position).
-  returns 1 on success, bufpos is moved. */
-int print_rdata(buffer_type *output, rrtype_descriptor_type *descriptor,
-            rr_type *record);
 
 #endif /* _DNS_H_ */

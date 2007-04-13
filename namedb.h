@@ -1,7 +1,7 @@
 /*
  * namedb.h -- nsd(8) internal namespace database definitions
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -14,11 +14,9 @@
 
 #include "dname.h"
 #include "dns.h"
-#include "rbtree.h"
-struct zone_options;
-struct nsd_options;
+#include "heap.h"
 
-#define	NAMEDB_MAGIC		"NSDdbV07"
+#define	NAMEDB_MAGIC		"NSDdbV06"
 #define	NAMEDB_MAGIC_SIZE	8
 
 typedef union rdata_atom rdata_atom_type;
@@ -35,7 +33,7 @@ typedef struct zone zone_type;
 struct domain_table
 {
 	region_type *region;
-	rbtree_t      *names_to_domains;
+	heap_t      *names_to_domains;
 	domain_type *root;
 };
 
@@ -45,16 +43,8 @@ struct domain
 	domain_type *parent;
 	domain_type *wildcard_child_closest_match;
 	rrset_type  *rrsets;
-#ifdef NSEC3
-	/* (if nsec3 chain complete) always the covering nsec3 record */ 
-	domain_type *nsec3_cover;
-	/* the nsec3 that covers the wildcard child of this domain. */
-	domain_type *nsec3_wcard_child_cover;
-	/* for the DS case we must answer on the parent side of zone cut */
-	domain_type *nsec3_ds_parent_cover;
-	/* the NSEC3 domain that has a hash-base32 <= than this dname. */
-	/* or NULL (no smaller on within this zone) */
-	domain_type *nsec3_lookup;
+#ifdef PLUGINS
+	void       **plugin_data;
 #endif
 	uint32_t     number; /* Unique domain name number.  */
 	
@@ -62,13 +52,6 @@ struct domain
 	 * This domain name exists (see wildcard clarification draft).
 	 */
 	unsigned     is_existing : 1;
-	unsigned     is_apex : 1;
-#ifdef NSEC3
-	/* if the domain has an NSEC3 for it, use cover ptr to get it. */
-	unsigned     nsec3_is_exact : 1;
-	/* same but on parent side */
-	unsigned     nsec3_ds_parent_is_exact : 1;
-#endif
 };
 
 struct zone
@@ -76,18 +59,9 @@ struct zone
 	zone_type   *next;
 	domain_type *apex;
 	rrset_type  *soa_rrset;
-	rrset_type  *soa_nx_rrset; /* see bug #103 */
 	rrset_type  *ns_rrset;
-#ifdef NSEC3
-	rr_type	    *nsec3_soa_rr; /* rrset with SOA bit set */
-	domain_type *nsec3_last; /* last domain with nsec3, wraps */
-#endif
-	struct zone_options *opts;
 	uint32_t     number;
-	uint8_t*     dirty; /* array of dirty-flags, per child */
-	unsigned     is_secure : 1; /* zone uses DNSSEC */
-	unsigned     updated : 1; /* zone SOA was updated */
-	unsigned     is_ok : 1; /* zone has not expired. */
+	unsigned     is_secure : 1;
 };
 
 /* a RR in DNS */
@@ -193,8 +167,6 @@ domain_type *domain_find_ns_rrsets(domain_type *domain, zone_type *zone, rrset_t
 
 int domain_is_glue(domain_type *domain, zone_type *zone);
 
-rrset_type *domain_find_non_cname_rrset(domain_type *domain, zone_type *zone);
-
 domain_type *domain_wildcard_child(domain_type *domain);
 
 int zone_is_secure(zone_type *zone);
@@ -208,15 +180,15 @@ domain_dname(domain_type *domain)
 static inline domain_type *
 domain_previous(domain_type *domain)
 {
-	rbnode_t *prev = rbtree_previous((rbnode_t *) domain);
+	rbnode_t *prev = heap_previous((rbnode_t *) domain);
 	return prev == RBTREE_NULL ? NULL : (domain_type *) prev;
 }
 
 static inline domain_type *
 domain_next(domain_type *domain)
 {
-	rbnode_t *next = rbtree_next((rbnode_t *) domain);
-	return next == RBTREE_NULL ? NULL : (domain_type *) next;
+	rbnode_t *prev = heap_next((rbnode_t *) domain);
+	return prev == RBTREE_NULL ? NULL : (domain_type *) prev;
 }
 
 /*
@@ -230,15 +202,8 @@ struct namedb
 	region_type       *region;
 	domain_table_type *domains;
 	zone_type         *zones;
-	size_t	  	  zone_count;
 	char              *filename;
 	FILE              *fd;
-	/* the CRC on the nsd.db file and position of CRC in the db file */
-	uint32_t	  crc;
-	off_t		  crc_pos;
-	/* if diff_skip=1, diff_pos contains the nsd.diff place to continue */
-	uint8_t		  diff_skip;
-	off_t		  diff_pos;
 };
 
 static inline int rdata_atom_is_domain(uint16_t type, size_t index);
@@ -278,9 +243,7 @@ int namedb_lookup (struct namedb    *db,
 		   const dname_type *dname,
 		   domain_type     **closest_match,
 		   domain_type     **closest_encloser);
-/* pass number of children (to alloc in dirty array */
-struct namedb *namedb_open(const char *filename, struct nsd_options* opt,
-	size_t num_children);
+struct namedb *namedb_open(const char *filename);
 void namedb_close(struct namedb *db);
 
 static inline int

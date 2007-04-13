@@ -2,7 +2,7 @@
 /*
  * zlexer.lex - lexical analyzer for (DNS) zone files
  * 
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved
  *
  * See LICENSE for the license.
  *
@@ -67,27 +67,18 @@ pop_parser_state(void)
 	yy_delete_buffer(YY_CURRENT_BUFFER);
 	yy_switch_to_buffer(include_stack[include_stack_ptr]);
 }
-
-#ifndef yy_set_bol /* compat definition, for flex 2.4.6 */
-#define yy_set_bol(at_bol) \
-	{ \
-		if ( ! yy_current_buffer ) \
-			yy_current_buffer = yy_create_buffer( yyin, YY_BUF_SIZE ); \
-		yy_current_buffer->yy_ch_buf[0] = ((at_bol)?'\n':' '); \
-	}
-#endif
 	
 %}
 
 SPACE   [ \t]
 LETTER  [a-zA-Z]
-NEWLINE [\n\r]
-ZONESTR [^ \t\n\r();.\"\$]
+NEWLINE \n
+ZONESTR [^ \t\n();.\"\$]
 DOLLAR  \$
 COMMENT ;
 DOT     \.
 BIT	[^\]\n]|\\.
-ANY     [^\"\n\\]|\\.
+ANY     [^\"\n]|\\.
 
 %x	incl bitlabel quotedstring
 
@@ -124,8 +115,6 @@ ANY     [^\"\n\\]|\\.
 		zc_error("includes nested too deeply, skipped (>%d)",
 			 MAXINCLUDES);
 	} else {
-		FILE *input;
-
 		/* Remove trailing comment.  */
 		tmp = strrchr(yytext, ';');
 		if (tmp) {
@@ -157,13 +146,13 @@ ANY     [^\"\n\\]|\\.
 		
 		if (strlen(yytext) == 0) {
 			zc_error("missing file name in $INCLUDE directive");
-		} else if (!(input = fopen(yytext, "r"))) {
+		} else if (!(yyin = fopen(yytext, "r"))) {
 			zc_error("cannot open include file '%s': %s",
 				 yytext, strerror(errno));
 		} else {
 			/* Initialize parser for include file.  */
 			char *filename = region_strdup(parser->region, yytext);
-			push_parser_state(input); /* Destroys yytext.  */
+			push_parser_state(yyin); /* Destroys yytext.  */
 			parser->filename = filename;
 			parser->line = 1;
 			parser->origin = origin;
@@ -252,15 +241,14 @@ ANY     [^\"\n\\]|\\.
 }
 
 	/* Quoted strings.  Strip leading and ending quotes.  */
-\"			{ BEGIN(quotedstring); LEXOUT(("\" ")); }
+\"			{ BEGIN(quotedstring); }
 <quotedstring><<EOF>> 	{
 	zc_error("EOF inside quoted string");
 	BEGIN(INITIAL);
 }
-<quotedstring>{ANY}*	{ LEXOUT(("STR ")); yymore(); }
+<quotedstring>{ANY}*	{ yymore(); }
 <quotedstring>\n 	{ ++parser->line; yymore(); }
 <quotedstring>\" {
-	LEXOUT(("\" "));
 	BEGIN(INITIAL);
 	yytext[yyleng - 1] = '\0';
 	return parse_token(STR, yytext, &lexer_state);
@@ -355,7 +343,6 @@ parse_token(int token, char *yytext, enum lexer_state *lexer_state)
 		token = rrtype_to_token(str, &yylval.type);
 		if (token != 0) {
 			*lexer_state = PARSING_RDATA;
-			LEXOUT(("%d[%s] ", token, yytext));
 			return token;
 		}
 
@@ -378,6 +365,6 @@ parse_token(int token, char *yytext, enum lexer_state *lexer_state)
 	yylval.data.str = str;
 	yylval.data.len = len;
 	
-	LEXOUT(("%d[%s] ", token, yytext));
+	LEXOUT(("%d ", token));
 	return token;
 }

@@ -1,7 +1,7 @@
 /*
  * packet.c -- low-level DNS packet encoding and decoding functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -20,8 +20,8 @@ encode_dname(query_type *q, domain_type *domain)
 {
 	while (domain->parent && query_get_dname_offset(q, domain) == 0) {
 		query_put_dname_offset(q, domain, buffer_position(q->packet));
-		DEBUG(DEBUG_NAME_COMPRESSION, 2,
-		      (LOG_INFO, "dname: %s, number: %lu, offset: %u\n",
+		DEBUG(DEBUG_NAME_COMPRESSION, 1,
+		      (stderr, "dname: %s, number: %lu, offset: %u\n",
 		       dname_to_string(domain_dname(domain), NULL),
 		       (unsigned long) domain->number,
 		       query_get_dname_offset(q, domain)));
@@ -30,8 +30,8 @@ encode_dname(query_type *q, domain_type *domain)
 		domain = domain->parent;
 	}
 	if (domain->parent) {
-		DEBUG(DEBUG_NAME_COMPRESSION, 2,
-		      (LOG_INFO, "dname: %s, number: %lu, pointer: %u\n",
+		DEBUG(DEBUG_NAME_COMPRESSION, 1,
+		      (stderr, "dname: %s, number: %lu, pointer: %u\n",
 		       dname_to_string(domain_dname(domain), NULL),
 		       (unsigned long) domain->number,
 		       query_get_dname_offset(q, domain)));
@@ -162,8 +162,8 @@ packet_encode_rrset(query_type *query,
 	return added;
 }
 
-int
-packet_skip_dname(buffer_type *packet)
+static int
+skip_dname(buffer_type *packet)
 {
 	while (1) {
 		uint8_t label_size;
@@ -189,7 +189,7 @@ packet_skip_dname(buffer_type *packet)
 int
 packet_skip_rr(buffer_type *packet, int question_section)
 {
-	if (!packet_skip_dname(packet))
+	if (!skip_dname(packet))
 		return 0;
 
 	if (question_section) {
@@ -254,45 +254,4 @@ packet_read_rr(region_type *region, domain_table_type *owners,
 	result->rdatas = rdatas;
 	
 	return result;
-}
-
-int packet_read_query_section(buffer_type *packet,
-                	uint8_t* dst,
-			uint16_t* qtype,
-			uint16_t* qclass)
-{
-	uint8_t *query_name = buffer_current(packet);
-	uint8_t *src = query_name;
-	size_t len;
-	
-	while (*src) {
-		/*
-		 * If we are out of buffer limits or we have a pointer
-		 * in question dname or the domain name is longer than
-		 * MAXDOMAINLEN ...
-		 */
-		if ((*src & 0xc0) ||
-		    (src + *src + 1 > buffer_end(packet)) || 
-		    (src + *src + 1 > query_name + MAXDOMAINLEN))
-		{
-			return 0;
-		}
-		memcpy(dst, src, *src + 1);
-		dst += *src + 1;
-		src += *src + 1;
-	}
-	*dst++ = *src++;
-
-	/* Make sure name is not too long or we have stripped packet... */
-	len = src - query_name;
-	if (len > MAXDOMAINLEN ||
-	    (src + 2*sizeof(uint16_t) > buffer_end(packet)))
-	{
-		return 0;
-	}
-	buffer_set_position(packet, src - buffer_begin(packet));
-
-	*qtype = buffer_read_u16(packet);
-	*qclass = buffer_read_u16(packet);
-	return 1;
 }

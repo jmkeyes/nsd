@@ -1,7 +1,7 @@
 /*
  * tsig.h -- TSIG definitions (RFC 2845).
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -9,7 +9,6 @@
 
 
 #include <config.h>
-#include <stdlib.h>
 
 #include "tsig.h"
 #include "tsig-openssl.h"
@@ -34,7 +33,6 @@ struct tsig_algorithm_table
 };
 typedef struct tsig_algorithm_table tsig_algorithm_table_type;
 static tsig_algorithm_table_type *tsig_algorithm_table;
-static size_t max_algo_digest_size = 0;
 
 static void
 tsig_digest_variables(tsig_record_type *tsig, int tsig_timers_only)
@@ -116,8 +114,6 @@ tsig_add_algorithm(tsig_algorithm_type *algorithm)
 	entry->algorithm = algorithm;
 	entry->next = tsig_algorithm_table;
 	tsig_algorithm_table = entry;
-	if(algorithm->maximum_digest_size > max_algo_digest_size)
-		max_algo_digest_size = algorithm->maximum_digest_size;
 }
 
 /*
@@ -161,9 +157,6 @@ tsig_error(int error_code)
 		return "Bad Time";
 		break;
 	default:
-		if(error_code < 16) /* DNS rcodes */
-			return rcode2str(error_code);
-
 		snprintf(message, sizeof(message),
 			 "Unknown Error %d", error_code);
 		break;
@@ -176,35 +169,16 @@ tsig_cleanup(void *data)
 {
 	tsig_record_type *tsig = (tsig_record_type *) data;
 	region_destroy(tsig->rr_region);
-	region_destroy(tsig->context_region);
-}
-
-void
-tsig_create_record(tsig_record_type *tsig, region_type *region)
-{
-	tsig_create_record_custom(tsig, region, DEFAULT_CHUNK_SIZE, 
-		DEFAULT_LARGE_OBJECT_SIZE, DEFAULT_INITIAL_CLEANUP_SIZE);
-}
-
-void
-tsig_create_record_custom(tsig_record_type *tsig, region_type *region,
-	size_t chunk_size, size_t large_object_size, size_t initial_cleanup_size)
-{
-	tsig->rr_region = region_create_custom(xalloc, free, chunk_size, 
-		large_object_size, initial_cleanup_size, 0);
-	tsig->context_region = region_create_custom(xalloc, free, chunk_size,
-		large_object_size, initial_cleanup_size, 0);
-	region_add_cleanup(region, tsig_cleanup, tsig);
-	tsig_init_record(tsig, NULL, NULL);
 }
 
 void
 tsig_init_record(tsig_record_type *tsig,
+		 region_type *region,
 		 tsig_algorithm_type *algorithm,
 		 tsig_key_type *key)
 {
+	tsig->region = region;
 	tsig->status = TSIG_NOT_PRESENT;
-	tsig->error_code = TSIG_ERROR_NOERROR;
 	tsig->position = 0;
 	tsig->response_count = 0;
 	tsig->context = NULL;
@@ -212,7 +186,9 @@ tsig_init_record(tsig_record_type *tsig,
 	tsig->key = key;
 	tsig->prior_mac_size = 0;
 	tsig->prior_mac_data = NULL;
-	region_free_all(tsig->context_region);
+	/* XXX: allocate rr_region lazily instead! */
+	tsig->rr_region = region_create(xalloc, free);
+	region_add_cleanup(tsig->region, tsig_cleanup, tsig);
 }
 
 int
@@ -229,7 +205,7 @@ tsig_from_query(tsig_record_type *tsig)
 	assert(!tsig->algorithm);
 	assert(!tsig->key);
 	
-	/* XXX: TODO: slow linear check for keyname */
+	/* XXX: Todo */
 	for (key_entry = tsig_key_table;
 	     key_entry;
 	     key_entry = key_entry->next)
@@ -259,17 +235,6 @@ tsig_from_query(tsig_record_type *tsig)
 		return 0;
 	}
 
-	if ((tsig->algorithm && algorithm != tsig->algorithm)
-	    || (tsig->key && key != tsig->key))
-	{
-		/*
-		 * Algorithm or key changed during a single connection,
-		 *return error.
-		 */
-		tsig->error_code = TSIG_ERROR_BADKEY;
-		return 0;
-	}
-
 	signed_time = ((((uint64_t) tsig->signed_time_high) << 32) |
 		       ((uint64_t) tsig->signed_time_low));
 
@@ -277,12 +242,10 @@ tsig_from_query(tsig_record_type *tsig)
 	if ((current_time < signed_time - tsig->signed_time_fudge)
 	    || (current_time > signed_time + tsig->signed_time_fudge))
 	{
-		uint16_t current_time_high;
-		uint32_t current_time_low;
-
-#if 0				/* debug */
 		char current_time_text[26];
 		char signed_time_text[26];
+		uint16_t current_time_high;
+		uint32_t current_time_low;
 		time_t clock;
 
 		clock = (time_t) current_time;
@@ -293,6 +256,7 @@ tsig_from_query(tsig_record_type *tsig)
 		ctime_r(&clock, signed_time_text);
 		signed_time_text[24] = '\0';
 
+#if 0				/* XXX */
 		log_msg(LOG_ERR,
 			"current server time %s is outside the range of TSIG"
 			" signed time %s with fudge %u",
@@ -345,10 +309,9 @@ tsig_prepare(tsig_record_type *tsig)
 	if (!tsig->context) {
 		assert(tsig->algorithm);
 		tsig->context = tsig->algorithm->hmac_create_context(
-			tsig->context_region);
+			tsig->region);
 		tsig->prior_mac_data = (uint8_t *) region_alloc(
-			tsig->context_region, 
-			tsig->algorithm->maximum_digest_size);
+			tsig->region, tsig->algorithm->maximum_digest_size);
 	}
 	tsig->algorithm->hmac_init_context(tsig->context,
 					   tsig->algorithm,
@@ -394,7 +357,7 @@ tsig_sign(tsig_record_type *tsig)
 	uint64_t current_time = (uint64_t) time(NULL);
 	tsig->signed_time_high = (uint16_t) (current_time >> 32);
 	tsig->signed_time_low = (uint32_t) current_time;
-	tsig->signed_time_fudge = 300; /* XXX; hardcoded value */
+	tsig->signed_time_fudge = 300; /* XXX */
 
 	tsig_digest_variables(tsig, tsig->response_count > 1);
 
@@ -497,7 +460,6 @@ tsig_parse_rr(tsig_record_type *tsig, buffer_type *packet)
 	rdlen = buffer_read_u16(packet);
 
 	tsig->status = TSIG_ERROR;
-	tsig->error_code = RCODE_FORMAT;
 	if (ttl != 0 || !buffer_available(packet, rdlen)) {
 		buffer_set_position(packet, tsig->position);
 		return 0;
@@ -516,7 +478,6 @@ tsig_parse_rr(tsig_record_type *tsig, buffer_type *packet)
 	tsig->mac_size = buffer_read_u16(packet);
 	if (!buffer_available(packet, tsig->mac_size)) {
 		buffer_set_position(packet, tsig->position);
-		tsig->mac_size = 0;
 		return 0;
 	}
 	tsig->mac_data = (uint8_t *) region_alloc_init(
@@ -529,8 +490,7 @@ tsig_parse_rr(tsig_record_type *tsig, buffer_type *packet)
 	tsig->original_query_id = buffer_read_u16(packet);
 	tsig->error_code = buffer_read_u16(packet);
 	tsig->other_size = buffer_read_u16(packet);
-	if (!buffer_available(packet, tsig->other_size) || tsig->other_size > 16) {
-		tsig->other_size = 0;
+	if (!buffer_available(packet, tsig->other_size)) {
 		buffer_set_position(packet, tsig->position);
 		return 0;
 	}
@@ -538,7 +498,6 @@ tsig_parse_rr(tsig_record_type *tsig, buffer_type *packet)
 		tsig->rr_region, buffer_current(packet), tsig->other_size);
 	buffer_skip(packet, tsig->other_size);
 	tsig->status = TSIG_OK;
-	tsig->error_code = TSIG_ERROR_NOERROR;
 
 	return 1;
 }
@@ -548,20 +507,16 @@ tsig_append_rr(tsig_record_type *tsig, buffer_type *packet)
 {
 	size_t rdlength_pos;
 
-	/* XXX: TODO key name compression? */
-	if(tsig->key_name)
-		buffer_write(packet, dname_name(tsig->key_name),
+	/* XXX: key name compression? */
+	buffer_write(packet, dname_name(tsig->key_name),
 		     tsig->key_name->name_size);
-	else	buffer_write_u8(packet, 0);
 	buffer_write_u16(packet, TYPE_TSIG);
 	buffer_write_u16(packet, CLASS_ANY);
 	buffer_write_u32(packet, 0); /* TTL */
 	rdlength_pos = buffer_position(packet);
 	buffer_skip(packet, sizeof(uint16_t));
-	if(tsig->algorithm_name)
-		buffer_write(packet, dname_name(tsig->algorithm_name),
+	buffer_write(packet, dname_name(tsig->algorithm_name),
 		     tsig->algorithm_name->name_size);
-	else 	buffer_write_u8(packet, 0);
 	buffer_write_u16(packet, tsig->signed_time_high);
 	buffer_write_u32(packet, tsig->signed_time_low);
 	buffer_write_u16(packet, tsig->signed_time_fudge);
@@ -583,28 +538,19 @@ tsig_reserved_space(tsig_record_type *tsig)
 	if (tsig->status == TSIG_NOT_PRESENT)
 		return 0;
 
-	return (
-		(tsig->key_name?tsig->key_name->name_size:1)   /* Owner */
+	return (tsig->key_name->name_size   /* Owner */
 		+ sizeof(uint16_t)	    /* Type */
 		+ sizeof(uint16_t)	    /* Class */
 		+ sizeof(uint32_t)	    /* TTL */
 		+ sizeof(uint16_t)	    /* RDATA length */
-		+ (tsig->algorithm_name?tsig->algorithm_name->name_size:1)
+		+ tsig->algorithm_name->name_size
 		+ sizeof(uint16_t)	    /* Signed time (high) */
 		+ sizeof(uint32_t)	    /* Signed time (low) */
 		+ sizeof(uint16_t)	    /* Signed time fudge */
 		+ sizeof(uint16_t)	    /* MAC size */
-		+ max_algo_digest_size 	    /* MAC data */
+		+ tsig->algorithm->maximum_digest_size /* MAC data */
 		+ sizeof(uint16_t)	    /* Original query ID */
 		+ sizeof(uint16_t)	    /* Error code */
 		+ sizeof(uint16_t)	    /* Other size */
 		+ tsig->other_size);	    /* Other data */
-}
-
-void
-tsig_error_reply(tsig_record_type *tsig)
-{
-	if(tsig->mac_data)
-		memset(tsig->mac_data, 0, tsig->mac_size);
-	tsig->mac_size = 0;
 }

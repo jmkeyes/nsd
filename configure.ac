@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,3.0.6,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,2.2.1,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -32,17 +32,6 @@ AC_ARG_WITH([configdir],
 AC_SUBST(configdir)
 
 #
-# Determine configuration file
-nsd_conf_file=${configdir}/nsd.conf
-AC_ARG_WITH([nsd_conf_file],
-	AC_HELP_STRING([--with-nsd_conf_file=path], [Pathname to the NSD configuration file]),
-	[nsd_conf_file=$withval])
-AC_SUBST(nsd_conf_file)
-# the eval is to evaluate shell expansion twice, once
-# for $nsd_conf_file and once for the ${prefix} within it.
-AC_DEFINE_UNQUOTED(CONFIGFILE, ["`eval echo $nsd_conf_file`"], [Pathname to the NSD configuration file])
-
-#
 # Determine the pidfile location. Check if /var/run exists, if so set pidfile
 # to /var/run/nsd.pid by default
 #
@@ -55,7 +44,15 @@ AC_ARG_WITH([pidfile],
 	AC_HELP_STRING([--with-pidfile=path], [Pathname to the NSD pidfile]),
 	[pidfile=$withval])
 AC_SUBST(pidfile)
-AC_DEFINE_UNQUOTED(PIDFILE, ["`eval echo $pidfile`"], [Pathname to the NSD pidfile])
+
+#
+# Determine location of nsd.zones
+#
+zonesfile=$configdir/nsd.zones
+AC_ARG_WITH([zonesfile],
+	AC_HELP_STRING([--with-zonesfile=path], [Pathname to the NSD list of zones]),
+	[zonesfile=$withval])
+AC_SUBST(zonesfile)
 
 #
 # Determine location of nsd.db
@@ -65,41 +62,33 @@ AC_ARG_WITH([dbfile],
 	AC_HELP_STRING([--with-dbfile=path], [Pathname to the NSD database]),
 	[dbfile=$withval])
 AC_SUBST(dbfile)
-AC_DEFINE_UNQUOTED(DBFILE, ["`eval echo $dbfile`"], [Pathname to the NSD database])
 
 #
-# Determine the default directory for the zone files
+# Determine location of nsd config file
+#
+configfile=$configdir/nsdc.conf
+AC_ARG_WITH([configfile],
+	AC_HELP_STRING([--with-configfile=path], [Pathname to the NSD configuration file]),
+	[configfile=$withval])
+AC_SUBST(configfile)
+
+#
+# Determine the default directory for the master zone files
 #
 zonesdir=$configdir
 AC_ARG_WITH([zonesdir],
-	AC_HELP_STRING([--with-zonesdir=dir], [NSD default location for zone files]),
+	AC_HELP_STRING([--with-zonesdir=dir], [NSD default location for master zone files]),
 	[zonesdir=$withval])
 AC_SUBST(zonesdir)
-AC_DEFINE_UNQUOTED(ZONESDIR, ["`eval echo $zonesdir`"], [NSD default location for zone files. Empty string or NULL to disable.])
-
-# default diff file location.
-difffile=${configdir}/ixfr.db
-AC_ARG_WITH([difffile], AC_HELP_STRING([--with-difffile=path], 
-	[Pathname to the NSD diff transfer journal file]), [difffile=$withval])
-AC_DEFINE_UNQUOTED(DIFFFILE, ["`eval echo $difffile`"], [Pathname to the NSD diff transfer journal file.])
-AC_SUBST(difffile)
-
-# default xfrd file location.
-xfrdfile=${configdir}/xfrd.state
-AC_ARG_WITH([xfrdfile], AC_HELP_STRING([--with-xfrdfile=path], 
-	[Pathname to the NSD xfrd zone timer state file]), [xfrdfile=$withval])
-AC_DEFINE_UNQUOTED(XFRDFILE, ["`eval echo $xfrdfile`"], [Pathname to the NSD xfrd zone timer state file.])
-AC_SUBST(xfrdfile)
 
 #
-# Determine the user name to drop priviledges to
+# Determine the user name to drop privilidges to
 #
 user=nsd
 AC_ARG_WITH([user],
 	AC_HELP_STRING([--with-user=username], [User name or ID to answer the queries with]),
 	[user=$withval])
 AC_SUBST(user)
-AC_DEFINE_UNQUOTED(USER, ["$user"], [the user name to drop priviledges to])
 
 # Checks for programs.
 AC_PROG_AWK
@@ -108,6 +97,13 @@ AC_PROG_LN_S
 AC_PROG_INSTALL
 AC_PROG_LEX
 AC_PROG_YACC
+
+# Checks for typedefs, structures, and compiler characteristics.
+AC_C_CONST
+AC_C_INLINE
+AC_TYPE_UID_T
+AC_TYPE_PID_T
+AC_TYPE_SIZE_T
 
 AC_DEFUN([AC_CHECK_FORMAT_ATTRIBUTE],
 [AC_REQUIRE([AC_PROG_CC])
@@ -152,65 +148,8 @@ if test $ac_cv_c_unused_attribute = yes; then
 fi
 ])dnl
 
-AC_DEFUN([CHECK_COMPILER_FLAG],
-[
-AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING(whether $CC supports -$1)
-cache=`echo $1 | sed 'y%.=/+-%___p_%'`
-AC_CACHE_VAL(cv_prog_cc_flag_$cache,
-[
-echo 'void f(){}' >conftest.c
-if test -z "`$CC -$1 -c conftest.c 2>&1`"; then
-eval "cv_prog_cc_flag_$cache=yes"
-else
-eval "cv_prog_cc_flag_$cache=no"
-fi
-rm -f conftest*
-])
-if eval "test \"`echo '$cv_prog_cc_flag_'$cache`\" = yes"; then
-AC_MSG_RESULT(yes)
-:
-$2
-else
-AC_MSG_RESULT(no)
-:
-$3
-fi
-])
-
-AC_DEFUN([AC_CHECK_CTIME_R],
-[AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING(whether ctime_r works with two arguments)
-AC_CACHE_VAL(ac_cv_c_ctime_c,
-[ac_cv_c_ctime_c=no
-AC_TRY_COMPILE(
-[#include <time.h>
-void testing (void) { time_t clock; char current_time[40]; ctime_r(&clock, current_time); }],
-[
-        testing();
-],
-[ac_cv_c_ctime_c="yes"],
-[ac_cv_c_ctime_c="no"])
-])
-
-AC_MSG_RESULT($ac_cv_c_ctime_c)
-if test $ac_cv_c_ctime_c = no; then
-        CPPFLAGS="$CPPFLAGS -D_POSIX_PTHREAD_SEMANTICS"
-fi
-])dnl
-
-# Checks for typedefs, structures, and compiler characteristics.
-CHECK_COMPILER_FLAG(O2, [], [ CFLAGS="-g" ])
-AC_C_CONST
-AC_C_INLINE
-AC_TYPE_UID_T
-AC_TYPE_PID_T
-AC_TYPE_SIZE_T
-AC_TYPE_OFF_T
-
 AC_CHECK_FORMAT_ATTRIBUTE
 AC_CHECK_UNUSED_ATTRIBUTE
-AC_CHECK_CTIME_R
 
 # Checks for libraries.
 
@@ -219,15 +158,15 @@ AC_CHECK_CTIME_R
 # modified for NSD.
 AC_DEFUN([CHECK_SSL], [
     AC_ARG_WITH(ssl, AC_HELP_STRING([--with-ssl=pathname],
-                [enable SSL (will check /usr/local/ssl
-                /usr/lib/ssl /usr/ssl /usr/pkg /usr/sfw /usr/local /usr)]),[
+                                    [enable SSL (will check /usr/local/ssl
+                            /usr/lib/ssl /usr/ssl /usr/pkg /usr/local /usr)]),[
         ],[
             withval="yes"
         ])
     if test x_$withval != x_no; then
         AC_MSG_CHECKING(for SSL)
         if test x_$withval = x_ -o x_$withval = x_yes; then
-            withval="/usr/local/ssl /usr/lib/ssl /usr/ssl /usr/pkg /usr/sfw /usr/local /usr"
+            withval="/usr/local/ssl /usr/lib/ssl /usr/ssl /usr/pkg /usr/local /usr"
         fi
         for dir in $withval; do
             ssldir="$dir"
@@ -244,9 +183,6 @@ AC_DEFUN([CHECK_SSL], [
             AC_MSG_RESULT(found in $ssldir)
             HAVE_SSL=yes 
             LDFLAGS="$LDFLAGS -L$ssldir/lib";
-	    if test x_$ssldir = x_/usr/sfw; then
-		LDFLAGS="$LDFLAGS -R$ssldir/lib";
-	    fi
             AC_CHECK_LIB(crypto, HMAC_CTX_init,, [
                     AC_MSG_ERROR([OpenSSL found in $ssldir, but version 0.9.7 or higher is required])
                 ])
@@ -258,66 +194,12 @@ AC_DEFUN([CHECK_SSL], [
 # Checks for header files.
 AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS([time.h arpa/inet.h signal.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h tcpd.h])
-
-AC_DEFUN([CHECK_VALIST_DEF],
-[
-AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING(for double definition of struct va_list)
-AC_CACHE_VAL(ac_cv_c_va_list_def,
-[
-cat >conftest.c <<EOF
-#include <stdio.h>
-#include <stdarg.h>
-int foo(void);
-EOF
-if test -z "`$CC -Werror -D_XOPEN_SOURCE=600 -c conftest.c 2>&1`"; then
-eval "ac_cv_c_va_list_def=no"
-else
-eval "ac_cv_c_va_list_def=yes"
-fi
-rm -f conftest*
-])
-if test $ac_cv_c_va_list_def = yes; then
-AC_MSG_RESULT(yes)
-:
-AC_DEFINE_UNQUOTED([HAVE_VA_LIST_DOUBLE_DEF], [], [Define this if you have double va_list definitions.])
-else
-AC_MSG_RESULT(no)
-:
-
-fi
-])
-
-CHECK_VALIST_DEF
-
-AC_DEFUN([AC_CHECK_STRPTIME],
-[AC_REQUIRE([AC_PROG_CC])
-AC_MSG_CHECKING(whether strptime needs defines)
-AC_CACHE_VAL(ac_cv_c_strptime_needs_defs,
-[
-cat >conftest.c <<EOF
-#include <time.h>
-void testing (void) { struct tm t; char *timestr; strptime(timestr, "%Y%m", &t); }
-EOF
-if test -z "`$CC -Wall -Werror -c conftest.c 2>&1`"; then
-eval "ac_cv_c_strptime_needs_defs=no"
-else
-eval "ac_cv_c_strptime_needs_defs=yes"
-fi
-rm -f conftest*
-])
-
-AC_MSG_RESULT($ac_cv_c_strptime_needs_defs)
-if test $ac_cv_c_strptime_needs_defs = yes; then
-AC_DEFINE_UNQUOTED([STRPTIME_NEEDS_DEFINES], 1, [strptime is available from time.h with some defines.])
-fi
-])dnl
-
-AC_CHECK_STRPTIME
+AC_CHECK_HEADERS([arpa/inet.h signal.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h dlfcn.h tcpd.h])
 
 AC_SEARCH_LIBS(inet_pton, [nsl])
 AC_SEARCH_LIBS(socket, [socket])
+
+AC_SEARCH_LIBS(dlopen, [dl])
 
 dnl LIBGTOP_CHECK_TYPE
 dnl Stolen from Gnome's anjuta
@@ -377,7 +259,6 @@ AC_LIBGTOP_CHECK_TYPE(uint32_t, unsigned int)
 AC_LIBGTOP_CHECK_TYPE(uint64_t, unsigned long long)
 AC_LIBGTOP_CHECK_TYPE(socklen_t, int)
 AC_LIBGTOP_CHECK_TYPE(sig_atomic_t, int)
-AC_LIBGTOP_CHECK_TYPE(ssize_t, int)
 
 AC_CHECK_TYPE(in_addr_t, [], [AC_DEFINE([in_addr_t], [uint32_t], [in_addr_t])], [
 #if HAVE_SYS_TYPES_H
@@ -392,46 +273,55 @@ AC_FUNC_CHOWN
 AC_FUNC_FORK
 AC_FUNC_MALLOC
 AC_TYPE_SIGNAL
-AC_FUNC_FSEEKO
-AC_SYS_LARGEFILE
-AC_CHECK_FUNCS([alarm chroot dup2 endpwent gethostname memset memcpy socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask strptime])
- 
+AC_CHECK_FUNCS([alarm chroot dup2 endpwent gethostname memset memcpy mmap socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask dlopen dlerror dlsym dlclose])
+
 #
 # Checking for missing functions we can replace
 #
 AC_REPLACE_FUNCS(basename)
-AC_REPLACE_FUNCS(inet_aton)
 AC_REPLACE_FUNCS(inet_pton)
-AC_REPLACE_FUNCS(inet_ntop)
 AC_REPLACE_FUNCS(snprintf)
-AC_REPLACE_FUNCS(strlcpy)
 AC_REPLACE_FUNCS(b64_pton)
 AC_REPLACE_FUNCS(b64_ntop)
+AC_REPLACE_FUNCS(timegm)
 AC_REPLACE_FUNCS(pselect)
-AC_REPLACE_FUNCS(memmove)
 
-AC_MSG_CHECKING(for pselect prototype in sys/select.h)
-AC_EGREP_HEADER([[^a-zA-Z_]*pselect[^a-zA-Z_]], sys/select.h, AC_DEFINE(HAVE_PSELECT_PROTO, 1, 
-	[if sys/select.h provides pselect prototype]) AC_MSG_RESULT(yes), AC_MSG_RESULT(no))
+dnl dnl Check for libwrap.  Note that libwrap requires 
+dnl yp_get_default_domain on Linux but that normally the required nsl 
+dnl library isn't linked in (and no error occurs when dynamically linking)
+AC_ARG_WITH(libwrap,
+	AC_HELP_STRING([--with-libwrap=[pathname]],
+		[Compile in libwrap (tcp_wrappers) support.]), [], [withval="yes"])
 
-AC_MSG_CHECKING(for ctime_r prototype in time.h)
-AC_EGREP_HEADER([[^a-zA-Z_]*ctime_r[^a-zA-Z_]], time.h, AC_DEFINE(HAVE_CTIME_R_PROTO, 1, 
-	[if time.h provides ctime_r prototype]) AC_MSG_RESULT(yes), AC_MSG_RESULT(no))
-
-AC_CHECK_TYPE([struct timespec], AC_DEFINE(HAVE_STRUCT_TIMESPEC, 1, [If time.h has a struct timespec (for pselect).]), [], [
-AC_INCLUDES_DEFAULT
-#ifdef HAVE_SIGNAL_H
-#include <signal.h>
-#endif
-#ifdef HAVE_TIME_H
-#include <time.h>
-#endif
-])
+case "$withval" in
+	no|'')
+		;;
+	yes)
+		AC_CHECK_LIB(wrap, request_init, [
+			AC_DEFINE_UNQUOTED([LIBWRAP], [], [Define to use hosts_access() from -lwrap.])
+			LIBWRAP="-lwrap"
+                        AC_SEARCH_LIBS(yp_get_default_domain, [nsl])
+                        ])
+		;;
+	*)
+		LIBWRAP="-L$withval -lwrap"
+		OLDLIBS="$LIBS"
+		LIBS="$LIBWRAP $LIBS"
+		AC_TRY_LINK([ int allow_severity; int deny_severity; ],
+			[ hosts_access(); ],
+			[AC_DEFINE_UNQUOTED([LIBWRAP], [], [Define to use hosts_access() from -lwrap.])
+                         AC_SEARCH_LIBS(yp_get_default_domain, [nsl])
+                        ],
+			[ AC_MSG_ERROR(Could not find the $withval library.  You must first install tcp_wrappers.) ])
+		LIBS="$OLDLIBS"
+		;;
+esac
+AC_SUBST(LIBWRAP)
 
 dnl
 dnl Some random defines's
 dnl
-AC_DEFINE_UNQUOTED([IDENTITY], ["unidentified server"], [Define to the default nsd identity.])
+AC_DEFINE_UNQUOTED([IDENTITY], ["unindentified server"], [Define to the default nsd identity.])
 AC_DEFINE_UNQUOTED([VERSION], [PACKAGE_STRING], [Define to the NSD version to answer version.server query.])
 AC_DEFINE_UNQUOTED([TCP_BACKLOG], [5], [Define to the backlog to be used with listen.])
 AC_DEFINE_UNQUOTED([TCP_PORT], ["53"], [Define to the default tcp port.])
@@ -443,6 +333,8 @@ AC_DEFINE_UNQUOTED([EDNS_MAX_MESSAGE_LEN], [4096], [Define to the default maximu
 AC_DEFINE_UNQUOTED([MAX_INTERFACES], [8], [Define to the maximum interfaces to serve.])
 dnl AC_DEFINE_UNQUOTED([FACILITY], [LOG_DAEMON], [Define to the default facility for syslog.])
 AC_DEFINE_UNQUOTED([MAXSYSLOGMSGLEN], [512], [Define to the maximum message length to pass to syslog.])
+AC_DEFINE_UNQUOTED([AXFR_DAEMON], ["axfr"], [Define to the default daemon name to check for axfr.])
+AC_DEFINE_UNQUOTED([AXFR_DAEMON_PREFIX], ["axfr-"], [Define to the default daemon prefix to check for axfr.])
 
 dnl
 dnl Determine the syslog facility to use
@@ -474,12 +366,21 @@ case "$enable_ipv6" in
 		;;
 esac
 
-AC_ARG_ENABLE(dnssec, AC_HELP_STRING([--disable-dnssec], [Disable DNSSEC support.]))
+AC_ARG_ENABLE(dnssec, AC_HELP_STRING([--enable-dnssec], [Enable experimental DNSSEC support according to the latest drafts.]))
 case "$enable_dnssec" in
-        no)
+        yes)
+		AC_DEFINE_UNQUOTED([DNSSEC], [], [Define this enable experimental DNSSEC support.])
+		;;
+        no|*)
                 ;;
-        yes|*)
-		AC_DEFINE_UNQUOTED([DNSSEC], [], [Define this to enable DNSSEC (RFCs 4033, 4034, and 4035) support.])
+esac
+
+AC_ARG_ENABLE(axfr, AC_HELP_STRING([--disable-axfr], [Disables AXFR]))
+case "$enable_axfr" in
+	no)
+		AC_DEFINE_UNQUOTED([DISABLE_AXFR], [], [Define this to disable axfr.])
+		;;
+	yes|*)
 		;;
 esac
 
@@ -493,12 +394,18 @@ case "$enable_bind8_stats" in
 		;;
 esac
 
+AC_ARG_ENABLE(plugins, AC_HELP_STRING([--enable-plugins], [Enable plugin support]))
+case "$enable_plugins" in
+        yes)
+		AC_DEFINE([PLUGINS], [], [Define this to enable plugin support.])
+		;;
+        no|*)
+                ;;
+esac
+
 AC_ARG_ENABLE(checking, AC_HELP_STRING([--enable-checking], [Enable internal runtime checks]))
 case "$enable_checking" in
         yes)
-		CHECK_COMPILER_FLAG(W, [ CFLAGS="$CFLAGS -W" ])
-		CHECK_COMPILER_FLAG(Wall, [ CFLAGS="$CFLAGS -Wall" ])
-		CHECK_COMPILER_FLAG(Wextra, [ CFLAGS="$CFLAGS -Wextra" ])
 		;;
         no|*)
                 AC_DEFINE([NDEBUG], [], [Undefine this to enable internal runtime checks.])
@@ -518,68 +425,23 @@ case "$enable_tsig" in
                 ;;
 esac
 
-AC_ARG_ENABLE(nsec3, AC_HELP_STRING([--enable-nsec3], [Enable NSEC3 support]))
-case "$enable_nsec3" in
+AC_ARG_ENABLE(mmap, AC_HELP_STRING([--enable-mmap], [Configure NSD to load the database using mmap(2).]))
+case "$enable_mmap" in
         yes)
-		AC_DEFINE_UNQUOTED([NSEC3], [], [Define this to enable NSEC3 support.])
-                ;;
-        no|*)
+                if test "$ac_cv_func_mmap" != yes; then
+                    AC_MSG_ERROR(mmap support requested but mmap not found)
+                fi
+		AC_DEFINE_UNQUOTED([USE_MMAP], [], [Define this to load the database using mmap(2).])
 		;;
-esac
-
-AC_ARG_ENABLE(nsid, AC_HELP_STRING([--enable-nsid], [Enable NSID support]))
-case "$enable_nsid" in
-        yes)
-               AC_DEFINE([NSID], [], [Define this to enable NSID support.])
-               ;;
         no|*)
                 ;;
 esac
-
-AH_BOTTOM([
-/* define before includes as it specifies what standard to use. */
-#if (defined(HAVE_PSELECT) && !defined (HAVE_PSELECT_PROTO)) \
-	|| !defined (HAVE_CTIME_R_PROTO) \
-	|| defined (STRPTIME_NEEDS_DEFINES)
-#  ifndef _XOPEN_SOURCE
-#    define _XOPEN_SOURCE 600
-#  endif
-#  ifndef _POSIX_C_SOURCE
-#    define _POSIX_C_SOURCE 200112
-#  endif
-#  ifndef _BSD_SOURCE
-#    define _BSD_SOURCE 1
-#  endif
-#  ifndef __EXTENSIONS__
-#    define __EXTENSIONS__ 1
-#  endif 
-#  ifndef _STDC_C99
-#    define _STDC_C99 1
-#  endif
-#  ifndef _ALL_SOURCE
-#    define _ALL_SOURCE 1
-#  endif
-#endif
-])
-
-AH_BOTTOM([
-#ifdef HAVE_VA_LIST_DOUBLE_DEF
-/* workaround double va_list definition on some platforms */
-#  ifndef _VA_LIST_DEFINED
-#    define _VA_LIST_DEFINED
-#  endif
-#endif
-])
 
 AH_BOTTOM([
 #include <sys/types.h>
 #if STDC_HEADERS
 #include <stdlib.h>
 #include <stddef.h>
-#endif
-
-#ifdef HAVE_TIME_H
-#include <time.h>
 #endif
 
 #ifdef HAVE_STDINT_H
@@ -630,15 +492,6 @@ AH_BOTTOM([
 #endif /* AF_INET6 */
 ])
 
-if test $ac_cv_func_getaddrinfo = no; then
-AC_LIBOBJ([fake-rfc2553])
-fi
-
-AH_BOTTOM([
-/* maximum nesting of included files */
-#define MAXINCLUDES 10
-])
-
 AH_BOTTOM([
 #ifndef B64_PTON
 int b64_ntop(uint8_t const *src, size_t srclength,
@@ -647,60 +500,7 @@ int b64_ntop(uint8_t const *src, size_t srclength,
 #ifndef B64_NTOP
 int b64_pton(char const *src, uint8_t *target, size_t targsize);
 #endif /* !B64_NTOP */
-#ifndef HAVE_FSEEKO
-#define fseeko fseek
-#define ftello ftell
-#endif /* HAVE_FSEEKO */
-#ifndef HAVE_SNPRINTF
-#include <stdarg.h>
-int snprintf (char *str, size_t count, const char *fmt, ...);
-int vsnprintf (char *str, size_t count, const char *fmt, va_list arg);
-#endif /* HAVE_SNPRINTF */
-#ifndef HAVE_INET_PTON
-int inet_pton(int af, const char* src, void* dst);
-#endif /* HAVE_INET_PTON */
-#ifndef HAVE_INET_NTOP
-const char *inet_ntop(int af, const void *src, char *dst, size_t size);
-#endif
-#ifndef HAVE_INET_ATON
-int inet_aton(const char *cp, struct in_addr *addr);
-#endif
-#ifndef HAVE_MEMMOVE
-void *memmove(void *dest, const void *src, size_t n);
-#endif
-#ifndef HAVE_STRLCPY
-size_t strlcpy(char *dst, const char *src, size_t siz);
-#endif
-#ifndef HAVE_GETADDRINFO
-#include "compat/fake-rfc2553.h"
-#endif
-
-/* provide timespec def if not available */
-#ifndef CONFIG_DEFINES
-#define CONFIG_DEFINES
-#ifndef HAVE_STRUCT_TIMESPEC
-#ifndef __timespec_defined
-#define __timespec_defined 1
-	struct timespec {
-		long    tv_sec;         /* seconds */
-		long    tv_nsec;        /* nanoseconds */
-	};
-#endif /* !__timespec_defined */
-#endif /* !HAVE_STRUCT_TIMESPEC */
-#endif /* !CONFIG_DEFINES */
 ])
-
-# big fat warning
-if test "$enable_checking" = "yes"; then
-        echo "************************************************"
-        echo "* You have activated \"--enable-checking\"       *"
-        echo "*                                              *"
-        echo "* This will instruct NSD to be stricter        *"
-        echo "* when validating its input. This could lead   *"
-        echo "* to a reduced service level.                  *"
-        echo "*                                              *"
-        echo "************************************************"
-fi
 
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

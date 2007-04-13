@@ -1,7 +1,7 @@
 /*
  * netio.h -- network I/O support.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -84,12 +84,6 @@ struct netio
 	 */
 	int have_current_time;
 	struct timespec cached_current_time;
-
-	/*
-	 * Next handler in the dispatch. Only valid during callbacks.
-	 * To make sure that deletes respect the state of the iterator.
-	 */
-	netio_handler_list_type *dispatch_next;
 };
 
 typedef void (*netio_event_handler_type)(netio_type *netio,

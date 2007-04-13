@@ -1,7 +1,7 @@
 /*
  * region-allocator.h -- region based memory allocator.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -14,32 +14,12 @@
 
 typedef struct region region_type;
 
-#define DEFAULT_CHUNK_SIZE         4096
-#define DEFAULT_LARGE_OBJECT_SIZE  (DEFAULT_CHUNK_SIZE / 8)
-#define DEFAULT_INITIAL_CLEANUP_SIZE 16
 
 /*
  * Create a new region.
  */
 region_type *region_create(void *(*allocator)(size_t),
 			   void (*deallocator)(void *));
-
-
-/*
- * Create a new region, with chunk size and large object size.
- * Note that large_object_size must be <= chunk_size.
- * Anything larger than the large object size is individually alloced.
- * large_object_size = chunk_size/8 is reasonable;
- * initial_cleanup_size is the number of prealloced ptrs for cleanups.
- * The cleanups are in a growing array, and it must start larger than zero.
- * If recycle is true, environmentally friendly memory recycling is be enabled.
- */
-region_type *region_create_custom(void *(*allocator)(size_t),
-				  void (*deallocator)(void *),
-				  size_t chunk_size,
-				  size_t large_object_size,
-				  size_t initial_cleanup_size,
-				  int recycle);
 
 
 /*
@@ -94,21 +74,29 @@ void region_free_all(region_type *region);
  */
 char *region_strdup(region_type *region, const char *string);
 
+
 /*
- * Recycle an allocated memory block. Pass size used to alloc it.
- * Does nothing if recycling is not enabled for the region.
+ * Set the current active region to REGION.
  */
-void region_recycle(region_type *region, void *block, size_t size);
+void region_set_current(region_type *region);
+
+
+/*
+ * Return the current active region.
+ */
+region_type *region_get_current(void);
+
+
+/*
+ * Allocate SIZE bytes of memory inside the currently active region.
+ * The memory is deallocated when region_free_all is called for the
+ * active region.  This is provided as an easy replacement of malloc.
+ */
+void *region_alloc_current(size_t size);
 
 /*
  * Print some REGION statistics to OUT.
  */
 void region_dump_stats(region_type *region, FILE *out);
-
-/* get size of recyclebin */
-size_t region_get_recycle_size(region_type* region);
-
-/* Debug print REGION statistics to LOG. */
-void region_log_stats(region_type *region);
 
 #endif /* _REGION_ALLOCATOR_H_ */

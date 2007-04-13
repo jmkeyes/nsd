@@ -2,7 +2,7 @@
 /*
  * zyparser.y -- yacc grammar for (DNS) zone files
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2004, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -33,17 +33,7 @@ static uint8_t nxtbits[16];
 /* still need to reset the bastard somewhere */
 static uint8_t nsecbits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE];
 
-/* hold the highest rcode seen in a NSEC rdata , BUG #106 */
-uint16_t nsec_highest_rcode;
-
 void yyerror(const char *message);
-
-#ifdef NSEC3
-/* parse nsec3 parameters and add the (first) rdata elements */
-static void
-nsec3_add_params(const char* hash_algo_str, const char* flag_str,
-	const char* iter_str, const char* salt_str, int salt_len);
-#endif /* NSEC3 */
 
 %}
 %union {
@@ -65,7 +55,6 @@ nsec3_add_params(const char* hash_algo_str, const char* flag_str,
 %token <type> T_GPOS T_EID T_NIMLOC T_ATMA T_NAPTR T_KX T_A6 T_DNAME T_SINK
 %token <type> T_OPT T_APL T_UINFO T_UID T_GID T_UNSPEC T_TKEY T_TSIG T_IXFR
 %token <type> T_AXFR T_MAILB T_MAILA T_DS T_SSHFP T_RRSIG T_NSEC T_DNSKEY
-%token <type> T_SPF T_NSEC3 T_IPSECKEY T_DHCID T_NSEC3PARAM
 
 /* other tokens */
 %token	       DOLLAR_TTL DOLLAR_ORIGIN NL SP
@@ -81,7 +70,7 @@ nsec3_add_params(const char* hash_algo_str, const char* flag_str,
 %type <domain>	owner dname abs_dname
 %type <dname>	rel_dname label
 %type <data>	concatenated_str_seq str_sp_seq str_dot_seq dotted_str
-%type <data>	nxt_seq nsec_more
+%type <data>	nxt_seq nsec_seq
 %type <unknown> rdata_unknown
 
 %%
@@ -327,29 +316,25 @@ nxt_seq:	STR
     }
     ;
 
-nsec_more:	SP nsec_more
-    {
-    }
-    |	NL
-    {
-    }
-    |	STR nsec_seq
+nsec_seq:	STR
     {
 	    uint16_t type = rrtype_from_string($1.str);
 	    if (type != 0) {
-                    if (type > nsec_highest_rcode) {
-                            nsec_highest_rcode = type;
-                    }
+		    set_bitnsec(nsecbits, type);
+	    } else {
+		    zc_error("bad type %d in NSEC record", (int) type);
+	    }
+    }
+    |	nsec_seq sp STR
+    {
+	    uint16_t type = rrtype_from_string($3.str);
+	    if (type != 0) {
 		    set_bitnsec(nsecbits, type);
 	    } else {
 		    zc_error("bad type %d in NSEC record", (int) type);
 	    }
     }
     ;
-
-nsec_seq:	NL
-	|	SP nsec_more
-	;
 
 /*
  * Sequence of STR tokens separated by spaces.	The spaces are not
@@ -389,21 +374,6 @@ str_dot_seq:	STR
  * A string that can contain dots.
  */
 dotted_str:	STR
-    |	'.'
-    {
-	$$.str = ".";
-	$$.len = 1;
-    }
-    |	dotted_str '.'
-    {
-	    char *result = (char *) region_alloc(parser->rr_region,
-						 $1.len + 2);
-	    memcpy(result, $1.str, $1.len);
-	    result[$1.len] = '.';
-	    $$.str = result;
-	    $$.len = $1.len + 1;
-	    $$.str[$$.len] = '\0';
-    }
     |	dotted_str '.' STR
     {
 	    char *result = (char *) region_alloc(parser->rr_region,
@@ -420,7 +390,8 @@ dotted_str:	STR
 /* define what we can parse */
 type_and_rdata:
     /*
-     * All supported RR types.	We don't support NULL and types marked obsolete.
+     * All supported RR types.	We don't support NULL and types marked
+     * obsolete.
      */
     	T_A sp rdata_a
     |	T_A sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
@@ -467,8 +438,6 @@ type_and_rdata:
     |	T_MX sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_TXT sp rdata_txt
     |	T_TXT sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_SPF sp rdata_txt
-    |	T_SPF sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_RP sp rdata_rp		/* RFC 1183 */
     |	T_RP sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_AFSDB sp rdata_afsdb	/* RFC 1183 */
@@ -477,17 +446,13 @@ type_and_rdata:
     |	T_X25 sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_ISDN sp rdata_isdn	/* RFC 1183 */
     |	T_ISDN sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_IPSECKEY sp rdata_ipseckey	/* RFC 4025 */
-    |	T_IPSECKEY sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_DHCID sp rdata_dhcid
-    |	T_DHCID sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_RT sp rdata_rt		/* RFC 1183 */
     |	T_RT sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_NSAP sp rdata_nsap	/* RFC 1706 */
     |	T_NSAP sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_SIG sp rdata_rrsig
+    |	T_SIG sp rdata_rrsig	/* XXX: Compatible format? */
     |	T_SIG sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_KEY sp rdata_dnskey
+    |	T_KEY sp rdata_dnskey	/* XXX: Compatible format? */
     |	T_KEY sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_PX sp rdata_px		/* RFC 2163 */
     |	T_PX sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
@@ -518,10 +483,6 @@ type_and_rdata:
     |	T_RRSIG sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_NSEC sp rdata_nsec
     |	T_NSEC sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_NSEC3 sp rdata_nsec3
-    |	T_NSEC3 sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_NSEC3PARAM sp rdata_nsec3_param
-    |	T_NSEC3PARAM sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_DNSKEY sp rdata_dnskey
     |	T_DNSKEY sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_UTYPE sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
@@ -560,7 +521,7 @@ rdata_soa:	dname sp dname sp STR sp STR sp STR sp STR sp STR trail
 	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $9.str)); /* retry */
 	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $11.str)); /* expire */
 	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $13.str)); /* minimum */
-
+	    
 	    /* [XXX] also store the minium in case of no TTL? */
 	    if ((parser->default_minimum = zparser_ttl2int($11.str)) == -1)
 		    parser->default_minimum = DEFAULT_TTL;
@@ -739,7 +700,7 @@ rdata_apl_seq:	dotted_str
 rdata_ds:	STR sp STR sp STR sp str_sp_seq trail
     {
 	    zadd_rdata_wireformat(zparser_conv_short(parser->region, $1.str)); /* keytag */
-	    zadd_rdata_wireformat(zparser_conv_algorithm(parser->region, $3.str)); /* alg */
+	    zadd_rdata_wireformat(zparser_conv_byte(parser->region, $3.str)); /* alg */
 	    zadd_rdata_wireformat(zparser_conv_byte(parser->region, $5.str)); /* type */
 	    zadd_rdata_wireformat(zparser_conv_hex(parser->region, $7.str, $7.len)); /* hash */
     }
@@ -753,16 +714,10 @@ rdata_sshfp:	STR sp STR sp str_sp_seq trail
     }
     ;
 
-rdata_dhcid:	str_sp_seq trail
-    {
-	    zadd_rdata_wireformat(zparser_conv_b64(parser->region, $1.str)); /* data blob */
-    }
-    ;
-
 rdata_rrsig:	STR sp STR sp STR sp STR sp STR sp STR sp STR sp dname sp str_sp_seq trail
     {
 	    zadd_rdata_wireformat(zparser_conv_rrtype(parser->region, $1.str)); /* rr covered */
-	    zadd_rdata_wireformat(zparser_conv_algorithm(parser->region, $3.str)); /* alg */
+	    zadd_rdata_wireformat(zparser_conv_byte(parser->region, $3.str)); /* alg */
 	    zadd_rdata_wireformat(zparser_conv_byte(parser->region, $5.str)); /* # labels */
 	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $7.str)); /* # orig TTL */
 	    zadd_rdata_wireformat(zparser_conv_time(parser->region, $9.str)); /* sig exp */
@@ -773,39 +728,14 @@ rdata_rrsig:	STR sp STR sp STR sp STR sp STR sp STR sp STR sp dname sp str_sp_se
     }
     ;
 
-rdata_nsec:	dname nsec_seq
+rdata_nsec:	dname sp nsec_seq trail
     {
 	    zadd_rdata_domain($1); /* nsec name */
 	    zadd_rdata_wireformat(zparser_conv_nsec(parser->region, nsecbits)); /* nsec bitlist */
 	    memset(nsecbits, 0, sizeof(nsecbits));
-            nsec_highest_rcode = 0;
     }
     ;
 
-rdata_nsec3:   STR sp STR sp STR sp STR sp STR nsec_seq
-    {
-#ifdef NSEC3
-	    nsec3_add_params($1.str, $3.str, $5.str, $7.str, $7.len);
-
-	    zadd_rdata_wireformat(zparser_conv_b32(parser->region, $9.str)); /* next hashed name */
-	    zadd_rdata_wireformat(zparser_conv_nsec(parser->region, nsecbits)); /* nsec bitlist */
-	    memset(nsecbits, 0, sizeof(nsecbits));
-	    nsec_highest_rcode = 0;
-#else
-	    zc_error_prev_line("nsec3 not supported");
-#endif /* NSEC3 */
-    }
-    ;
-
-rdata_nsec3_param:   STR sp STR sp STR sp STR trail
-    {
-#ifdef NSEC3
-	    nsec3_add_params($1.str, $3.str, $5.str, $7.str, $7.len);
-#else
-	    zc_error_prev_line("nsec3 not supported");
-#endif /* NSEC3 */
-    }
-    ;
 
 rdata_dnskey:	STR sp STR sp STR sp str_sp_seq trail
     {
@@ -814,47 +744,6 @@ rdata_dnskey:	STR sp STR sp STR sp str_sp_seq trail
 	    zadd_rdata_wireformat(zparser_conv_algorithm(parser->region, $5.str)); /* alg */
 	    zadd_rdata_wireformat(zparser_conv_b64(parser->region, $7.str)); /* hash */
     }
-    ;
-
-rdata_ipsec_base: STR sp STR sp STR sp dotted_str
-    {
-	    const dname_type* name = 0;
-	    zadd_rdata_wireformat(zparser_conv_byte(parser->region, $1.str)); /* precedence */
-	    zadd_rdata_wireformat(zparser_conv_byte(parser->region, $3.str)); /* gateway type */
-	    zadd_rdata_wireformat(zparser_conv_byte(parser->region, $5.str)); /* algorithm */
-	    switch(atoi($3.str)) {
-		case IPSECKEY_NOGATEWAY: 
-			zadd_rdata_wireformat(alloc_rdata_init(parser->region, "", 0));
-			break;
-		case IPSECKEY_IP4:
-			zadd_rdata_wireformat(zparser_conv_a(parser->region, $7.str));
-			break;
-		case IPSECKEY_IP6:
-			zadd_rdata_wireformat(zparser_conv_aaaa(parser->region, $7.str));
-			break;
-		case IPSECKEY_DNAME:
-			/* convert and insert the dname */
-			if(strlen($7.str) == 0)
-				zc_error_prev_line("IPSECKEY must specify gateway name");
-			if(!(name = dname_parse(parser->region, $7.str)))
-				zc_error_prev_line("IPSECKEY bad gateway dname %s", $7.str);
-			if($7.str[strlen($7.str)-1] != '.')
-				name = dname_concatenate(parser->rr_region, name, 
-					domain_dname(parser->origin));
-			zadd_rdata_wireformat(alloc_rdata_init(parser->region,
-				dname_name(name), name->name_size));
-			break;
-		default:
-			zc_error_prev_line("unknown IPSECKEY gateway type");
-	    }
-    }
-    ;
-
-rdata_ipseckey:	rdata_ipsec_base sp str_sp_seq trail
-    {
-	   zadd_rdata_wireformat(zparser_conv_b64(parser->region, $3.str)); /* public key */
-    }
-    | rdata_ipsec_base trail
     ;
 
 rdata_unknown:	URR sp STR sp str_sp_seq trail
@@ -893,11 +782,6 @@ zparser_create(region_type *region, region_type *rr_region, namedb_type *db)
 	result->rr_region = rr_region;
 	result->db = db;
 
-	result->filename = NULL;
-	result->current_zone = NULL;
-	result->origin = NULL;
-	result->prev_dname = NULL;
-
 	result->temporary_rdatas = (rdata_atom_type *) region_alloc(
 		result->region, MAXRDATALEN * sizeof(rdata_atom_type));
 
@@ -913,7 +797,6 @@ zparser_init(const char *filename, uint32_t ttl, uint16_t klass,
 {
 	memset(nxtbits, 0, sizeof(nxtbits));
 	memset(nsecbits, 0, sizeof(nsecbits));
-        nsec_highest_rcode = 0;
 
 	parser->default_ttl = ttl;
 	parser->default_minimum = 0;
@@ -938,13 +821,9 @@ yyerror(const char *message)
 static void
 error_va_list(unsigned line, const char *fmt, va_list args)
 {
-	if (parser->filename) {
-		fprintf(stderr, "%s:%u: ", parser->filename, line);
-	}
-	fprintf(stderr, "error: ");
+	fprintf(stderr, "%s:%u: error: ", parser->filename, line);
 	vfprintf(stderr, fmt, args);
 	fprintf(stderr, "\n");
-
 	++parser->errors;
 	parser->error_occurred = 1;
 }
@@ -974,10 +853,7 @@ zc_error(const char *fmt, ...)
 static void
 warning_va_list(unsigned line, const char *fmt, va_list args)
 {
-	if (parser->filename) {
-		fprintf(stderr, "%s:%u: ", parser->filename, line);
-	}
-	fprintf(stderr, "warning: ");
+	fprintf(stderr, "%s:%u: warning: ", parser->filename, line);
 	vfprintf(stderr, fmt, args);
 	fprintf(stderr, "\n");
 }
@@ -999,21 +875,3 @@ zc_warning(const char *fmt, ... )
 	warning_va_list(parser->line, fmt, args);
 	va_end(args);
 }
-
-#ifdef NSEC3
-static void
-nsec3_add_params(const char* hashalgo_str, const char* flag_str,
-	const char* iter_str, const char* salt_str, int salt_len)
-{
-	zadd_rdata_wireformat(zparser_conv_byte(parser->region, hashalgo_str));
-	zadd_rdata_wireformat(zparser_conv_byte(parser->region, flag_str));
-	zadd_rdata_wireformat(zparser_conv_short(parser->region, iter_str));
-
-	/* salt */
-	if(strcmp(salt_str, "-") != 0) 
-		zadd_rdata_wireformat(zparser_conv_hex_length(parser->region, 
-			salt_str, salt_len)); 
-	else 
-		zadd_rdata_wireformat(alloc_rdata_init(parser->region, "", 1));
-}
-#endif /* NSEC3 */
