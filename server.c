@@ -33,11 +33,8 @@
 #include "axfr.h"
 #include "namedb.h"
 #include "netio.h"
-#include "xfrd.h"
-#include "xfrd-tcp.h"
-#include "difffile.h"
-#include "nsec3.h"
-#include "ipc.h"
+#include "plugins.h"
+
 
 /*
  * Data for the UDP handlers.
@@ -155,14 +152,6 @@ static void handle_tcp_writing(netio_type *netio,
 			       netio_event_types_type event_types);
 
 /*
- * Send all children the quit nonblocking, then close pipe.
- */
-static void send_children_quit(struct nsd* nsd);
-
-/* set childrens flags to send NSD_STATS to them */
-static void set_children_stats(struct nsd* nsd);
-
-/*
  * Change the event types the HANDLERS are interested in to
  * EVENT_TYPES.
  */
@@ -170,19 +159,12 @@ static void configure_handler_event_types(size_t count,
 					  netio_handler_type *handlers,
 					  netio_event_types_type event_types);
 
-/*
- * start xfrdaemon (again).
- */
-static pid_t
-server_start_xfrd(struct nsd *nsd, netio_handler_type* handler);
 
-static uint16_t *compressed_dname_offsets = 0;
-static uint32_t compression_table_capacity = 0;
-static uint32_t compression_table_size = 0;
+static uint16_t *compressed_dname_offsets;
 
 /*
- * Remove the specified pid from the list of child pids.  Returns -1 if
- * the pid is not in the list, child_num otherwise.  The field is set to 0.
+ * Remove the specified pid from the list of child pids.  Returns 0 if
+ * the pid is not in the list, 1 otherwise.  The field is set to 0.
  */
 static int
 delete_child_pid(struct nsd *nsd, pid_t pid)
@@ -191,92 +173,30 @@ delete_child_pid(struct nsd *nsd, pid_t pid)
 	for (i = 0; i < nsd->child_count; ++i) {
 		if (nsd->children[i].pid == pid) {
 			nsd->children[i].pid = 0;
-			if(!nsd->children[i].need_to_exit) {
-				if(nsd->children[i].child_fd > 0) close(nsd->children[i].child_fd);
-				nsd->children[i].child_fd = -1;
-				if(nsd->children[i].handler) nsd->children[i].handler->fd = -1;
-			}
-			return i;
+			return 1;
 		}
 	}
-	return -1;
+	return 0;
 }
 
 /*
  * Restart child servers if necessary.
  */
 static int
-restart_child_servers(struct nsd *nsd, region_type* region, netio_type* netio,
-	int* xfrd_sock_p)
+restart_child_servers(struct nsd *nsd)
 {
-	struct main_ipc_handler_data *ipc_data;
 	size_t i;
-	int sv[2];
 
 	/* Fork the child processes... */
 	for (i = 0; i < nsd->child_count; ++i) {
 		if (nsd->children[i].pid <= 0) {
-			if (nsd->children[i].child_fd > 0)
-				close(nsd->children[i].child_fd);
-			if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == -1) {
-				log_msg(LOG_ERR, "socketpair: %s",
-					strerror(errno));
-				return -1;
-			}
-			nsd->children[i].child_fd = sv[0];
-			nsd->children[i].parent_fd = sv[1];
 			nsd->children[i].pid = fork();
 			switch (nsd->children[i].pid) {
-			default: /* SERVER MAIN */
-				close(nsd->children[i].parent_fd);
-				nsd->children[i].parent_fd = -1;
-				if(!nsd->children[i].handler)
-				{
-					ipc_data = (struct main_ipc_handler_data*) region_alloc(
-						region, sizeof(struct main_ipc_handler_data));
-					ipc_data->nsd = nsd;
-					ipc_data->child = &nsd->children[i];
-					ipc_data->child_num = i;
-					ipc_data->xfrd_sock = xfrd_sock_p;
-					ipc_data->packet = buffer_create(region, QIOBUFSZ);
-					ipc_data->forward_mode = 0;
-					ipc_data->got_bytes = 0;
-					ipc_data->total_bytes = 0;
-					ipc_data->acl_num = 0;
-					ipc_data->busy_writing_zone_state = 0;
-					ipc_data->write_conn = xfrd_tcp_create(region);
-					nsd->children[i].handler = (struct netio_handler*) region_alloc(
-						region, sizeof(struct netio_handler));
-					nsd->children[i].handler->fd = nsd->children[i].child_fd;
-					nsd->children[i].handler->timeout = NULL;
-					nsd->children[i].handler->user_data = ipc_data;
-					nsd->children[i].handler->event_types = NETIO_EVENT_READ;
-					nsd->children[i].handler->event_handler = parent_handle_child_command;
-					netio_add_handler(netio, nsd->children[i].handler);
-				}
-				/* clear any ongoing ipc */
-				ipc_data = (struct main_ipc_handler_data*)
-					nsd->children[i].handler->user_data;
-				ipc_data->forward_mode = 0;
-				ipc_data->busy_writing_zone_state = 0;
-				/* restart - update fd */
-				nsd->children[i].handler->fd = nsd->children[i].child_fd;
-				break;
 			case 0: /* CHILD */
+				nsd->server_kind = nsd->children[i].kind;
+				nsd->mode = NSD_RUN;
 				nsd->pid = 0;
 				nsd->child_count = 0;
-				nsd->server_kind = nsd->children[i].kind;
-				nsd->this_child = &nsd->children[i];
-				/* remove signal flags inherited from parent
-				   the parent will handle them. */
-				nsd->signal_hint_reload = 0;
-				nsd->signal_hint_child = 0;
-				nsd->signal_hint_quit = 0;
-				nsd->signal_hint_shutdown = 0;
-				nsd->signal_hint_stats = 0;
-				nsd->signal_hint_statsusr = 0;
-				close(nsd->this_child->child_fd);
-				nsd->this_child->child_fd = -1;
 				server_child(nsd);
 				/* NOTREACH */
 				exit(0);
@@ -290,38 +210,15 @@ restart_child_servers(struct nsd *nsd, region_type* region, netio_type* netio,
 	return 0;
 }
 
-#ifdef BIND8_STATS
-static void set_bind8_alarm(struct nsd* nsd)
-{
-	/* resync so that the next alarm is on the next whole minute */
-	if(nsd->st.period > 0) /* % by 0 gives divbyzero error */
-		alarm(nsd->st.period - (time(NULL) % nsd->st.period));
-}
-#endif
-
-static void
-cleanup_dname_compression_tables(void *ptr) 
-{
-	free(ptr);
-	compressed_dname_offsets = NULL;
-	compression_table_capacity = 0;
-}
-
 static void
 initialize_dname_compression_tables(struct nsd *nsd)
 {
-	size_t needed = domain_table_count(nsd->db->domains) + 1;
-	needed += EXTRA_DOMAIN_NUMBERS;
-	if(compression_table_capacity < needed) {
-		compressed_dname_offsets = (uint16_t *) xalloc(
-			needed * sizeof(uint16_t));
-		region_add_cleanup(nsd->db->region, cleanup_dname_compression_tables, 
-			compressed_dname_offsets);
-		compression_table_capacity = needed;
-		compression_table_size=domain_table_count(nsd->db->domains)+1;
-	}
-	memset(compressed_dname_offsets, 0, needed * sizeof(uint16_t));
+	compressed_dname_offsets = (uint16_t *) xalloc(
+		(domain_table_count(nsd->db->domains) + 1) * sizeof(uint16_t));
+	memset(compressed_dname_offsets, 0,
+	       (domain_table_count(nsd->db->domains) + 1) * sizeof(uint16_t));
 	compressed_dname_offsets[0] = QHEADERSZ; /* The original query name */
+	region_add_cleanup(nsd->db->region, free, compressed_dname_offsets);
 }
 
 /*
@@ -341,13 +238,9 @@ server_init(struct nsd *nsd)
 
 	/* Make a socket... */
 	for (i = 0; i < nsd->ifs; i++) {
-		if (!nsd->udp[i].addr) {
-			nsd->udp[i].s = -1;
-			continue;
-		}
 		if ((nsd->udp[i].s = socket(nsd->udp[i].addr->ai_family, nsd->udp[i].addr->ai_socktype, 0)) == -1) {
 #if defined(INET6)
-			if (nsd->udp[i].addr->ai_family == AF_INET6 &&
+			if (nsd->udp[i].addr->ai_family == AF_INET6 && 
 				errno == EAFNOSUPPORT && nsd->grab_ip6_optional) {
 				log_msg(LOG_WARNING, "fallback to UDP4, no IPv6: not supported");
 				continue;
@@ -389,12 +282,6 @@ server_init(struct nsd *nsd)
 # endif
 		}
 #endif
-		/* set it nonblocking */
-		/* otherwise, on OSes with thundering herd problems, the
-		   UDP recv could block NSD after select returns readable. */
-		if (fcntl(nsd->udp[i].s, F_SETFL, O_NONBLOCK) == -1) {
-			log_msg(LOG_ERR, "cannot fcntl udp: %s", strerror(errno));
-		}
 
 		/* Bind it... */
 		if (bind(nsd->udp[i].s, (struct sockaddr *) nsd->udp[i].addr->ai_addr, nsd->udp[i].addr->ai_addrlen) != 0) {
@@ -407,13 +294,9 @@ server_init(struct nsd *nsd)
 
 	/* Make a socket... */
 	for (i = 0; i < nsd->ifs; i++) {
-		if (!nsd->tcp[i].addr) {
-			nsd->tcp[i].s = -1;
-			continue;
-		}
 		if ((nsd->tcp[i].s = socket(nsd->tcp[i].addr->ai_family, nsd->tcp[i].addr->ai_socktype, 0)) == -1) {
 #if defined(INET6)
-			if (nsd->tcp[i].addr->ai_family == AF_INET6 &&
+			if (nsd->tcp[i].addr->ai_family == AF_INET6 && 
 				errno == EAFNOSUPPORT && nsd->grab_ip6_optional) {
 				log_msg(LOG_WARNING, "fallback to TCP4, no IPv6: not supported");
 				continue;
@@ -438,12 +321,6 @@ server_init(struct nsd *nsd)
 			return -1;
 		}
 #endif
-		/* set it nonblocking */
-		/* (StevensUNP p463), if tcp listening socket is blocking, then
-		   it may block in accept, even if select() says readable. */
-		if (fcntl(nsd->tcp[i].s, F_SETFL, O_NONBLOCK) == -1) {
-			log_msg(LOG_ERR, "cannot fcntl tcp: %s", strerror(errno));
-		}
 
 		/* Bind it... */
 		if (bind(nsd->tcp[i].s, (struct sockaddr *) nsd->tcp[i].addr->ai_addr, nsd->tcp[i].addr->ai_addrlen) != 0) {
@@ -465,8 +342,6 @@ server_init(struct nsd *nsd)
 
 		nsd->dbfile += l;
 		nsd->pidfile += l;
-		nsd->options->xfrdfile += l;
-		nsd->options->difffile += l;
 
 		if (chroot(nsd->chrootdir)) {
 			log_msg(LOG_ERR, "unable to chroot: %s", strerror(errno));
@@ -482,24 +357,17 @@ server_init(struct nsd *nsd)
 	}
 
 	/* Open the database... */
-	if ((nsd->db = namedb_open(nsd->dbfile, nsd->options, nsd->child_count)) == NULL) {
+	if ((nsd->db = namedb_open(nsd->dbfile)) == NULL) {
 		return -1;
 	}
-	if(!diff_read_file(nsd->db, nsd->options, NULL, nsd->child_count))
-	{
-		log_msg(LOG_ERR, "The diff file contains errors. Will continue without it");
-	}
-#ifdef NSEC3
-	prehash(nsd->db, 0);
-#endif
 
-	compression_table_capacity = 0;
 	initialize_dname_compression_tables(nsd);
 	
 #ifdef	BIND8_STATS
 	/* Initialize times... */
 	time(&nsd->st.boot);
-	set_bind8_alarm(nsd);
+	if(nsd->st.period > 0)
+		alarm(nsd->st.period - (time(NULL) % nsd->st.period));
 #endif /* BIND8_STATS */
 
 	return 0;
@@ -509,8 +377,7 @@ server_init(struct nsd *nsd)
  * Fork the required number of servers.
  */
 static int
-server_start_children(struct nsd *nsd, region_type* region, netio_type* netio,
-	int* xfrd_sock_p)
+server_start_children(struct nsd *nsd)
 {
 	size_t i;
 
@@ -519,7 +386,7 @@ server_start_children(struct nsd *nsd, region_type* region, netio_type* netio,
 		nsd->children[i].pid = 0;
 	}
 
-	return restart_child_servers(nsd, region, netio, xfrd_sock_p);
+	return restart_child_servers(nsd);
 }
 
 static void
@@ -544,320 +411,10 @@ close_all_sockets(struct nsd_socket sockets[], size_t n)
 static void
 server_shutdown(struct nsd *nsd)
 {
-	size_t i;
-
 	close_all_sockets(nsd->udp, nsd->ifs);
 	close_all_sockets(nsd->tcp, nsd->ifs);
-	/* CHILD: close command channel to parent */
-	if(nsd->this_child && nsd->this_child->parent_fd > 0)
-	{
-		close(nsd->this_child->parent_fd);
-		nsd->this_child->parent_fd = -1;
-	}
-	/* SERVER: close command channels to children */
-	if(!nsd->this_child)
-	{
-		for(i=0; i<nsd->child_count; ++i)
-			if(nsd->children[i].child_fd > 0)
-			{
-				close(nsd->children[i].child_fd);
-				nsd->children[i].child_fd = -1;
-			}
-	}
 
 	exit(0);
-}
-
-static pid_t
-server_start_xfrd(struct nsd *nsd, netio_handler_type* handler)
-{
-	pid_t pid;
-	int sockets[2] = {0,0};
-	zone_type* zone;
-	struct ipc_handler_conn_data *data;
-	/* no need to send updates for zones, because xfrd will read from fork-memory */
-	for(zone = nsd->db->zones; zone; zone=zone->next) {
-		zone->updated = 0;
-	}
-
-	if(handler->fd != -1) close(handler->fd);
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == -1) {
-		log_msg(LOG_ERR, "startxfrd failed on socketpair: %s", strerror(errno));
-		return -1;
-	}
-	pid = fork();
-	switch (pid) {
-	case -1:
-		log_msg(LOG_ERR, "fork xfrd failed: %s", strerror(errno));
-		break;
-	case 0:
-		/* CHILD */
-		close(sockets[0]);
-		xfrd_init(sockets[1], nsd);
-		/* ENOTREACH */
-		break;
-	default:
-		/* PARENT */
-		close(sockets[1]);
-		handler->fd = sockets[0];
-		break;
-	}
-	handler->timeout = NULL;
-	handler->event_types = NETIO_EVENT_READ;
-	handler->event_handler = parent_handle_xfrd_command;
-	/* clear ongoing ipc reads */
-	data = (struct ipc_handler_conn_data *) handler->user_data;
-	data->conn->is_reading = 0;
-	return pid;
-}
-
-/* pass timeout=-1 for blocking. Returns size, 0, -1(err), or -2(timeout) */
-static ssize_t 
-block_read(struct nsd* nsd, int s, void* p, ssize_t sz, int timeout)
-{
-	uint8_t* buf = (uint8_t*) p;
-	ssize_t total = 0;
-	fd_set rfds;
-	struct timeval tv;
-	FD_ZERO(&rfds);
-
-	while( total < sz) {
-		ssize_t ret;
-		FD_SET(s, &rfds);
-		tv.tv_sec = timeout;
-		tv.tv_usec = 0;
-		ret = select(s+1, &rfds, NULL, NULL, timeout==-1?NULL:&tv);
-		if(ret == -1) {
-			if(errno == EAGAIN)
-				/* blocking read */
-				continue;
-			if(errno == EINTR) {
-				if(nsd->signal_hint_quit || nsd->signal_hint_shutdown)
-					return -1;
-				/* other signals can be handled later */
-				continue;
-			}
-			/* some error */
-			return -1;
-		}
-		if(ret == 0) {
-			/* operation timed out */
-			return -2;
-		}
-		ret = read(s, buf+total, sz-total);
-		if(ret == -1) {
-			if(errno == EAGAIN)
-				/* blocking read */
-				continue;
-			if(errno == EINTR) {
-				if(nsd->signal_hint_quit || nsd->signal_hint_shutdown)
-					return -1;
-				/* other signals can be handled later */
-				continue;
-			}
-			/* some error */
-			return -1;
-		}
-		if(ret == 0) {
-			/* closed connection! */
-			return 0;
-		}
-		total += ret;
-	}
-	return total;
-}
-
-/*
- * Reload the database, stop parent, re-fork children and continue.
- * as server_main.
- */
-static void
-server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio, 
-	int cmdsocket, int* xfrd_sock_p)
-{
-	pid_t old_pid;
-	sig_atomic_t cmd = NSD_QUIT_SYNC;
-	zone_type* zone;
-	int xfrd_sock = *xfrd_sock_p;
-	int ret;
-
-	if(db_crc_different(nsd->db) == 0) {
-		DEBUG(DEBUG_XFRD,1, (LOG_INFO, 
-			"CRC the same. skipping %s.", nsd->db->filename));
-	} else {
-		DEBUG(DEBUG_XFRD,1, (LOG_INFO, 
-			"CRC different. reread of %s.", nsd->db->filename));
-		namedb_close(nsd->db);
-		if ((nsd->db = namedb_open(nsd->dbfile, nsd->options, 
-			nsd->child_count)) == NULL) {
-			log_msg(LOG_ERR, "unable to reload the database: %s", strerror(errno));
-			exit(1);
-		}
-	}
-	if(!diff_read_file(nsd->db, nsd->options, NULL, nsd->child_count)) {
-			log_msg(LOG_ERR, "unable to load the diff file: %s", nsd->options->difffile);
-			exit(1);
-	}
-	log_msg(LOG_INFO, "memory recyclebin holds %lu bytes", (unsigned long)
-		region_get_recycle_size(nsd->db->region));
-#ifndef NDEBUG
-	if(nsd_debug_level >= 1)
-		region_log_stats(nsd->db->region);
-#endif
-#ifdef NSEC3
-	prehash(nsd->db, 1);
-#endif
-
-	initialize_dname_compression_tables(nsd);
-
-	old_pid = nsd->pid;
-	nsd->pid = getpid();
-
-#ifdef BIND8_STATS
-	/* Restart dumping stats if required.  */
-	time(&nsd->st.boot);
-	set_bind8_alarm(nsd);
-#endif
-
-	if (server_start_children(nsd, server_region, netio, xfrd_sock_p) != 0) {
-		send_children_quit(nsd);
-		exit(1);
-	}
-
-#define RELOAD_SYNC_TIMEOUT 25 /* seconds */
-	/* Send quit command to parent: blocking, wait for receipt. */
-	do {
-		DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: ipc send quit to main"));
-		if (write_socket(cmdsocket, &cmd, sizeof(cmd)) == -1)
-		{
-			log_msg(LOG_ERR, "problems sending command from reload %d to oldnsd %d: %s",
-				(int)nsd->pid, (int)old_pid, strerror(errno));
-		}
-		/* blocking: wait for parent to really quit. (it sends RELOAD as ack) */
-		DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: ipc wait for ack main"));
-		ret = block_read(nsd, cmdsocket, &cmd, sizeof(cmd), 
-			RELOAD_SYNC_TIMEOUT);
-		if(ret == -2) {
-			DEBUG(DEBUG_IPC, 1, (LOG_ERR, "reload timeout QUITSYNC. retry"));
-		}
-	} while (ret == -2);
-	if(ret == -1) {
-		log_msg(LOG_ERR, "reload: could not wait for parent to quit: %s",
-			strerror(errno));
-	}
-	DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: ipc reply main %d %d", ret, cmd));
-	assert(ret==-1 || ret == 0 || cmd == NSD_RELOAD);
-
-	/* Overwrite pid... */
-	if (writepid(nsd) == -1) {
-		log_msg(LOG_ERR, "cannot overwrite the pidfile %s: %s", nsd->pidfile, strerror(errno));
-	}
-
-	/* inform xfrd of new SOAs */
-	cmd = NSD_SOA_BEGIN;
-	if(!write_socket(xfrd_sock, &cmd,  sizeof(cmd))) {
-		log_msg(LOG_ERR, "problems sending soa begin from reload %d to xfrd: %s",
-			(int)nsd->pid, strerror(errno));
-	}
-	for(zone= nsd->db->zones; zone; zone = zone->next) {
-		uint16_t sz;
-		const dname_type *dname_ns=0, *dname_em=0;
-		if(zone->updated == 0)
-			continue;
-		DEBUG(DEBUG_IPC,1, (LOG_INFO, "nsd: sending soa info for zone %s",
-			dname_to_string(domain_dname(zone->apex),0)));
-		cmd = NSD_SOA_INFO;
-		sz = dname_total_size(domain_dname(zone->apex));
-		if(zone->soa_rrset) {
-			dname_ns = domain_dname(
-				rdata_atom_domain(zone->soa_rrset->rrs[0].rdatas[0]));
-			dname_em = domain_dname(
-				rdata_atom_domain(zone->soa_rrset->rrs[0].rdatas[1]));
-			sz += sizeof(uint32_t)*6 + sizeof(uint8_t)*2
-				+ dname_ns->name_size + dname_em->name_size;
-		}
-		sz = htons(sz);
-		/* use blocking writes */
-		if(!write_socket(xfrd_sock, &cmd,  sizeof(cmd)) ||
-			!write_socket(xfrd_sock, &sz, sizeof(sz)) ||
-			!write_socket(xfrd_sock, domain_dname(zone->apex), 
-				dname_total_size(domain_dname(zone->apex))))
-		{
-			log_msg(LOG_ERR, "problems sending soa info from reload %d to xfrd: %s",
-				(int)nsd->pid, strerror(errno));
-		}
-		if(zone->soa_rrset) {
-			uint32_t ttl = htonl(zone->soa_rrset->rrs[0].ttl);
-			assert(dname_ns && dname_em);
-			assert(zone->soa_rrset->rr_count > 0);
-			assert(rrset_rrtype(zone->soa_rrset) == TYPE_SOA);
-			assert(zone->soa_rrset->rrs[0].rdata_count == 7);
-			if(!write_socket(xfrd_sock, &ttl, sizeof(uint32_t))
-			   || !write_socket(xfrd_sock, &dname_ns->name_size, sizeof(uint8_t))
-			   || !write_socket(xfrd_sock, dname_name(dname_ns), dname_ns->name_size)
-			   || !write_socket(xfrd_sock, &dname_em->name_size, sizeof(uint8_t))
-			   || !write_socket(xfrd_sock, dname_name(dname_em), dname_em->name_size)
-			   || !write_socket(xfrd_sock, rdata_atom_data(
-				zone->soa_rrset->rrs[0].rdatas[2]), sizeof(uint32_t))
-			   || !write_socket(xfrd_sock, rdata_atom_data(
-				zone->soa_rrset->rrs[0].rdatas[3]), sizeof(uint32_t))
-			   || !write_socket(xfrd_sock, rdata_atom_data(
-				zone->soa_rrset->rrs[0].rdatas[4]), sizeof(uint32_t))
-			   || !write_socket(xfrd_sock, rdata_atom_data(
-				zone->soa_rrset->rrs[0].rdatas[5]), sizeof(uint32_t))
-			   || !write_socket(xfrd_sock, rdata_atom_data(
-				zone->soa_rrset->rrs[0].rdatas[6]), sizeof(uint32_t)))
-			{
-				log_msg(LOG_ERR, "problems sending soa info from reload %d to xfrd: %s",
-				(int)nsd->pid, strerror(errno));
-			}
-		}
-		zone->updated = 0;
-	}
-	cmd = NSD_SOA_END;
-	if(!write_socket(xfrd_sock, &cmd,  sizeof(cmd))) {
-		log_msg(LOG_ERR, "problems sending soa end from reload %d to xfrd: %s",
-			(int)nsd->pid, strerror(errno));
-	}
-	DEBUG(DEBUG_IPC,2, (LOG_INFO, "Reload exiting to become new main"));
-	/* exit reload, continue as new server_main */
-}
-
-/*
- * Get the mode depending on the signal hints that have been received.
- * Multiple signal hints can be received and will be handled in turn.
- */
-static sig_atomic_t
-server_signal_mode(struct nsd *nsd)
-{
-	if(nsd->signal_hint_quit) {
-		nsd->signal_hint_quit = 0;
-		return NSD_QUIT;
-	}
-	else if(nsd->signal_hint_shutdown) {
-		nsd->signal_hint_shutdown = 0;
-		return NSD_SHUTDOWN;
-	}
-	else if(nsd->signal_hint_child) {
-		nsd->signal_hint_child = 0;
-		return NSD_REAP_CHILDREN;
-	}
-	else if(nsd->signal_hint_reload) {
-		nsd->signal_hint_reload = 0;
-		return NSD_RELOAD;
-	}
-	else if(nsd->signal_hint_stats) {
-		nsd->signal_hint_stats = 0;
-#ifdef BIND8_STATS
-		set_bind8_alarm(nsd);
-#endif
-		return NSD_STATS;
-	}
-	else if(nsd->signal_hint_statsusr) {
-		nsd->signal_hint_statsusr = 0;
-		return NSD_STATS;
-	}
-	return NSD_RUN;
 }
 
 /*
@@ -867,104 +424,48 @@ server_signal_mode(struct nsd *nsd)
 void
 server_main(struct nsd *nsd)
 {
-        region_type *server_region = region_create(xalloc, free);
-	netio_type *netio = netio_create(server_region);
-	netio_handler_type reload_listener;
-	netio_handler_type xfrd_listener;
-	int reload_sockets[2] = {-1, -1};
-	struct timespec timeout_spec;
 	int fd;
 	int status;
 	pid_t child_pid;
 	pid_t reload_pid = -1;
-	pid_t xfrd_pid = -1;
+	pid_t old_pid;
 	sig_atomic_t mode;
 	
 	assert(nsd->server_kind == NSD_SERVER_MAIN);
 
-	xfrd_listener.user_data = (struct ipc_handler_conn_data*)region_alloc(
-		server_region, sizeof(struct ipc_handler_conn_data));
-	xfrd_listener.fd = -1;
-	((struct ipc_handler_conn_data*)xfrd_listener.user_data)->nsd = nsd;
-	((struct ipc_handler_conn_data*)xfrd_listener.user_data)->conn = 
-		xfrd_tcp_create(server_region);
-	xfrd_pid = server_start_xfrd(nsd, &xfrd_listener);
-	netio_add_handler(netio, &xfrd_listener);
-	if (server_start_children(nsd, server_region, netio, &xfrd_listener.fd) != 0) {
-		send_children_quit(nsd);
+	if (server_start_children(nsd) != 0) {
+		kill(nsd->pid, SIGTERM);
 		exit(1);
 	}
-	reload_listener.fd = -1;
-	assert(nsd->this_child == 0);
 
 	while ((mode = nsd->mode) != NSD_SHUTDOWN) {
-
-		if(mode == NSD_RUN) {
-			nsd->mode = mode = server_signal_mode(nsd);
-		}
-
 		switch (mode) {
 		case NSD_RUN:
-			/* see if any child processes terminated */
-			while((child_pid = waitpid(0, &status, WNOHANG)) != -1 && child_pid != 0) {
+			child_pid = waitpid(0, &status, 0);
+		
+			if (child_pid == -1) {
+				if (errno == EINTR) {
+					continue;
+				}
+				log_msg(LOG_WARNING, "wait failed: %s", strerror(errno));
+			} else {
 				int is_child = delete_child_pid(nsd, child_pid);
-				if (is_child != -1 && nsd->children[is_child].need_to_exit) {
-					if(nsd->children[is_child].child_fd == -1)
-						nsd->children[is_child].has_exited = 1;
-					parent_check_all_children_exited(nsd);
-				} else if(is_child != -1) {
+				if (is_child) {
 					log_msg(LOG_WARNING,
 					       "server %d died unexpectedly with status %d, restarting",
 					       (int) child_pid, status);
-					restart_child_servers(nsd, server_region, netio, 
-						&xfrd_listener.fd);
+					restart_child_servers(nsd);
 				} else if (child_pid == reload_pid) {
-					sig_atomic_t cmd = NSD_SOA_END;
 					log_msg(LOG_WARNING,
 					       "Reload process %d failed with status %d, continuing with old database",
 					       (int) child_pid, status);
 					reload_pid = -1;
-					if(reload_listener.fd > 0) close(reload_listener.fd);
-					reload_listener.fd = -1;
-					reload_listener.event_types = NETIO_EVENT_NONE;
-					/* inform xfrd reload attempt ended */
-					if(!write_socket(xfrd_listener.fd, 
-						&cmd, sizeof(cmd)) == -1) { 
-						log_msg(LOG_ERR, "problems "
-						  "sending SOAEND to xfrd: %s", 
-						  strerror(errno)); 
-					}
-				} else if (child_pid == xfrd_pid) {
-					log_msg(LOG_WARNING,
-					       "xfrd process %d failed with status %d, restarting ",
-					       (int) child_pid, status);
-					xfrd_pid = server_start_xfrd(nsd, &xfrd_listener);
 				} else {
 					log_msg(LOG_WARNING,
 					       "Unknown child %d terminated with status %d",
 					       (int) child_pid, status);
 				}
 			}
-			if (child_pid == -1) {
-				if (errno == EINTR) {
-					continue;
-				}
-				log_msg(LOG_WARNING, "wait failed: %s", strerror(errno));
-			}
-			if (nsd->mode != NSD_RUN)
-				break;
-
-			/* timeout to collect processes. In case no sigchild happens. */
-			timeout_spec.tv_sec = 60; 
-			timeout_spec.tv_nsec = 0;
-
-			/* listen on ports, timeout for collecting terminated children */
-			if(netio_dispatch(netio, &timeout_spec, 0) == -1) {
-				if (errno != EINTR) {
-					log_msg(LOG_ERR, "netio_dispatch failed: %s", strerror(errno));
-				}
-			}
-
 			break;
 		case NSD_RELOAD:
 			nsd->mode = NSD_RUN;
@@ -977,11 +478,6 @@ server_main(struct nsd *nsd)
 
 			log_msg(LOG_WARNING, "signal received, reloading...");
 
-			if (socketpair(AF_UNIX, SOCK_STREAM, 0, reload_sockets) == -1) {
-				log_msg(LOG_ERR, "reload failed on socketpair: %s", strerror(errno));
-				reload_pid = -1;
-				break;
-			}
 			reload_pid = fork();
 			switch (reload_pid) {
 			case -1:
@@ -989,80 +485,61 @@ server_main(struct nsd *nsd)
 				break;
 			case 0:
 				/* CHILD */
-				close(reload_sockets[0]);
-				server_reload(nsd, server_region, netio, 
-					reload_sockets[1], &xfrd_listener.fd);
-				DEBUG(DEBUG_IPC,2, (LOG_INFO, "Reload exited to become new main"));
-				close(reload_sockets[1]);
-				DEBUG(DEBUG_IPC,2, (LOG_INFO, "Reload closed"));
-				/* drop stale xfrd ipc data */
-				((struct ipc_handler_conn_data*)xfrd_listener.user_data)
-					->conn->is_reading = 0;
+
+				namedb_close(nsd->db);
+				if ((nsd->db = namedb_open(nsd->dbfile)) == NULL) {
+					log_msg(LOG_ERR, "unable to reload the database: %s", strerror(errno));
+					exit(1);
+				}
+
+				initialize_dname_compression_tables(nsd);
+	
+#ifdef PLUGINS
+				if (plugin_database_reloaded() != NSD_PLUGIN_CONTINUE) {
+					log_msg(LOG_ERR, "plugin reload failed");
+					exit(1);
+				}
+#endif /* PLUGINS */
+
+				old_pid = nsd->pid;
+				nsd->pid = getpid();
 				reload_pid = -1;
-				reload_listener.fd = -1;
-				reload_listener.event_types = NETIO_EVENT_NONE;
-				DEBUG(DEBUG_IPC,2, (LOG_INFO, "Reload resetup; run"));
+
+#ifdef BIND8_STATS
+				/* Restart dumping stats if required.  */
+				time(&nsd->st.boot);
+				if(nsd->st.period > 0)
+					alarm(nsd->st.period - (time(NULL) % nsd->st.period));
+#endif
+
+				if (server_start_children(nsd) != 0) {
+					kill(nsd->pid, SIGTERM);
+					exit(1);
+				}
+
+				/* Send SIGINT to terminate the parent quitely... */
+				if (kill(old_pid, SIGINT) != 0) {
+					log_msg(LOG_ERR, "cannot kill %d: %s",
+						(int) old_pid, strerror(errno));
+					exit(1);
+				}
+
+				/* Overwrite pid... */
+				if (writepid(nsd) == -1) {
+					log_msg(LOG_ERR, "cannot overwrite the pidfile %s: %s", nsd->pidfile, strerror(errno));
+				}
+
 				break;
 			default:
 				/* PARENT */
-				close(reload_sockets[1]);
-				reload_listener.fd = reload_sockets[0];
-				reload_listener.timeout = NULL;
-				reload_listener.user_data = nsd;
-				reload_listener.event_types = NETIO_EVENT_READ;
-				reload_listener.event_handler = parent_handle_reload_command; /* listens to Quit */
-				netio_add_handler(netio, &reload_listener);
 				break;
 			}
 			break;
-		case NSD_QUIT_SYNC: 
-			/* synchronisation of xfrd, parent and reload */
-			if(!nsd->quit_sync_done && reload_listener.fd > 0) {
-				sig_atomic_t cmd = NSD_RELOAD;
-				/* stop xfrd ipc writes in progress */
-				DEBUG(DEBUG_IPC,1, (LOG_INFO, 
-					"main: ipc send indication reload"));
-				if(!write_socket(xfrd_listener.fd, &cmd, sizeof(cmd))) {
-					log_msg(LOG_ERR, "server_main: could not send reload "
-					"indication to xfrd: %s", strerror(errno));
-				}
-				/* wait for ACK from xfrd */
-				DEBUG(DEBUG_IPC,1, (LOG_INFO, "main: wait ipc reply xfrd"));
-				nsd->quit_sync_done = 1;
-			}
-			nsd->mode = NSD_RUN;
-			break;
-		case NSD_QUIT: 
-			/* silent shutdown during reload */
-			if(reload_listener.fd > 0) {
-				/* acknowledge the quit, to sync reload that we will really quit now */
-				sig_atomic_t cmd = NSD_RELOAD;
-				DEBUG(DEBUG_IPC,1, (LOG_INFO, "main: ipc ack reload"));
-				if(!write_socket(reload_listener.fd, &cmd, sizeof(cmd))) {
-					log_msg(LOG_ERR, "server_main: "
-						"could not ack quit: %s", strerror(errno));
-				}
-				close(reload_listener.fd);
-			}
-			/* only quit children after xfrd has acked */
-			send_children_quit(nsd);
-			region_destroy(server_region);
+		case NSD_QUIT:
 			server_shutdown(nsd);
-			/* ENOTREACH */
 			break;
 		case NSD_SHUTDOWN:
-			send_children_quit(nsd);
 			log_msg(LOG_WARNING, "signal received, shutting down...");
-			break;
-		case NSD_REAP_CHILDREN:
-			/* continue; wait for child in run loop */
-			nsd->mode = NSD_RUN;
-			break;
-		case NSD_STATS:
-#ifdef BIND8_STATS
-			set_children_stats(nsd);
-#endif
-			nsd->mode = NSD_RUN;
 			break;
 		default:
 			log_msg(LOG_WARNING, "NSD main server mode invalid: %d", nsd->mode);
@@ -1071,6 +548,10 @@ server_main(struct nsd *nsd)
 		}
 	}
 
+#ifdef PLUGINS
+	plugin_finalize_all();
+#endif /* PLUGINS */
+	
 	/* Truncate the pid file.  */
 	if ((fd = open(nsd->pidfile, O_WRONLY | O_TRUNC, 0644)) == -1) {
 		log_msg(LOG_ERR, "can not truncate the pid file %s: %s", nsd->pidfile, strerror(errno));
@@ -1080,27 +561,42 @@ server_main(struct nsd *nsd)
 	/* Unlink it if possible... */
 	unlink(nsd->pidfile);
 
-	if(reload_listener.fd > 0) close(reload_listener.fd);
-	if(xfrd_listener.fd > 0) {
-		/* complete quit, stop xfrd */
-		sig_atomic_t cmd = NSD_QUIT;
-		DEBUG(DEBUG_IPC,1, (LOG_INFO, 
-			"main: ipc send quit to xfrd"));
-		if(!write_socket(xfrd_listener.fd, &cmd, sizeof(cmd))) {
-			log_msg(LOG_ERR, "server_main: could not send quit to xfrd: %s", 
-				strerror(errno));
-		}
-		fsync(xfrd_listener.fd);
-		close(xfrd_listener.fd);
-	}
-	region_destroy(server_region);
 	server_shutdown(nsd);
 }
 
 static query_state_type
-server_process_query(struct nsd *nsd, struct query *query)
+process_query(struct nsd *nsd, struct query *query)
 {
+#ifdef PLUGINS
+	query_state_type rc;
+	nsd_plugin_callback_args_type callback_args;
+	nsd_plugin_callback_result_type callback_result;
+	
+	callback_args.query = query;
+	callback_args.data = NULL;
+	callback_args.result_code = NSD_RC_OK;
+
+	callback_result = query_received_callbacks(&callback_args, NULL);
+	if (callback_result != NSD_PLUGIN_CONTINUE) {
+		return handle_callback_result(callback_result, &callback_args);
+	}
+
+	rc = query_process(query, nsd);
+	if (rc == QUERY_PROCESSED) {
+		callback_args.data = NULL;
+		callback_args.result_code = NSD_RC_OK;
+
+		callback_result = query_processed_callbacks(
+			&callback_args,
+			query->domain ? query->domain->plugin_data : NULL);
+		if (callback_result != NSD_PLUGIN_CONTINUE) {
+			return handle_callback_result(callback_result, &callback_args);
+		}
+	}
+	return rc;
+#else /* !PLUGINS */
 	return query_process(query, nsd);
+#endif /* !PLUGINS */
 }
 
 
@@ -1125,23 +621,6 @@ server_child(struct nsd *nsd)
 		close_all_sockets(nsd->udp, nsd->ifs);
 	}
 	
-	if (nsd->this_child && nsd->this_child->parent_fd != -1) {
-		netio_handler_type *handler;
-
-		handler = (netio_handler_type *) region_alloc(
-			server_region, sizeof(netio_handler_type));
-		handler->fd = nsd->this_child->parent_fd;
-		handler->timeout = NULL;
-		handler->user_data = (struct ipc_handler_conn_data*)region_alloc(
-			server_region, sizeof(struct ipc_handler_conn_data));
-		((struct ipc_handler_conn_data*)handler->user_data)->nsd = nsd;
-		((struct ipc_handler_conn_data*)handler->user_data)->conn =
-			xfrd_tcp_create(server_region);
-		handler->event_types = NETIO_EVENT_READ;
-		handler->event_handler = child_handle_parent_command;
-		netio_add_handler(netio, handler);
-	}
-
 	if (nsd->server_kind & NSD_SERVER_UDP) {
 		for (i = 0; i < nsd->ifs; ++i) {
 			struct udp_handler_data *data;
@@ -1151,8 +630,7 @@ server_child(struct nsd *nsd)
 				server_region,
 				sizeof(struct udp_handler_data));
 			data->query = query_create(
-				server_region, compressed_dname_offsets, 
-				compression_table_size);
+				server_region, compressed_dname_offsets);
 			data->nsd = nsd;
 			data->socket = &nsd->udp[i];
 
@@ -1199,7 +677,6 @@ server_child(struct nsd *nsd)
 	
 	/* The main loop... */	
 	while ((mode = nsd->mode) != NSD_QUIT) {
-		if(mode == NSD_RUN) nsd->mode = mode = server_signal_mode(nsd);
 
 		/* Do we need to do the statistics... */
 		if (mode == NSD_STATS) {
@@ -1212,34 +689,13 @@ server_child(struct nsd *nsd)
 
 			nsd->mode = NSD_RUN;
 		}
-		else if (mode == NSD_REAP_CHILDREN) {
-			/* got signal, notify parent. parent reaps terminated children. */
-			if (nsd->this_child->parent_fd > 0) {
-				sig_atomic_t parent_notify = NSD_REAP_CHILDREN;
-				if (write(nsd->this_child->parent_fd,
-				    &parent_notify, 
-				    sizeof(parent_notify)) == -1)
-				{
-					log_msg(LOG_ERR, "problems sending command from %d to parent: %s",
-						(int) nsd->this_child->pid, strerror(errno));
-				}
-			} else while (waitpid(0, NULL, WNOHANG) > 0) /* no parent, so reap 'em */;
-			nsd->mode = NSD_RUN;
-		}
-		else if(mode == NSD_RUN) {
-			/* Wait for a query... */
-			if (netio_dispatch(netio, NULL, NULL) == -1) {
-				if (errno != EINTR) {
-					log_msg(LOG_ERR, "netio_dispatch failed: %s", strerror(errno));
-					break;
-				}
+
+		/* Wait for a query... */
+		if (netio_dispatch(netio, NULL, NULL) == -1) {
+			if (errno != EINTR) {
+				log_msg(LOG_ERR, "netio_dispatch failed: %s", strerror(errno));
+				break;
 			}
-		} else if(mode == NSD_QUIT) {
-			/* ignore here, quit */
-		} else {
-			log_msg(LOG_ERR, "mode bad value %d, back to service.", 
-				mode);
-			nsd->mode = NSD_RUN;
 		}
 	}
 
@@ -1293,7 +749,7 @@ handle_udp(netio_type *ATTR_UNUSED(netio),
 		buffer_flip(q->packet);
 
 		/* Process and answer the query... */
-		if (server_process_query(data->nsd, q) != QUERY_DISCARDED) {
+		if (process_query(data->nsd, q) != QUERY_DISCARDED) {
 			if (RCODE(q->packet) == RCODE_OK && !AA(q->packet))
 				STATUP(data->nsd, nona);
 
@@ -1421,13 +877,13 @@ handle_tcp_reading(netio_type *netio,
 		 *   + Query type         (2)
 		 */
 		if (data->query->tcplen < QHEADERSZ + 1 + sizeof(uint16_t) + sizeof(uint16_t)) {
-			VERBOSITY(2, (LOG_WARNING, "packet too small, dropping tcp connection"));
+			log_msg(LOG_WARNING, "dropping bogus tcp connection");
 			cleanup_tcp_handler(netio, handler);
 			return;
 		}
 
 		if (data->query->tcplen > data->query->maxlen) {
-			VERBOSITY(2, (LOG_WARNING, "insufficient tcp buffer, dropping connection"));
+			log_msg(LOG_ERR, "insufficient tcp buffer, dropping connection");
 			cleanup_tcp_handler(netio, handler);
 			return;
 		}
@@ -1473,19 +929,19 @@ handle_tcp_reading(netio_type *netio,
 
 	/* Account... */
 #ifndef INET6
-        STATUP(data->nsd, ctcp);
+       STATUP(data->nsd, ctcp);
 #else
-	if (data->query->addr.ss_family == AF_INET) {
-		STATUP(data->nsd, ctcp);
-	} else if (data->query->addr.ss_family == AF_INET6) {
-		STATUP(data->nsd, ctcp6);
-	}
+        if (data->query->addr.ss_family == AF_INET) {
+                STATUP(data->nsd, ctcp);
+        } else if (data->query->addr.ss_family == AF_INET6) {
+                STATUP(data->nsd, ctcp6);
+        }
 #endif
 
 	/* We have a complete query, process it.  */
 
 	buffer_flip(data->query->packet);
-	data->query_state = server_process_query(data->nsd, data->query);
+	data->query_state = process_query(data->nsd, data->query);
 	if (data->query_state == QUERY_DISCARDED) {
 		/* Drop the packet and the entire connection... */
 		STATUP(data->nsd, dropped);
@@ -1546,9 +1002,6 @@ handle_tcp_writing(netio_type *netio,
 				 */
 				return;
 			} else {
-#ifdef ECONNRESET
-				if(verbosity>=2 || errno != ECONNRESET)
-#endif
 				log_msg(LOG_ERR, "failed writing to tcp: %s", strerror(errno));
 				cleanup_tcp_handler(netio, handler);
 				return;
@@ -1580,9 +1033,6 @@ handle_tcp_writing(netio_type *netio,
 			 */
 			return;
 		} else {
-#ifdef ECONNRESET
-			if(verbosity>=2 || errno != ECONNRESET)
-#endif
 			log_msg(LOG_ERR, "failed writing to tcp: %s", strerror(errno));
 			cleanup_tcp_handler(netio, handler);
 			return;
@@ -1675,15 +1125,7 @@ handle_tcp_accept(netio_type *netio,
 	addrlen = sizeof(addr);
 	s = accept(handler->fd, (struct sockaddr *) &addr, &addrlen);
 	if (s == -1) {
-		/* EINTR is a signal interrupt. The others are various OS ways
-		   of saying that the client has closed the connection. */
-		if (	errno != EINTR 
-			&& errno != EWOULDBLOCK 
-			&& errno != ECONNABORTED 
-#ifdef EPROTO
-			&& errno != EPROTO
-#endif /* EPROTO */
-			) {
+		if (errno != EINTR) {
 			log_msg(LOG_ERR, "accept failed: %s", strerror(errno));
 		}
 		return;
@@ -1703,8 +1145,7 @@ handle_tcp_accept(netio_type *netio,
 	tcp_data = (struct tcp_handler_data *) region_alloc(
 		tcp_region, sizeof(struct tcp_handler_data));
 	tcp_data->region = tcp_region;
-	tcp_data->query = query_create(tcp_region, compressed_dname_offsets,
-		compression_table_size);
+	tcp_data->query = query_create(tcp_region, compressed_dname_offsets);
 	tcp_data->nsd = data->nsd;
 	
 	tcp_data->tcp_accept_handler_count = data->tcp_accept_handler_count;
@@ -1740,43 +1181,6 @@ handle_tcp_accept(netio_type *netio,
 		configure_handler_event_types(data->tcp_accept_handler_count,
 					      data->tcp_accept_handlers,
 					      NETIO_EVENT_NONE);
-	}
-}
-
-static void 
-send_children_quit(struct nsd* nsd)
-{
-	sig_atomic_t command = NSD_QUIT;
-	size_t i;
-	assert(nsd->server_kind == NSD_SERVER_MAIN && nsd->this_child == 0);
-	for (i = 0; i < nsd->child_count; ++i) {
-		if (nsd->children[i].pid > 0 && nsd->children[i].child_fd > 0) {
-			if (write(nsd->children[i].child_fd,
-				&command,
-				sizeof(command)) == -1)
-			{
-				if(errno != EAGAIN && errno != EINTR)
-					log_msg(LOG_ERR, "problems sending command %d to server %d: %s",
-					(int) command,
-					(int) nsd->children[i].pid,
-					strerror(errno));
-			}
-			fsync(nsd->children[i].child_fd);
-			close(nsd->children[i].child_fd);
-			nsd->children[i].child_fd = -1;
-		}
-	}
-}
-
-static void 
-set_children_stats(struct nsd* nsd)
-{
-	size_t i;
-	assert(nsd->server_kind == NSD_SERVER_MAIN && nsd->this_child == 0);
-	DEBUG(DEBUG_IPC, 1, (LOG_INFO, "parent set stats to send to children"));
-	for (i = 0; i < nsd->child_count; ++i) {
-		nsd->children[i].need_to_send_STATS = 1;
-		nsd->children[i].handler->event_types |= NETIO_EVENT_WRITE;
 	}
 }
 

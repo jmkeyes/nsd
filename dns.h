@@ -46,11 +46,7 @@ typedef enum rr_section rr_section_type;
 #define RCODE_NXDOMAIN		3 	/* Name Error */
 #define RCODE_IMPL		4 	/* Not implemented */
 #define RCODE_REFUSE		5 	/* Refused */
-#define RCODE_YXDOMAIN		6	/* name should not exist */
-#define RCODE_YXRRSET		7	/* rrset should not exist */
-#define RCODE_NXRRSET		8	/* rrset does not exist */
-#define RCODE_NOTAUTH		9	/* server not authoritative */
-#define RCODE_NOTZONE		10	/* name not inside zone */
+#define RCODE_NOTAUTH		9	/* Server not authoritative for zone */
 
 /* Standardized NSD return code.  Partially maps to DNS RCODE values.  */
 enum nsd_rc
@@ -74,7 +70,6 @@ typedef enum nsd_rc nsd_rc_type;
 #define CLASS_CS	2	/* Class CS */
 #define CLASS_CH	3	/* Class CHAOS */
 #define CLASS_HS	4	/* Class HS */
-#define CLASS_NONE	254	/* Class NONE rfc2136 */
 #define CLASS_ANY	255	/* Class ANY */
 
 #define TYPE_A		1	/* a host address */
@@ -111,7 +106,7 @@ typedef enum nsd_rc nsd_rc_type;
 #define TYPE_SRV	33	/* SRV record RFC2782 */
 
 #define TYPE_NAPTR	35	/* RFC2915 */
-#define TYPE_KX		36	/* RFC2230 Key Exchange Delegation Record */
+#define TYPE_KX		36	/* RFC2230 */
 #define TYPE_CERT	37	/* RFC2538 */
 
 #define TYPE_DNAME	39	/* RFC2672 */
@@ -120,18 +115,12 @@ typedef enum nsd_rc nsd_rc_type;
 #define TYPE_APL	42	/* RFC3123 */
 #define TYPE_DS		43	/* RFC 4033, 4034, and 4035 */
 #define TYPE_SSHFP	44	/* SSH Key Fingerprint */
-#define TYPE_IPSECKEY	45	/* public key for ipsec use. RFC 4025 */
 
 #define TYPE_RRSIG	46	/* RFC 4033, 4034, and 4035 */
 #define TYPE_NSEC	47	/* RFC 4033, 4034, and 4035 */
 #define TYPE_DNSKEY	48	/* RFC 4033, 4034, and 4035 */
-#define TYPE_DHCID	49	/* RFC4701 DHCP information */
 
-#define TYPE_SPF        99      /* RFC 4408 */
-
-/* high type range RRTYPES */
-#define TYPE_NSEC3	65324	/* NSEC3, dns secure denial, prevents zonewalking */
-#define TYPE_NSEC3PARAM 65325	/* NSEC3PARAM at zone apex nsec3 parameters */
+#define TYPE_SPF        99      /* draft-schlitt-spf-classic-02.txt */
 
 #define TYPE_TSIG	250
 #define TYPE_IXFR	251
@@ -167,9 +156,7 @@ enum rdata_wireformat
 	RDATA_WF_A,		     /* 32-bit IPv4 address.  */
 	RDATA_WF_AAAA,		     /* 128-bit IPv6 address.  */
 	RDATA_WF_BINARY, 	     /* Binary data (unknown length).  */
-	RDATA_WF_BINARYWITHLENGTH,   /* Binary data preceded by 1 byte length */
-	RDATA_WF_APL,		     /* APL data.  */
-	RDATA_WF_IPSECGATEWAY,	     /* IPSECKEY gateway ip4, ip6 or dname. */
+	RDATA_WF_APL		     /* APL data.  */
 };
 typedef enum rdata_wireformat rdata_wireformat_type;
 
@@ -191,12 +178,9 @@ enum rdata_zoneformat
 	RDATA_ZF_PERIOD,	/* Time period.  */
 	RDATA_ZF_TIME,
 	RDATA_ZF_BASE64,	/* Base-64 binary data.  */
-	RDATA_ZF_BASE32,	/* Base-32 binary data.  */
 	RDATA_ZF_HEX,		/* Hexadecimal binary data.  */
-	RDATA_ZF_HEX_LEN,	/* Hexadecimal binary data. Skip initial length byte. */
 	RDATA_ZF_NSAP,		/* NSAP.  */
 	RDATA_ZF_APL,		/* APL.  */
-	RDATA_ZF_IPSECGATEWAY,	/* IPSECKEY gateway ip4, ip6 or dname. */
 	RDATA_ZF_SERVICES,	/* Protocol and port number bitmap.  */
 	RDATA_ZF_NXT,		/* NXT type bitmap.  */
 	RDATA_ZF_NSEC,		/* NSEC type bitmap.  */
@@ -220,14 +204,19 @@ typedef struct rrtype_descriptor rrtype_descriptor_type;
 /*
  * Indexed by type.  The special type "0" can be used to get a
  * descriptor for unknown types (with one binary rdata).
- *
- * spf + 1 + the number of high-type-range RRTYPES
  */
-#define RRTYPE_DESCRIPTORS_LENGTH  (TYPE_SPF + 1 + 2)
-/* below this value the types are consecutive numbered */
-#define RRTYPE_DESCRIPTORS_IDX_LEN (TYPE_SPF + 1)
+#define RRTYPE_DESCRIPTORS_LENGTH  (TYPE_SPF + 1)
+extern rrtype_descriptor_type rrtype_descriptors[RRTYPE_DESCRIPTORS_LENGTH];
+
+static inline rrtype_descriptor_type *
+rrtype_descriptor_by_type(uint16_t type)
+{
+	return (type < RRTYPE_DESCRIPTORS_LENGTH
+		? &rrtype_descriptors[type]
+		: &rrtype_descriptors[0]);
+}
+
 rrtype_descriptor_type *rrtype_descriptor_by_name(const char *name);
-rrtype_descriptor_type *rrtype_descriptor_by_type(uint16_t type);
 
 const char *rrtype_to_string(uint16_t rrtype);
 

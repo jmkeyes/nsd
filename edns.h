@@ -12,12 +12,12 @@
 
 #include "buffer.h"
 
-#define OPT_LEN 9U                      /* Length of the NSD EDNS response record minus 2 */
+#define	OPT_LEN	9U	                /* Length of the NSD EDNS response record minus 2 */
 #define OPT_RDATA 2                     /* holds the rdata length comes after OPT_LEN */
 #define OPT_HDR 4U                      /* NSID opt header length */
 #define NSID_CODE       1               /* nsid option code */
 #define DNSSEC_OK_MASK  0x8000U         /* do bit mask */
-#define NSID_MASK       0x8000U         /* bitmask to get to the NSID bit */
+#define NSID_MASK       0x8000U         /* bitmask to get to the ns_id bit */
 
 struct edns_data
 {
@@ -25,7 +25,7 @@ struct edns_data
 	char error[OPT_LEN];
         char rdata_none[OPT_RDATA];
         char rdata_nsid[OPT_RDATA];
-        char nsid[OPT_HDR];
+        char nsid[OPT_HDR]; 
 };
 typedef struct edns_data edns_data_type;
 
@@ -56,7 +56,5 @@ int edns_parse_record(edns_record_type *data, buffer_type *packet);
  * (if required).
  */
 size_t edns_reserved_space(edns_record_type *data);
-
-void edns_init_nsid(edns_data_type *data, uint16_t nsid_len);
 
 #endif /* _EDNS_H_ */

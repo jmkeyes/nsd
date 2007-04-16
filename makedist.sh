@@ -125,12 +125,8 @@ autoheader || error_cleanup "Autoheader failed."
 rm -r autom4te* || error_cleanup "Failed to remove autoconf cache directory."
 
 info "Building lexer and parser."
-echo "#include <config.h>" > zlexer.c || error_cleanup "Failed to create lexer."
-flex -i -t zlexer.lex >> zlexer.c || error_cleanup "Failed to create lexer."
+flex -i -ozlexer.c zlexer.lex || error_cleanup "Failed to create lexer."
 bison -y -d -o zparser.c zparser.y || error_cleanup "Failed to create parser."
-echo "#include \"configyyrename.h\"" > configlexer.c || error_cleanup "Failed to create configlexer"
-flex -i -t configlexer.lex >> configlexer.c || error_cleanup "Failed to create configlexer"
-bison -y -d -o configparser.c configparser.y || error_cleanup "Failed to create configparser"
 
 find . -name .c-mode-rc.el -exec rm {} \;
 find . -name .cvsignore -exec rm {} \;
@@ -148,15 +144,12 @@ if [ "$SNAPSHOT" = "yes" ]; then
     info "Snapshot version number: $version"
 fi
 
-replace_all doc/README
+replace_all README
 replace_all nsd.8
 replace_all nsdc.8
 replace_all nsd-notify.8
-replace_all nsd-checkconf.8
-replace_all nsd-patch.8
 replace_all nsd-xfer.8
 replace_all zonec.8
-replace_all nsd.conf.5
 
 info "Renaming NSD directory to nsd-$version."
 cd ..
@@ -183,9 +176,6 @@ case $OSTYPE in
                 ;;
         freebsd*)
                 sha=`sha1  nsd-$version.tar.gz |  awk '{ print $5 }'`
-                ;;
-	*)
-                sha=`sha1sum nsd-$version.tar.gz |  awk '{ print $1 }'`
                 ;;
 esac
 echo $sha > nsd-$version.tar.gz.sha1

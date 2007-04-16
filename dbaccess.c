@@ -22,7 +22,6 @@
 #include "dns.h"
 #include "namedb.h"
 #include "util.h"
-#include "options.h"
 
 int
 namedb_lookup(struct namedb    *db,
@@ -166,7 +165,6 @@ read_rrset(namedb_type *db,
 	for (i = 0; i < rrset->rr_count; ++i) {
 		rr_type *rr = &rrset->rrs[i];
 
-		rr->owner = owner;
 		rr->type = type;
 		rr->klass = klass;
 		
@@ -199,7 +197,6 @@ read_rrset(namedb_type *db,
 
 		memcpy(rrset->zone->soa_nx_rrset->rrs, rrset->rrs, sizeof(rr_type));
 		rrset->zone->soa_nx_rrset->rr_count = 1;
-		rrset->zone->soa_nx_rrset->next = 0;
 
 		/* also add a link to the zone */
 		rrset->zone->soa_nx_rrset->zone = rrset->zone;
@@ -232,7 +229,7 @@ read_rrset(namedb_type *db,
 }
 
 struct namedb *
-namedb_open (const char *filename, nsd_options_t* opt, size_t num_children)
+namedb_open (const char *filename)
 {
 	namedb_type *db;
 
@@ -269,30 +266,26 @@ namedb_open (const char *filename, nsd_options_t* opt, size_t num_children)
 	rrset_type *rrset;
 	
 	DEBUG(DEBUG_DBACCESS, 2,
-	      (LOG_INFO, "sizeof(namedb_type) = %lu\n", (unsigned long) sizeof(namedb_type)));
+	      (stderr, "sizeof(namedb_type) = %lu\n", (unsigned long) sizeof(namedb_type)));
 	DEBUG(DEBUG_DBACCESS, 2,
-	      (LOG_INFO, "sizeof(zone_type) = %lu\n", (unsigned long) sizeof(zone_type)));
+	      (stderr, "sizeof(zone_type) = %lu\n", (unsigned long) sizeof(zone_type)));
 	DEBUG(DEBUG_DBACCESS, 2,
-	      (LOG_INFO, "sizeof(domain_type) = %lu\n", (unsigned long) sizeof(domain_type)));
+	      (stderr, "sizeof(domain_type) = %lu\n", (unsigned long) sizeof(domain_type)));
 	DEBUG(DEBUG_DBACCESS, 2,
-	      (LOG_INFO, "sizeof(rrset_type) = %lu\n", (unsigned long) sizeof(rrset_type)));
+	      (stderr, "sizeof(rrset_type) = %lu\n", (unsigned long) sizeof(rrset_type)));
 	DEBUG(DEBUG_DBACCESS, 2,
-	      (LOG_INFO, "sizeof(rr_type) = %lu\n", (unsigned long) sizeof(rr_type)));
+	      (stderr, "sizeof(rr_type) = %lu\n", (unsigned long) sizeof(rr_type)));
 	DEBUG(DEBUG_DBACCESS, 2,
-	      (LOG_INFO, "sizeof(rdata_atom_type) = %lu\n", (unsigned long) sizeof(rdata_atom_type)));
+	      (stderr, "sizeof(rdata_atom_type) = %lu\n", (unsigned long) sizeof(rdata_atom_type)));
 	DEBUG(DEBUG_DBACCESS, 2,
-	      (LOG_INFO, "sizeof(rbnode_t) = %lu\n", (unsigned long) sizeof(rbnode_t)));
+	      (stderr, "sizeof(rbnode_t) = %lu\n", (unsigned long) sizeof(rbnode_t)));
 
-	db_region = region_create_custom(xalloc, free, DEFAULT_CHUNK_SIZE, 
-		DEFAULT_LARGE_OBJECT_SIZE, DEFAULT_INITIAL_CLEANUP_SIZE, 1);
+	db_region = region_create(xalloc, free);
 	db = (namedb_type *) region_alloc(db_region, sizeof(struct namedb));
 	db->region = db_region;
 	db->domains = domain_table_create(db->region);
 	db->zones = NULL;
-	db->zone_count = 0;
 	db->filename = region_strdup(db->region, filename);
-	db->crc = 0xffffffff;
-	db->diff_skip = 0;
 	
 	/* Open it... */
 	db->fd = fopen(db->filename, "r");
@@ -316,12 +309,11 @@ namedb_open (const char *filename, nsd_options_t* opt, size_t num_children)
 	}
 
 	DEBUG(DEBUG_DBACCESS, 1,
-	      (LOG_INFO, "Retrieving %lu zones\n", (unsigned long) zone_count));
+	      (stderr, "Retrieving %lu zones\n", (unsigned long) zone_count));
 
 	temp_region = region_create(xalloc, free);
 	dname_region = region_create(xalloc, free);
 	
-	db->zone_count = zone_count;
 	zones = (zone_type **) region_alloc(temp_region,
 					    zone_count * sizeof(zone_type *));
 	for (i = 0; i < zone_count; ++i) {
@@ -341,25 +333,8 @@ namedb_open (const char *filename, nsd_options_t* opt, size_t num_children)
 		zones[i]->soa_rrset = NULL;
 		zones[i]->soa_nx_rrset = NULL;
 		zones[i]->ns_rrset = NULL;
-#ifdef NSEC3
-		zones[i]->nsec3_soa_rr = NULL;
-		zones[i]->nsec3_last = NULL;
-#endif
-		zones[i]->opts = zone_options_find(opt, domain_dname(zones[i]->apex));
 		zones[i]->number = i + 1;
 		zones[i]->is_secure = 0;
-		zones[i]->updated = 1;
-		zones[i]->is_ok = 0;
-		zones[i]->dirty = region_alloc(db->region, sizeof(uint8_t)*num_children);
-		memset(zones[i]->dirty, 0, sizeof(uint8_t)*num_children);
-		if(!zones[i]->opts) {
-			log_msg(LOG_ERR, "corrupted database/bad config, zone %s in db %s, but not in config file. Cannot load database. Please rebuild database and start again.", 
-				dname_to_string(dname, NULL), db->filename);
-			region_destroy(dname_region);
-			region_destroy(temp_region);
-			namedb_close(db);
-			return NULL;
-		}
 
 		region_free_all(dname_region);
 	}
@@ -373,7 +348,7 @@ namedb_open (const char *filename, nsd_options_t* opt, size_t num_children)
 	}
 
 	DEBUG(DEBUG_DBACCESS, 1,
-	      (LOG_INFO, "Retrieving %lu domain names\n", (unsigned long) dname_count));
+	      (stderr, "Retrieving %lu domain names\n", (unsigned long) dname_count));
 	
 	domains = (domain_type **) region_alloc(
 		temp_region, dname_count * sizeof(domain_type *));
@@ -387,6 +362,7 @@ namedb_open (const char *filename, nsd_options_t* opt, size_t num_children)
 			return NULL;
 		}
 		domains[i] = domain_table_insert(db->domains, dname);
+		domains[i]->number = i + 1;
 		region_free_all(dname_region);
 	}
 	
@@ -404,22 +380,11 @@ namedb_open (const char *filename, nsd_options_t* opt, size_t num_children)
 	}
 
 	DEBUG(DEBUG_DBACCESS, 1,
-	      (LOG_INFO, "Retrieved %lu RRs in %lu RRsets\n",
+	      (stderr, "Retrieved %lu RRs in %lu RRsets\n",
 	       (unsigned long) rr_count, (unsigned long) rrset_count));
 	
 	region_destroy(temp_region);
 	
-	if ((db->crc_pos = ftello(db->fd)) == -1) {
-		log_msg(LOG_ERR, "ftello %s failed: %s", 
-			db->filename, strerror(errno));
-		namedb_close(db);
-		return NULL;
-	}
-	if (!read_size(db, &db->crc)) {
-		log_msg(LOG_ERR, "corrupted database: %s", db->filename);
-		namedb_close(db);
-		return NULL;
-	}
 	if (!read_magic(db)) {
 		log_msg(LOG_ERR, "corrupted database: %s", db->filename);
 		namedb_close(db);

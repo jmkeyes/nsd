@@ -44,18 +44,8 @@ warning(const char *format, ...)
 static void 
 usage (void)
 {
-	fprintf(stderr, "usage: nsd-notify [-4] [-6] [-h] [-p port] [-y key:secret] "
-		"-z zone servers\n\n");
-	fprintf(stderr, "\tSend NOTIFY to secondary servers to force a zone update.\n");
-	fprintf(stderr, "\tVersion %s. Report bugs to <%s>.\n\n", 
-		PACKAGE_VERSION, PACKAGE_BUGREPORT);
-	fprintf(stderr, "\t-4\t\tSend using IPv4.\n");
-	fprintf(stderr, "\t-6\t\tSend using IPv6.\n");
-	fprintf(stderr, "\t-h\t\tPrint this help information.\n");
-	fprintf(stderr, "\t-p port\t\tPort number of secondary server.\n");
-	fprintf(stderr, "\t-y key:secret\tTSIG keyname and base64 secret blob.\n");
-	fprintf(stderr, "\t-z zone\t\tName of zone to be updated.\n");
-	fprintf(stderr, "\tservers\t\tIP addresses of the secondary server(s).\n");
+	fprintf(stderr, "usage: nsd-notify [-4] [-6] [-p port] "
+		"-z zone servers\n");
 	exit(1);
 }
 
@@ -69,14 +59,13 @@ static void
 notify_host(int udp_s, struct query* q, struct query *answer,
 	struct addrinfo* res, const char* addrstr)
 {
-	int timeout_retry = 1; /* seconds */
-	int num_retry = 6; /* times to try */
+	int timeout_retry = 5; /* seconds */
+	int num_retry = 15; /* times to try */
 	fd_set rfds;
 	struct timeval tv;
 	int retval = 0;
 	ssize_t received = 0;
 	int got_ack = 0;
-	socklen_t addrlen = 0;
 
 	while(!got_ack) {
 		/* WE ARE READY SEND IT OUT */
@@ -115,16 +104,12 @@ notify_host(int udp_s, struct query* q, struct query *answer,
 		if (retval == 1) {
 			got_ack = 1;
 		}
-		/* Exponential backoff */
-		timeout_retry *= 2;
 	}
 
 	/* receive reply */
-	addrlen = res->ai_addrlen;
 	received = recvfrom(udp_s, buffer_begin(answer->packet),
 		buffer_remaining(answer->packet), 0,
-		res->ai_addr, &addrlen);
-	res->ai_addrlen = addrlen;
+		res->ai_addr, &res->ai_addrlen);
 	
 	if (received == -1) {
 		warning("recv %s failed: %s\n", addrstr, strerror(errno));
@@ -137,47 +122,13 @@ notify_host(int udp_s, struct query* q, struct query *answer,
 			/* no news is good news */
 			/* warning("reply from: %s, acknowledges notify.\n", addrstr); */
 		} else {
-			warning("bad reply from %s, error response %s (%d).\n", 
+			warning("bad reply from %s, error respons %s (%d).\n", 
 				addrstr, rcode2str(RCODE(answer->packet)), 
 				RCODE(answer->packet));
 		}
 	}
 	close(udp_s);
 }
-
-#ifdef TSIG
-static tsig_key_type*
-add_key(region_type* region, const char* opt)
-{
-	/* parse -y key:secret_base64 format option */
-	char* delim = strchr(opt, ':');
-	tsig_key_type *key = (tsig_key_type*)region_alloc(
-		region, sizeof(tsig_key_type));
-	size_t len;
-	int sz;
-	if(!delim) {
-		log_msg(LOG_ERR, "bad key syntax %s", opt);
-		return 0;
-	}
-	*delim = '\0';
-	key->name = dname_parse(region, opt);
-	if(!key->name) {
-		log_msg(LOG_ERR, "bad key syntax %s", opt);
-		return 0;
-	}
-	*delim = ':';
-	len = strlen(delim+1);
-	key->data = region_alloc(region, len+1);
-	sz= b64_pton(delim+1, (uint8_t*)key->data, len);
-	if(sz == -1) {
-		log_msg(LOG_ERR, "bad key syntax %s", opt);
-		return 0;
-	}
-	key->size = sz;
-	tsig_add_key(key);
-	return key;
-}
-#endif /* TSIG */
 
 int 
 main (int argc, char *argv[])
@@ -191,21 +142,11 @@ main (int argc, char *argv[])
 	int default_family = DEFAULT_AI_FAMILY;
 	const char *port = UDP_PORT;
 	region_type *region = region_create(xalloc, free);
-#ifdef TSIG
-	tsig_key_type *tsig_key = 0;
-	tsig_record_type tsig;
-#endif /* TSIG */
 	
 	log_init("nsd-notify");
-#ifdef TSIG
-	if(!tsig_init(region)) {
-		log_msg(LOG_ERR, "could not init tsig\n");
-		exit(1);
-	}
-#endif /* TSIG */
 	
 	/* Parse the command line... */
-	while ((c = getopt(argc, argv, "46hp:y:z:")) != -1) {
+	while ((c = getopt(argc, argv, "46p:z:")) != -1) {
 		switch (c) {
 		case '4':
 			default_family = AF_INET;
@@ -221,13 +162,6 @@ main (int argc, char *argv[])
 		case 'p':
 			port = optarg;
 			break;
-		case 'y':
-#ifdef TSIG
-			tsig_key = add_key(region, optarg);
-#else
-			log_msg(LOG_ERR, "option -y given but TSIG not enabled");
-#endif /* TSIG */
-			break;
 		case 'z':
 			zone = dname_parse(region, optarg);
 			if (!zone) {
@@ -237,7 +171,6 @@ main (int argc, char *argv[])
 				exit(1);
 			}
 			break;
-		case 'h':
 		default:
 			usage();
 		}
@@ -265,20 +198,6 @@ main (int argc, char *argv[])
 	buffer_write(q.packet, dname_name(zone), zone->name_size);
 	buffer_write_u16(q.packet, TYPE_SOA);
 	buffer_write_u16(q.packet, CLASS_IN);
-#ifdef TSIG
-	if(tsig_key) {
-		tsig_algorithm_type* algo = tsig_get_algorithm_by_name("hmac-md5");
-		assert(algo);
-		tsig_create_record(&tsig, region);
-		tsig_init_record(&tsig, algo, tsig_key);
-		tsig_init_query(&tsig, ID(q.packet));
-		tsig_prepare(&tsig);
-		tsig_update(&tsig, q.packet, buffer_position(q.packet));
-		tsig_sign(&tsig);
-		tsig_append_rr(&tsig, q.packet);
-		ARCOUNT_SET(q.packet, ARCOUNT(q.packet) + 1);
-	}
-#endif
 	buffer_flip(q.packet);
 
 	/* initialize buffer for ack */
