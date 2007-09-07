@@ -190,24 +190,20 @@ domain_table_insert(domain_table_type *table,
 	return result;
 }
 
-int
+void
 domain_table_iterate(domain_table_type *table,
 		    domain_table_iterator_type iterator,
 		    void *user_data)
 {
 	const void *dname;
 	void *node;
-	int error = 0;
 
 	assert(table);
 
 	RBTREE_WALK(table->names_to_domains, dname, node) {
-		error += iterator((domain_type *) node, user_data);
+		iterator((domain_type *) node, user_data);
 	}
-
-	return error;
 }
-
 
 void
 domain_add_rrset(domain_type *domain, rrset_type *rrset)

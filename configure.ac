@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,3.1.0,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,3.0.6,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -92,14 +92,14 @@ AC_DEFINE_UNQUOTED(XFRDFILE, ["`eval echo $xfrdfile`"], [Pathname to the NSD xfr
 AC_SUBST(xfrdfile)
 
 #
-# Determine the user name to drop privileges to
+# Determine the user name to drop priviledges to
 #
 user=nsd
 AC_ARG_WITH([user],
 	AC_HELP_STRING([--with-user=username], [User name or ID to answer the queries with]),
 	[user=$withval])
 AC_SUBST(user)
-AC_DEFINE_UNQUOTED(USER, ["$user"], [the user name to drop privileges to])
+AC_DEFINE_UNQUOTED(USER, ["$user"], [the user name to drop priviledges to])
 
 # Checks for programs.
 AC_PROG_AWK

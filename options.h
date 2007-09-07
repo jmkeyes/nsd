@@ -40,7 +40,6 @@ struct nsd_options {
 
 	int debug_mode;
 	int verbosity;
-	int hide_version;
 	int ip4_only;
 	int ip6_only;
 	const char* database;
