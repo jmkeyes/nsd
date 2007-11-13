@@ -170,10 +170,10 @@ domain_type *domain_table_insert(domain_table_type *table,
 /*
  * Iterate over all the domain names in the domain tree.
  */
-typedef int (*domain_table_iterator_type)(domain_type *node,
+typedef void (*domain_table_iterator_type)(domain_type *node,
 					   void *user_data);
 
-int domain_table_iterate(domain_table_type *table,
+void domain_table_iterate(domain_table_type *table,
 			  domain_table_iterator_type iterator,
 			  void *user_data);
 

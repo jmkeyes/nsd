@@ -181,8 +181,8 @@ case $OSTYPE in
         linux*)
                 sha=`sha1sum nsd-$version.tar.gz |  awk '{ print $1 }'`
                 ;;
-        freebsd*)
-                sha=`sha1  nsd-$version.tar.gz |  awk '{ print $5 }'`
+        FreeBSD*)
+                sha=`sha1  nsd-$version.tar.gz |  awk '{ print $4 }'`
                 ;;
 	*)
                 sha=`sha1sum nsd-$version.tar.gz |  awk '{ print $1 }'`

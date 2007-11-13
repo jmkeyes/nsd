@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,3.1.0,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,3.0.7,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -43,18 +43,13 @@ AC_SUBST(nsd_conf_file)
 AC_DEFINE_UNQUOTED(CONFIGFILE, ["`eval echo $nsd_conf_file`"], [Pathname to the NSD configuration file])
 
 #
-# Database directory
-#
-dbdir=${localstatedir}/db/nsd
-
-#
 # Determine the pidfile location. Check if /var/run exists, if so set pidfile
 # to /var/run/nsd.pid by default
 #
 if test -d ${localstatedir}/run; then
 	pidfile=${localstatedir}/run/nsd.pid
 else
-	pidfile=${dbdir}/nsd.pid
+	pidfile=${configdir}/nsd.pid
 fi
 AC_ARG_WITH([pidfile],
 	AC_HELP_STRING([--with-pidfile=path], [Pathname to the NSD pidfile]),
@@ -65,7 +60,7 @@ AC_DEFINE_UNQUOTED(PIDFILE, ["`eval echo $pidfile`"], [Pathname to the NSD pidfi
 #
 # Determine location of nsd.db
 #
-dbfile=${dbdir}/nsd.db
+dbfile=$configdir/nsd.db
 AC_ARG_WITH([dbfile],
 	AC_HELP_STRING([--with-dbfile=path], [Pathname to the NSD database]),
 	[dbfile=$withval])
@@ -83,28 +78,28 @@ AC_SUBST(zonesdir)
 AC_DEFINE_UNQUOTED(ZONESDIR, ["`eval echo $zonesdir`"], [NSD default location for zone files. Empty string or NULL to disable.])
 
 # default diff file location.
-difffile=${dbdir}/ixfr.db
+difffile=${configdir}/ixfr.db
 AC_ARG_WITH([difffile], AC_HELP_STRING([--with-difffile=path], 
 	[Pathname to the NSD diff transfer journal file]), [difffile=$withval])
 AC_DEFINE_UNQUOTED(DIFFFILE, ["`eval echo $difffile`"], [Pathname to the NSD diff transfer journal file.])
 AC_SUBST(difffile)
 
 # default xfrd file location.
-xfrdfile=${dbdir}/xfrd.state
+xfrdfile=${configdir}/xfrd.state
 AC_ARG_WITH([xfrdfile], AC_HELP_STRING([--with-xfrdfile=path], 
 	[Pathname to the NSD xfrd zone timer state file]), [xfrdfile=$withval])
 AC_DEFINE_UNQUOTED(XFRDFILE, ["`eval echo $xfrdfile`"], [Pathname to the NSD xfrd zone timer state file.])
 AC_SUBST(xfrdfile)
 
 #
-# Determine the user name to drop privileges to
+# Determine the user name to drop priviledges to
 #
 user=nsd
 AC_ARG_WITH([user],
 	AC_HELP_STRING([--with-user=username], [User name or ID to answer the queries with]),
 	[user=$withval])
 AC_SUBST(user)
-AC_DEFINE_UNQUOTED(USER, ["$user"], [the user name to drop privileges to])
+AC_DEFINE_UNQUOTED(USER, ["$user"], [the user name to drop priviledges to])
 
 # Checks for programs.
 AC_PROG_AWK
