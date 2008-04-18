@@ -1,0 +1,88 @@
+.\"
+.\" nsd-xfer.8 -- nsd manual
+.\"
+.\" Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+.\"
+.\" See LICENSE for the license.
+.\"
+.\"
+.Dd @date@
+.Dt NSD-XFER 8
+.Sh NAME
+.Nm nsd-xfer
+.Nd AXFR client to transfer zones from a name server
+.\"
+.Sh SYNOPSIS
+.Nm nsd-xfer 
+.Op Fl 4
+.Op Fl 6
+.Op Fl p Ar port
+.Op Fl s Ar serial
+.Op Fl T Ar siginfo
+.Op Fl v
+.Fl z Ar zone
+.Fl f Ar file
+.Ar servers
+.\"
+.Sh DESCRIPTION
+.Ic nsd-xfer
+is a program to transfer zones from a name server using AXFR;
+.Ic NSD
+is a complete implementation of an authoritative DNS nameserver.
+.Pp
+\"
+.Sh OPTIONS
+.Bl -tag -width indent
+.\"
+.It Fl 4
+Only send to IPv4 addresses.
+.\"
+.It Fl 6
+Only send to IPv6 addresses.
+.\"
+.It Fl f Ar file
+The file to store the zone in.
+.\"
+.It Fl p Ar port
+Specify the port to send to.
+.\"
+.It Fl s Ar serial
+Specify the 
+.Ar serial 
+of the current zone.  The zone is only transferred
+if the master server has a zone with a greater serial number.
+.\"
+.It Fl T Ar tsiginfo
+Use TSIG to verify the zone transfer. The 
+.Ar tsiginfo
+file must contain the TSIG key information. 
+The file is removed up-on successful reading of the key.
+.\"
+.It Fl v
+Be more verbose.
+.\"
+.It Fl z Ar zone
+Specify the 
+.Ar zone 
+to receive.
+.\"
+.It Ar servers
+List of nameservers to try.
+.\"
+.Sh EXAMPLES
+To run this program the standard way type:
+.Bd -literal -offset indent
+$ nsd-xfer \-z foobar.cz \-f foobar.cz.zone 1.2.3.4
+.Ed
+.\"
+.Sh SEE ALSO
+.Xr nsd 8 ,
+.Xr nsd-notify 8 ,
+.Xr nsdc 8 ,
+.Xr zonec 8
+.\"
+.Sh AUTHORS
+.Ic NSD
+was written by NLnet Labs and RIPE NCC joint team. Please see the 
+CREDITS file in the distribution for further details.
+
