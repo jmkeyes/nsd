@@ -222,10 +222,10 @@ addition to standard configure options, one may use the following:
 
 	Shutdown priority for NSD. 
 
-  --disable-nsec3
+  --enable-nsec3
 
-  	Disable NSEC3 support. With NSEC3 support enabled, very large zones,
-	also non-nsec3 zones, use about 20% more memory.
+  	Enable (experimental) NSEC3 support. This is meant to be used
+	only during workshops on the nsec3 protocol at this time.
 
   --enable-nsid
 

@@ -105,12 +105,12 @@ write_dname(struct namedb *db, domain_type *domain)
 	const dname_type *dname = domain_dname(domain);
 	
 	if (!write_data_crc(db->fd, &dname->name_size, sizeof(dname->name_size), &db->crc))
-		return -1;
+		return 0;
 
 	if (!write_data_crc(db->fd, dname_name(dname), dname->name_size, &db->crc))
-		return -1;
+		return 0;
 
-	return 0;
+	return 1;
 }
 
 static int
@@ -135,22 +135,22 @@ write_rrset(struct namedb *db, domain_type *domain, rrset_type *rrset)
 	rr_count = htons(rrset->rr_count);
 	
 	if (!write_number(db, domain->number))
-		return 1;
+		return 0;
 
 	if (!write_number(db, rrset->zone->number))
-		return 1;
-
+		return 0;
+	
 	type = htons(rrset_rrtype(rrset));
 	if (!write_data_crc(db->fd, &type, sizeof(type), &db->crc))
-		return 1;
+		return 0;
 
 	klass = htons(rrset_rrclass(rrset));
 	if (!write_data_crc(db->fd, &klass, sizeof(klass), &db->crc))
-		return 1;
+		return 0;
 
 	if (!write_data_crc(db->fd, &rr_count, sizeof(rr_count), &db->crc))
-		return 1;
-
+		return 0;
+		
 	for (i = 0; i < rrset->rr_count; ++i) {
 		rr_type *rr = &rrset->rrs[i];
 		uint32_t ttl;
@@ -158,66 +158,58 @@ write_rrset(struct namedb *db, domain_type *domain, rrset_type *rrset)
 		
 		rdata_count = htons(rr->rdata_count);
 		if (!write_data_crc(db->fd, &rdata_count, sizeof(rdata_count), &db->crc))
-			return 1;
-	
+			return 0;
+
 		ttl = htonl(rr->ttl);
 		if (!write_data_crc(db->fd, &ttl, sizeof(ttl), &db->crc))
-			return 1;
+			return 0;
 
 		for (j = 0; j < rr->rdata_count; ++j) {
 			rdata_atom_type atom = rr->rdatas[j];
 			if (rdata_atom_is_domain(rr->type, j)) {
 				if (!write_number(db, rdata_atom_domain(atom)->number))
-					return 1;
-
+					return 0;
 			} else {
 				uint16_t size = htons(rdata_atom_size(atom));
 				if (!write_data_crc(db->fd, &size, sizeof(size), &db->crc))
-					return 1;
-
+					return 0;
 				if (!write_data_crc(db->fd,
 						rdata_atom_data(atom),
 						rdata_atom_size(atom), &db->crc))
-					return 1;
-
+					return 0;
 			}
 		}
 	}
 
-	return 0;
+	return 1;
 }
 
-static int
+static void
 number_dnames_iterator(domain_type *node, void *user_data)
 {
 	uint32_t *current_number = (uint32_t *) user_data;
 
 	node->number = *current_number;
 	++*current_number;
-
-	return 0;
 }
 
-static int
+static void
 write_dname_iterator(domain_type *node, void *user_data)
 {
 	namedb_type *db = (namedb_type *) user_data;
 	
-	return write_dname(db, node);
+	write_dname(db, node);
 }
 
-static int
+static void
 write_domain_iterator(domain_type *node, void *user_data)
 {
 	namedb_type *db = (namedb_type *) user_data;
 	rrset_type *rrset;
-	int error = 0;
 
 	for (rrset = node->rrsets; rrset; rrset = rrset->next) {
-		error += write_rrset(db, node, rrset);
+		write_rrset(db, node, rrset);
 	}
-
-	return error;
 }
 
 /*
@@ -253,13 +245,11 @@ write_db(namedb_type *db)
 	if (!write_number(db, zone_count))
 		return -1;
 	for (zone = db->zones; zone; zone = zone->next) {
-		if (write_dname(db, zone->apex))
+		if (!write_dname(db, zone->apex))
 			return -1;
 	}
 	
-	if (domain_table_iterate(db->domains, number_dnames_iterator, &dname_count))
-		return -1;
-
+	domain_table_iterate(db->domains, number_dnames_iterator, &dname_count);
 	--dname_count;
 	if (!write_number(db, dname_count))
 		return -1;
@@ -267,12 +257,9 @@ write_db(namedb_type *db)
 	DEBUG(DEBUG_ZONEC, 1,
 	      (LOG_INFO, "Storing %lu domain names\n", (unsigned long) dname_count));
 	
-	if (domain_table_iterate(db->domains, write_dname_iterator, db))
-		return -1;
-
-	if (domain_table_iterate(db->domains, write_domain_iterator, db))
-		return -1;
-
+	domain_table_iterate(db->domains, write_dname_iterator, db);
+		   
+	domain_table_iterate(db->domains, write_domain_iterator, db);
 	if (!write_data_crc(db->fd, &terminator, sizeof(terminator), &db->crc))
 		return -1;
 

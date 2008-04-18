@@ -7,13 +7,9 @@ GENERAL
 - Feature request by Thoman Huehn: choose outgoing interface for nsd-notify. -a
 - Also Peter Hessler, Paul Wouters: choose outgoing ifc, "src: ip@port" 
 	in a zone in the config file, lets xfrd zonexfr and notify.
-- Make tpkg test for bug 157
 - Make tpkg test for bug 163
-- Make tpkg test for bug 164
-- Update tpkg long tests
 
 AUTOCONF
-- check/translate arguments to --with-facility
 
 ZONE COMPILER
 - unify dns type table (name, dns type, yacc token, rdata types) prettier?
@@ -57,7 +53,6 @@ SERVER
 - return literal (nonlowercased) dnames for rdata for RRtypes that do not
   have canonicalisation applied to their rdata (rfc4034, 6.2). So that
   the signature is not broken on the type.
-- the server reaps children every minute, this is bad for powersaving laptops.
 
 SECURITY
 - TSIG add rfc 4635 algorithms. Bug #120 asks for SHA1 feature.
@@ -71,12 +66,6 @@ PURITY
 - no more #ifdefs, remove them all, but keep configure options.
 - getflags on socket before setflags nonblocking.
 - exponential backoff for retries xfrd and notify.
-- conformance to RFC: NSD accepts TSIG before OPT in additional, but this
-  is not legal, only TSIG after OPT is allowed.
-
-NSD PATCH
-- -q(?) option: no output when no patch necessary
-- cleaner output on normal operation (don't mention memory)
 
 CLEANUP
 - make so that startup sends SOA_INFO to xfrd just like reload does, prettier? 

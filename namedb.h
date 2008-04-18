@@ -53,13 +53,7 @@ struct domain
 	/* for the DS case we must answer on the parent side of zone cut */
 	domain_type *nsec3_ds_parent_cover;
 	/* the NSEC3 domain that has a hash-base32 <= than this dname. */
-	/* or NULL (no smaller one within this zone)
-	 * this variable is used to look up the NSEC3 record that matches
-	 * or covers a given b64-encoded-hash-string domain name. 
-	 * The result of the lookup is stored in the *_cover variables. 
-	 * The variable makes it possible to perform a rbtree lookup for
-	 * a name, then take this 'jump' to the previous element that contains
-	 * an NSEC3 record, with hopefully the correct parameters. */
+	/* or NULL (no smaller on within this zone) */
 	domain_type *nsec3_lookup;
 #endif
 	uint32_t     number; /* Unique domain name number.  */
@@ -176,10 +170,10 @@ domain_type *domain_table_insert(domain_table_type *table,
 /*
  * Iterate over all the domain names in the domain tree.
  */
-typedef int (*domain_table_iterator_type)(domain_type *node,
+typedef void (*domain_table_iterator_type)(domain_type *node,
 					   void *user_data);
 
-int domain_table_iterate(domain_table_type *table,
+void domain_table_iterate(domain_table_type *table,
 			  domain_table_iterator_type iterator,
 			  void *user_data);
 

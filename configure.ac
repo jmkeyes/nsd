@@ -1,7 +1,7 @@
 dnl
 dnl Some global settings
 dnl
-AC_INIT(NSD,3.1.0,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,3.0.8,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
 
 dnl
@@ -57,18 +57,13 @@ AC_ARG_WITH([kill_priority],
 AC_SUBST(kill_priority)
 
 #
-# Database directory
-#
-dbdir=${localstatedir}/db/nsd
-
-#
 # Determine the pidfile location. Check if /var/run exists, if so set pidfile
 # to /var/run/nsd.pid by default
 #
 if test -d ${localstatedir}/run; then
 	pidfile=${localstatedir}/run/nsd.pid
 else
-	pidfile=${dbdir}/nsd.pid
+	pidfile=${configdir}/nsd.pid
 fi
 AC_ARG_WITH([pidfile],
 	AC_HELP_STRING([--with-pidfile=path], [Pathname to the NSD pidfile]),
@@ -79,7 +74,7 @@ AC_DEFINE_UNQUOTED(PIDFILE, ["`eval echo $pidfile`"], [Pathname to the NSD pidfi
 #
 # Determine location of nsd.db
 #
-dbfile=${dbdir}/nsd.db
+dbfile=$configdir/nsd.db
 AC_ARG_WITH([dbfile],
 	AC_HELP_STRING([--with-dbfile=path], [Pathname to the NSD database]),
 	[dbfile=$withval])
@@ -97,14 +92,14 @@ AC_SUBST(zonesdir)
 AC_DEFINE_UNQUOTED(ZONESDIR, ["`eval echo $zonesdir`"], [NSD default location for zone files. Empty string or NULL to disable.])
 
 # default diff file location.
-difffile=${dbdir}/ixfr.db
+difffile=${configdir}/ixfr.db
 AC_ARG_WITH([difffile], AC_HELP_STRING([--with-difffile=path], 
 	[Pathname to the NSD diff transfer journal file]), [difffile=$withval])
 AC_DEFINE_UNQUOTED(DIFFFILE, ["`eval echo $difffile`"], [Pathname to the NSD diff transfer journal file.])
 AC_SUBST(difffile)
 
 # default xfrd file location.
-xfrdfile=${dbdir}/xfrd.state
+xfrdfile=${configdir}/xfrd.state
 AC_ARG_WITH([xfrdfile], AC_HELP_STRING([--with-xfrdfile=path], 
 	[Pathname to the NSD xfrd zone timer state file]), [xfrdfile=$withval])
 AC_DEFINE_UNQUOTED(XFRDFILE, ["`eval echo $xfrdfile`"], [Pathname to the NSD xfrd zone timer state file.])
@@ -560,13 +555,13 @@ case "$enable_tsig" in
                 ;;
 esac
 
-AC_ARG_ENABLE(nsec3, AC_HELP_STRING([--disable-nsec3], [Disable NSEC3 support]))
+AC_ARG_ENABLE(nsec3, AC_HELP_STRING([--enable-nsec3], [Enable NSEC3 support]))
 case "$enable_nsec3" in
-        no)
-		;;
-        yes|*)
+        yes)
 		AC_DEFINE_UNQUOTED([NSEC3], [], [Define this to enable NSEC3 support.])
                 ;;
+        no|*)
+		;;
 esac
 
 AC_ARG_ENABLE(nsid, AC_HELP_STRING([--enable-nsid], [Enable NSID support]))

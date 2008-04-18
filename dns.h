@@ -126,10 +126,12 @@ typedef enum nsd_rc nsd_rc_type;
 #define TYPE_NSEC	47	/* RFC 4033, 4034, and 4035 */
 #define TYPE_DNSKEY	48	/* RFC 4033, 4034, and 4035 */
 #define TYPE_DHCID	49	/* RFC4701 DHCP information */
-#define TYPE_NSEC3	50	/* NSEC3, secure denial, prevents zonewalking */
-#define TYPE_NSEC3PARAM 51	/* NSEC3PARAM at zone apex nsec3 parameters */
 
 #define TYPE_SPF        99      /* RFC 4408 */
+
+/* high type range RRTYPES */
+#define TYPE_NSEC3	65324	/* NSEC3, dns secure denial, prevents zonewalking */
+#define TYPE_NSEC3PARAM 65325	/* NSEC3PARAM at zone apex nsec3 parameters */
 
 #define TYPE_TSIG	250
 #define TYPE_IXFR	251
@@ -219,9 +221,11 @@ typedef struct rrtype_descriptor rrtype_descriptor_type;
  * Indexed by type.  The special type "0" can be used to get a
  * descriptor for unknown types (with one binary rdata).
  *
- * spf + 1
+ * spf + 1 + the number of high-type-range RRTYPES
  */
-#define RRTYPE_DESCRIPTORS_LENGTH  (TYPE_SPF + 1)
+#define RRTYPE_DESCRIPTORS_LENGTH  (TYPE_SPF + 1 + 2)
+/* below this value the types are consecutive numbered */
+#define RRTYPE_DESCRIPTORS_IDX_LEN (TYPE_SPF + 1)
 rrtype_descriptor_type *rrtype_descriptor_by_name(const char *name);
 rrtype_descriptor_type *rrtype_descriptor_by_type(uint16_t type);
 

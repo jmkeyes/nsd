@@ -595,6 +595,8 @@ main (int argc, char *argv[])
 			error("cannot chdir to '%s': %s", 
 				nsd.options->zonesdir, strerror(errno));
 		}
+		DEBUG(DEBUG_IPC,1, (LOG_INFO, "changed directory to %s", 
+			nsd.options->zonesdir));
 	}
 	/* get it from the config file */
 #ifdef NSID

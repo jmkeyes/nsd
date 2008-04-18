@@ -1450,6 +1450,8 @@ main (int argc, char **argv)
 			fprintf(stderr, "zonec: cannot chdir to %s: %s\n", zonesdir, strerror(errno));
 			exit(1);
 		}
+		else
+			log_msg(LOG_NOTICE, "changed directory to %s\n", zonesdir); 
 	}
 	if(dbfile == 0) {
 		if(nsd_options && nsd_options->database) dbfile = nsd_options->database;

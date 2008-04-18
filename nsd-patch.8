@@ -1,60 +1,72 @@
-.TH "nsd\-patch" "8" "@date@" "NLnet Labs" "nsd @version@"
-.\" Copyright (c) 2001\-2008, NLnet Labs. All rights reserved.
+.\"
+.\" nsd-patch.8 -- nsd-patch manual
+.\"
+.\" Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+.\"
 .\" See LICENSE for the license.
-.SH "NAME"
-.LP
-.B nsd\-patch
-\- NSD zone patcher version @version@.
-.SH "SYNOPSIS"
-.B nsd\-patch
-.RB [ \-c
-.IR configfile ]
-.RB [ \-f ]
-.RB [ \-h ]
-.RB [ \-l ]
-.RB [ \-c
-.IR difffile ]
-.SH "DESCRIPTION"
-.LP
-.B Nsd\-patch
-is the zone patcher for nsd(8). It reads in the nsd database 
-(nsd.db) and difffile (ixfr.db), and overwrites the zone text files 
-if they have been updated. Running this regularly ensures that the 
-difffile does not grow infinitely.
-.SH "OPTIONS" 
-.TP
-.B \-c\fI configfile
+.\"
+.\"
+.Dd @date@
+.Os FreeBSD
+.Dt NSD-PATCH 8
+.Sh NAME
+.Nm nsd-patch
+.Nd NSD zone patcher version @version@.
+.\"
+.Sh SYNOPSIS
+.Nm nsd-patch
+.Op Fl c Ar configfile
+.Op Fl f
+.Op Fl h
+.Op Fl l
+.Op Fl x Ar difffile
+.\"
+.Sh DESCRIPTION
+.Ic Nsd-patch
+is the zone patcher for
+.Xr nsd 8 .
+It reads in the nsd database (nsd.db) and difffile (ixfr.db), and overwrites
+the zone text files if they have been updated. Running this regularly
+ensures that the difffile does not grow infinitely.
+.Pp
+.\"
+.Sh OPTIONS
+.Bl -tag -width indent
+.It Fl c Ar configfile
 Read specified configfile instead of the default
-.IR /etc/nsd/nsd.conf .
-.TP
-.B \-f
+.Pa /etc/nsd/nsd.conf .
+.It Fl f
 Forces writing zone files. Also zones that have not changed are written
 back to their zone files.
-.TP
-.B \-h
+.It Fl h
 Print usage help information and exit.
-.TP
-.B \-l
+.It Fl l
 List the journal entries from the difffile. Does not write to zone files.
-.TP
-.B \-x\fI difffile
+.It Fl x Ar difffile
 Read specified difffile. Overrides the config file setting.
-.SH "FILES"
-.TP
-/var/db/nsd/nsd.db
+.El
+.\"
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /var/db/nsd/nsd.db
 default
-.B NSD
+.Ic NSD
 database
-.TP
-/etc/nsd/nsd.conf
+.It Pa /etc/nsd/nsd.conf
 default
-.B NSD
+.Ic NSD
 configuration file
-.SH "SEE ALSO"
-nsd(8), nsdc(8), nsd.conf(5), nsd-checkconf(8), nsd-notify(8), 
-nsd-xfer(8), zonec(8)
-.SH "AUTHORS"
-.LP
-.B NSD
-was written by NLnet Labs and RIPE NCC joint team. Please see
-CREDITS file in the distribution for further details.
+.El
+.\"
+.Sh SEE ALSO
+.Xr nsd 8 ,
+.Xr nsd.conf 5 ,
+.Xr nsd-checkconf 8 ,
+.Xr nsd-notify 8 ,
+.Xr nsd-xfer 8 ,
+.Xr nsdc 8
+.\"
+.Sh AUTHORS
+.Ic NSD
+was written by NLnet Labs and RIPE NCC joint team. Please see CREDITS file
+in the distribution for further details.

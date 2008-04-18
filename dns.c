@@ -283,22 +283,9 @@ static rrtype_descriptor_type rrtype_descriptors[RRTYPE_DESCRIPTORS_LENGTH] = {
 	/* 49 */
 	{ TYPE_DHCID, "DHCID", T_DHCID, 1, 1, { RDATA_WF_BINARY }, { RDATA_ZF_BASE64 } },
 	/* 50 */
-	{ TYPE_NSEC3, "NSEC3", T_NSEC3, 6, 6,
-	  { RDATA_WF_BYTE, /* hash type */
-	    RDATA_WF_BYTE, /* flags */
-	    RDATA_WF_SHORT, /* iterations */
-	    RDATA_WF_BINARYWITHLENGTH, /* salt */
-	    RDATA_WF_BINARYWITHLENGTH, /* next hashed name */
-	    RDATA_WF_BINARY /* type bitmap */ },
-	  { RDATA_ZF_BYTE, RDATA_ZF_BYTE, RDATA_ZF_SHORT, RDATA_ZF_HEX_LEN, 
-	    RDATA_ZF_BASE32, RDATA_ZF_NSEC } },
+	{ 50, NULL, T_UTYPE, 1, 1, { RDATA_WF_BINARY }, { RDATA_ZF_UNKNOWN } },
 	/* 51 */
-	{ TYPE_NSEC3PARAM, "NSEC3PARAM", T_NSEC3PARAM, 4, 4,
-	  { RDATA_WF_BYTE, /* hash type */
-	    RDATA_WF_BYTE, /* flags */
-	    RDATA_WF_SHORT, /* iterations */
-	    RDATA_WF_BINARYWITHLENGTH /* salt */ },
-	  { RDATA_ZF_BYTE, RDATA_ZF_BYTE, RDATA_ZF_SHORT, RDATA_ZF_HEX_LEN } },
+	{ 51, NULL, T_UTYPE, 1, 1, { RDATA_WF_BINARY }, { RDATA_ZF_UNKNOWN } },
 	/* 52 */
 	{ 52, NULL, T_UTYPE, 1, 1, { RDATA_WF_BINARY }, { RDATA_ZF_UNKNOWN } },
 	/* 53 */
@@ -427,13 +414,34 @@ static rrtype_descriptor_type rrtype_descriptors[RRTYPE_DESCRIPTORS_LENGTH] = {
 	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
 	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
 	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT } },
+	/* larger type numbers */
+	{ TYPE_NSEC3, "NSEC3", T_NSEC3, 6, 6,
+	  { RDATA_WF_BYTE, /* hash type */
+	    RDATA_WF_BYTE, /* flags */
+	    RDATA_WF_SHORT, /* iterations */
+	    RDATA_WF_BINARYWITHLENGTH, /* salt */
+	    RDATA_WF_BINARYWITHLENGTH, /* next hashed name */
+	    RDATA_WF_BINARY /* type bitmap */ },
+	  { RDATA_ZF_BYTE, RDATA_ZF_BYTE, RDATA_ZF_SHORT, RDATA_ZF_HEX_LEN, 
+	    RDATA_ZF_BASE32, RDATA_ZF_NSEC } },
+	{ TYPE_NSEC3PARAM, "NSEC3PARAM", T_NSEC3PARAM, 4, 4,
+	  { RDATA_WF_BYTE, /* hash type */
+	    RDATA_WF_BYTE, /* flags */
+	    RDATA_WF_SHORT, /* iterations */
+	    RDATA_WF_BINARYWITHLENGTH /* salt */ },
+	  { RDATA_ZF_BYTE, RDATA_ZF_BYTE, RDATA_ZF_SHORT, RDATA_ZF_HEX_LEN } },
 };
 
 rrtype_descriptor_type *
 rrtype_descriptor_by_type(uint16_t type)
 {
-	if (type < RRTYPE_DESCRIPTORS_LENGTH)
+	int i;
+
+	if (type < RRTYPE_DESCRIPTORS_IDX_LEN)
 		return &rrtype_descriptors[type];
+	for (i=RRTYPE_DESCRIPTORS_IDX_LEN; i<RRTYPE_DESCRIPTORS_LENGTH; ++i)
+		if (rrtype_descriptors[i].type == type)
+			return &rrtype_descriptors[i];
 	return &rrtype_descriptors[0];
 }
 
