@@ -161,7 +161,7 @@ struct xfrd_zone {
 	uint8_t tcp_waiting;
 	/* next zone in waiting list */
 	xfrd_zone_t* tcp_waiting_next;
-	/* zone is waiting for a udp connection (tcp is preferred) */
+	/* zone is waiting for a ucp connection (tcp is preferred) */
 	uint8_t udp_waiting;
 	/* next zone in waiting list for UDP */
 	xfrd_zone_t* udp_waiting_next;
@@ -254,10 +254,8 @@ struct buffer* xfrd_get_temp_buffer();
 /*
  * TSIG sign outgoing request. Call if acl has a key.
  */
-#ifdef TSIG
 void xfrd_tsig_sign_request(buffer_type* packet, struct tsig_record* tsig,
         acl_options_t* acl);
-#endif
 
 /* handle incoming soa information (NSD is running it, time acquired=guess).
    Pass soa=NULL,acquired=now if NSD has nothing loaded for the zone

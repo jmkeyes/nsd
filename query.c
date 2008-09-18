@@ -124,12 +124,12 @@ query_error (struct query *q, nsd_rc_type rcode)
 	if (rcode == NSD_RC_DISCARD) {
 		return QUERY_DISCARDED;
 	}
-
+	
 	buffer_clear(q->packet);
-
+	
 	QR_SET(q->packet);	   /* This is an answer.  */
 	RCODE_SET(q->packet, (int) rcode); /* Error code.  */
-
+	
 	/* Truncate the question as well... */
 	QDCOUNT_SET(q->packet, 0);
 	ANCOUNT_SET(q->packet, 0);
@@ -178,18 +178,18 @@ query_create(region_type *region, uint16_t *compressed_dname_offsets,
 	return query;
 }
 
-void
+void 
 query_reset(query_type *q, size_t maxlen, int is_tcp)
 {
-	/*
+	/* 
 	 * As long as less than 4Kb (region block size) has been used,
 	 * this call to free_all is free, the block is saved for re-use,
-	 * so no malloc() or free() calls are done.
+	 * so no malloc() or free() calls are done. 
 	 * at present use of the region is for:
 	 *   o query qname dname_type (255 max).
 	 *   o wildcard expansion domain_type (7*ptr+u32+2bytes)+(5*ptr nsec3)
 	 *   o wildcard expansion for additional section domain_type.
-	 *   o nsec3 hashed name(s) (3 dnames for a nonexist_proof,
+	 *   o nsec3 hashed name(s) (3 dnames for a nonexist_proof, 
 	 *     one proof per wildcard and for nx domain).
 	 */
 	region_free_all(q->region);
@@ -326,7 +326,7 @@ process_edns(struct query *q)
 			}
 #endif
 		}
-
+		
 		/* Strip the OPT resource record off... */
 		buffer_set_position(q->packet, q->edns.position);
 		buffer_set_limit(q->packet, q->edns.position);
@@ -350,7 +350,6 @@ process_tsig(struct query* q)
 			log_msg(LOG_ERR, "query tsig unknown key/algorithm");
 			return NSD_RC_REFUSE;
 		}
-
 		buffer_set_limit(q->packet, q->tsig.position);
 		ARCOUNT_SET(q->packet, ARCOUNT(q->packet) - 1);
 		tsig_prepare(&q->tsig);
@@ -371,7 +370,7 @@ process_tsig(struct query* q)
  * Check notify acl and forward to xfrd (or return an error).
  */
 static query_state_type
-answer_notify(struct nsd* nsd, struct query *query)
+answer_notify (struct nsd* nsd, struct query *query)
 {
 	int acl_num;
 	acl_options_t *why;
@@ -382,12 +381,12 @@ answer_notify(struct nsd* nsd, struct query *query)
 		dname_to_string(query->qname, NULL)));
 
 	zone_opt = zone_options_find(nsd->options, query->qname);
-	if(!zone_opt)
+	if(!zone_opt) 
 		return query_error(query, NSD_RC_NXDOMAIN);
-
+	
 	if(!nsd->this_child) /* we are in debug mode or something */
 		return query_error(query, NSD_RC_SERVFAIL);
-
+	
 #ifdef TSIG
 	if(!tsig_find_rr(&query->tsig, query->packet)) {
 		DEBUG(DEBUG_XFRD,2, (LOG_ERR, "bad tsig RR format"));
@@ -410,7 +409,7 @@ answer_notify(struct nsd* nsd, struct query *query)
 		assert(why);
 		DEBUG(DEBUG_XFRD,1, (LOG_INFO, "got notify %s passed acl %s %s",
 			dname_to_string(query->qname, NULL),
-			why->ip_address_spec,
+			why->ip_address_spec, 
 			why->nokey?"NOKEY":
 			(why->blocked?"BLOCKED":why->key_name)));
 		sz = buffer_limit(query->packet);
@@ -440,13 +439,13 @@ answer_notify(struct nsd* nsd, struct query *query)
 		pos = buffer_position(query->packet);
 		buffer_clear(query->packet);
 		buffer_set_position(query->packet, pos);
-		VERBOSITY(2, (LOG_INFO, "Notify received and accepted, forward to xfrd"));
+		VERBOSITY(2, (LOG_INFO, "Notify received and accepted, forward to xfrd")); 
 		/* tsig is added in add_additional later (if needed) */
 		return QUERY_PROCESSED;
 	}
 	VERBOSITY(1, (LOG_INFO, "got notify for zone: %s; Refused by acl: %s %s",
 			dname_to_string(query->qname, NULL),
-			why?why->key_name:"no acl matches",
+			why?why->key_name:"no acl matches", 
 			why?why->ip_address_spec:"."));
 	return query_error(query, NSD_RC_REFUSE);
 }
@@ -1197,7 +1196,7 @@ query_prepare_response(query_type *q)
 #ifdef TSIG
 	q->reserved_space += tsig_reserved_space(&q->tsig);
 #endif /* TSIG */
-
+	
 	/* Update the flags.  */
 	flags = FLAGS(q->packet);
 	flags &= 0x0100U;	/* Preserve the RD flag.  */
@@ -1220,7 +1219,7 @@ query_process(query_type *q, nsd_type *nsd)
 
 	/* Sanity checks */
 	if (buffer_limit(q->packet) < QHEADERSZ) {
-		/* packet too small to contain DNS header.
+		/* packet too small to contain DNS header. 
 		Now packet investigation macros will work without problems. */
 		return QUERY_DISCARDED;
 	}
@@ -1252,15 +1251,15 @@ query_process(query_type *q, nsd_type *nsd)
 		return query_formerr(q);
 	}
 
-	/* Dont allow any records in the answer or authority section...
+	/* Dont allow any records in the answer or authority section... 
 	   except for IXFR queries. */
-	if (ANCOUNT(q->packet) != 0 ||
+	if (ANCOUNT(q->packet) != 0 || 
 		(q->qtype!=TYPE_IXFR && NSCOUNT(q->packet) != 0)) {
 		return query_formerr(q);
 	}
 	if(q->qtype==TYPE_IXFR && NSCOUNT(q->packet) > 0) {
 		int i; /* skip ixfr soa information data here */
-		for(i=0; i< NSCOUNT(q->packet); i++)
+		for(i=0; i<NSCOUNT(q->packet); i++)
 			if(!packet_skip_rr(q->packet, 0))
 				return query_formerr(q);
 	}
@@ -1301,7 +1300,7 @@ query_process(query_type *q, nsd_type *nsd)
 #endif
 	/* Remove trailing garbage.  */
 	buffer_set_limit(q->packet, buffer_position(q->packet));
-
+	
 #ifdef TSIG
 	rc = process_tsig(q);
 	if (rc != NSD_RC_OK) {

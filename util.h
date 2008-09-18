@@ -208,7 +208,7 @@ read_uint32(const void *src)
 }
 
 /*
- * Print debugging information using log_msg,
+ * Print debugging information using log_msg, 
  * set the logfile as /dev/stdout or /dev/stderr if you like.
  * nsd -F 0xFFFF enables all debug facilities.
  */
@@ -220,11 +220,11 @@ read_uint32(const void *src)
 #define DEBUG_XFRD             0x0020U
 #define DEBUG_IPC              0x0040U
 
-extern unsigned nsd_debug_facilities;
-extern int nsd_debug_level;
 #ifdef NDEBUG
 #define DEBUG(facility, level, args)  /* empty */
 #else
+extern unsigned nsd_debug_facilities;
+extern int nsd_debug_level;
 #define DEBUG(facility, level, args)				\
 	do {							\
 		if ((facility) & nsd_debug_facilities &&	\
@@ -233,6 +233,8 @@ extern int nsd_debug_level;
 		}						\
 	} while (0)
 #endif
+
+#define XDEBUG(args) do { log_msg args ; } while (0)
 
 /*
  * Timespec functions.

@@ -580,9 +580,13 @@ xfrd_send_reload_req(xfrd_state_t* xfrd)
 			strerror(errno));
 		return;
 	}
-	DEBUG(DEBUG_IPC,1, (LOG_INFO, "xfrd: asked nsd to reload new updates"));
+	DEBUG(DEBUG_IPC,1, (LOG_ERR, "xfrd: asked nsd to reload new updates"));
 	xfrd_prepare_zones_for_reload();
 	xfrd->reload_cmd_last_sent = xfrd_time();
+
+	XDEBUG((LOG_INFO, "xdebug: xfrd_send_reload_req(), ipc sets \
+reload_cmd_last_sent=%u", (uint32_t) xfrd->reload_cmd_last_sent));
+
 	xfrd->need_to_send_reload = 0;
 	xfrd->can_send_reload = 0;
 }

@@ -23,7 +23,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <tsig.h>
 #include <unistd.h>
 #include <netdb.h>
 
@@ -45,32 +44,31 @@ warning(const char *format, ...)
         va_end(args);
 }
 
-static void
+static void 
 usage (void)
 {
-	fprintf(stderr, "usage: nsd-notify [-4] [-6] [-h] [-p port] [-y key:secret[:algo]] "
+	fprintf(stderr, "usage: nsd-notify [-4] [-6] [-h] [-p port] [-y key:secret] "
 		"-z zone servers\n\n");
 	fprintf(stderr, "\tSend NOTIFY to secondary servers to force a zone update.\n");
-	fprintf(stderr, "\tVersion %s. Report bugs to <%s>.\n\n",
+	fprintf(stderr, "\tVersion %s. Report bugs to <%s>.\n\n", 
 		PACKAGE_VERSION, PACKAGE_BUGREPORT);
 	fprintf(stderr, "\t-4\t\tSend using IPv4.\n");
 	fprintf(stderr, "\t-6\t\tSend using IPv6.\n");
 	fprintf(stderr, "\t-h\t\tPrint this help information.\n");
 	fprintf(stderr, "\t-p port\t\tPort number of secondary server.\n");
-	fprintf(stderr, "\t-y key:secret[:algo]\tTSIG keyname, base64 secret \
-blob and HMAC algorithm. If algo is not provided, HMAC-MD5 is assumed.\n");
+	fprintf(stderr, "\t-y key:secret\tTSIG keyname and base64 secret blob.\n");
 	fprintf(stderr, "\t-z zone\t\tName of zone to be updated.\n");
 	fprintf(stderr, "\tservers\t\tIP addresses of the secondary server(s).\n");
 	exit(1);
 }
 
 /*
- * Send NOTIFY messages to the host, as in struct q,
+ * Send NOTIFY messages to the host, as in struct q, 
  * waiting for ack packet (received in buffer answer).
  * Will retry transmission after a timeout.
  * addrstr is the string describing the address of the host.
  */
-static void
+static void 
 notify_host(int udp_s, struct query* q, struct query *answer,
 	struct addrinfo* res, const dname_type *zone, const char* addrstr)
 {
@@ -130,21 +128,20 @@ notify_host(int udp_s, struct query* q, struct query *answer,
 		buffer_remaining(answer->packet), 0,
 		res->ai_addr, &addrlen);
 	res->ai_addrlen = addrlen;
-
+	
 	if (received == -1) {
 		warning("recv %s failed: %s\n", addrstr, strerror(errno));
 	} else {
 		/* check the answer */
 		if ((ID(q->packet) == ID(answer->packet)) &&
 			(OPCODE(answer->packet) == OPCODE_NOTIFY) &&
-			AA(answer->packet) &&
+			AA(answer->packet) && 
 			QR(answer->packet) && (RCODE(answer->packet) == RCODE_OK)) {
 			/* no news is good news */
-			/* info("reply from: %s, acknowledges notify.\n",
-				addrstr); */
+			/* warning("reply from: %s, acknowledges notify.\n", addrstr); */
 		} else {
-			warning("bad reply from %s for zone %s, error response %s (%d).\n",
-				addrstr, dname_to_string(zone, NULL), rcode2str(RCODE(answer->packet)),
+			warning("bad reply from %s for zone %s, error response %s (%d).\n", 
+				addrstr, dname_to_string(zone, NULL), rcode2str(RCODE(answer->packet)), 
 				RCODE(answer->packet));
 		}
 	}
@@ -153,15 +150,10 @@ notify_host(int udp_s, struct query* q, struct query *answer,
 
 #ifdef TSIG
 static tsig_key_type*
-add_key(region_type* region, const char* opt, tsig_algorithm_type** algo)
+add_key(region_type* region, const char* opt)
 {
 	/* parse -y key:secret_base64 format option */
 	char* delim = strchr(opt, ':');
-	char* delim2 = NULL;
-
-	if (delim)
-		delim2 = strchr(delim+1, ':');
-
 	tsig_key_type *key = (tsig_key_type*)region_alloc(
 		region, sizeof(tsig_key_type));
 	size_t len;
@@ -173,27 +165,10 @@ add_key(region_type* region, const char* opt, tsig_algorithm_type** algo)
 	*delim = '\0';
 	key->name = dname_parse(region, opt);
 	if(!key->name) {
-		log_msg(LOG_ERR, "bad key name %s", opt);
+		log_msg(LOG_ERR, "bad key syntax %s", opt);
 		return 0;
 	}
 	*delim = ':';
-
-	if (!delim2)
-		*algo = tsig_get_algorithm_by_name("hmac-md5");
-	else {
-		char* by_name = (char*) malloc(sizeof(char)*(5+strlen(delim2)));
-		sprintf(by_name, "hmac-%s", delim2+1);
-		*algo = tsig_get_algorithm_by_name(by_name);
-		free(by_name);
-		*delim2 = '\0';
-	}
-
-	if (!(*algo)) {
-		*delim2 = ':';
-		log_msg(LOG_ERR, "bad tsig algorithm %s", opt);
-		return 0;
-	}
-
 	len = strlen(delim+1);
 	key->data = region_alloc(region, len+1);
 	sz= b64_pton(delim+1, (uint8_t*)key->data, len);
@@ -207,7 +182,7 @@ add_key(region_type* region, const char* opt, tsig_algorithm_type** algo)
 }
 #endif /* TSIG */
 
-int
+int 
 main (int argc, char *argv[])
 {
 	int c, udp_s;
@@ -222,8 +197,8 @@ main (int argc, char *argv[])
 #ifdef TSIG
 	tsig_key_type *tsig_key = 0;
 	tsig_record_type tsig;
-	tsig_algorithm_type* algo = NULL;
 #endif /* TSIG */
+	
 	log_init("nsd-notify");
 #ifdef TSIG
 	if(!tsig_init(region)) {
@@ -231,7 +206,7 @@ main (int argc, char *argv[])
 		exit(1);
 	}
 #endif /* TSIG */
-
+	
 	/* Parse the command line... */
 	while ((c = getopt(argc, argv, "46hp:y:z:")) != -1) {
 		switch (c) {
@@ -251,8 +226,7 @@ main (int argc, char *argv[])
 			break;
 		case 'y':
 #ifdef TSIG
-			if (!(tsig_key = add_key(region, optarg, &algo)))
-				exit(1);
+			tsig_key = add_key(region, optarg);
 #else
 			log_msg(LOG_ERR, "option -y given but TSIG not enabled");
 #endif /* TSIG */
@@ -296,6 +270,7 @@ main (int argc, char *argv[])
 	buffer_write_u16(q.packet, CLASS_IN);
 #ifdef TSIG
 	if(tsig_key) {
+		tsig_algorithm_type* algo = tsig_get_algorithm_by_name("hmac-md5");
 		assert(algo);
 		tsig_create_record(&tsig, region);
 		tsig_init_record(&tsig, algo, tsig_key);

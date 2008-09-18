@@ -283,6 +283,15 @@ xfrd_read_state(struct xfrd_state* xfrd)
 		zone->soa_nsd_acquired = soa_nsd_acquired_read;
 		zone->soa_disk_acquired = soa_disk_acquired_read;
 		zone->soa_notified_acquired = soa_notified_acquired_read;
+
+		XDEBUG((LOG_INFO, "xdebug: xfrd_read_state(), zone %s, \
+handle as an incoming soa, soa_nsd_acquired=%u, soa_disk_acquired=%u, \
+soa_nsd.serial=%u, soa_disk.serial=%u",
+			zone->apex_str, (uint32_t) zone->soa_nsd_acquired,
+			(uint32_t) zone->soa_disk_acquired,
+			ntohl(zone->soa_nsd.serial),
+			ntohl(zone->soa_disk.serial)));
+
 		xfrd_handle_incoming_soa(zone, &incoming_soa, incoming_acquired);
 	}
 
@@ -442,6 +451,15 @@ xfrd_write_state(struct xfrd_state* xfrd)
 			neato_timeout(out, "\t# =", zone->timeout.tv_sec - xfrd_time());
 		}
 		fprintf(out, "\n");
+
+		XDEBUG((LOG_INFO, "xdebug: xfrd_write_state(), zone %s, \
+write back state, soa_nsd_acquired==%u, soa_disk_acquired==%u, \
+soa_nsd.serial==%u, soa_disk.serial==%u",
+			zone->apex_str, (uint32_t) zone->soa_nsd_acquired,
+			(uint32_t) zone->soa_disk_acquired,
+			ntohl(zone->soa_nsd.serial),
+			ntohl(zone->soa_disk.serial)));
+
 		xfrd_write_state_soa(out, "soa_nsd", &zone->soa_nsd,
 			zone->soa_nsd_acquired, zone->apex);
 		xfrd_write_state_soa(out, "soa_disk", &zone->soa_disk,
