@@ -1,8 +1,9 @@
+24 January 2011: Matthijs
+    - Patch Tom Hendrickx (only errors to stderr when doing nsdc patch).
+    - Tag 3.2.7 release.
+
 20 January 2011: Wouter
 	- Fix on shutdown, then getaddrinfo acquired data uses freeaddrinfo.
-
-19 January 2011: Wouter
-	- Bug #348: no -I/usr and -L/usr for libcrypto in /usr.
 
 5 January 2011: Matthijs
 	- Fix nsdc update and nsdc notify
