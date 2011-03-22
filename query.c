@@ -1,3 +1,4 @@
+
 /*
  * query.c -- nsd(8) the resolver.
  *
@@ -55,14 +56,14 @@ static int add_rrset(struct query  *query,
 static void answer_authoritative(struct nsd	  *nsd,
 				 struct query     *q,
 				 answer_type      *answer,
-				 size_t            domain_number,
+				 uint32_t          domain_number,
 				 int               exact,
 				 domain_type      *closest_match,
 				 domain_type      *closest_encloser,
 				 const dname_type *qname);
 
 static void answer_lookup_zone(struct nsd *nsd, struct query *q,
-			       answer_type *answer, size_t domain_number,
+			       answer_type *answer, uint32_t domain_number,
 			       int exact, domain_type *closest_match,
 			       domain_type *closest_encloser,
 			       const dname_type *qname);
@@ -166,7 +167,7 @@ query_cleanup(void *data)
 
 query_type *
 query_create(region_type *region, uint16_t *compressed_dname_offsets,
-	size_t compressed_dname_size)
+	uint32_t compressed_dname_size)
 {
 	query_type *query
 		= (query_type *) region_alloc_zero(region, sizeof(query_type));
@@ -535,7 +536,7 @@ find_covering_nsec(domain_type *closest_match,
 	assert(nsec_rrset);
 
 	/* loop away temporary created domains. For real ones it is &RBTREE_NULL */
-	while (closest_match->rnode == NULL)
+	while (closest_match->node.parent == NULL)
 		closest_match = closest_match->parent;
 	while (closest_match) {
 		*nsec_rrset = domain_find_rrset(closest_match, zone, TYPE_NSEC);
@@ -605,8 +606,7 @@ add_additional_rrsets(struct query *query, answer_type *answer,
 			domain_type *wildcard_child = domain_wildcard_child(match);
 			domain_type *temp = (domain_type *) region_alloc(
 				query->region, sizeof(domain_type));
-			temp->rnode = NULL;
-			temp->dname = additional->dname;
+			memcpy(&temp->node, &additional->node, sizeof(rbnode_t));
 			temp->number = additional->number;
 			temp->parent = match;
 			temp->wildcard_child_closest_match = temp;
@@ -681,7 +681,7 @@ add_rrset(struct query   *query,
    from_name is changes to to_name by the DNAME rr.
    DNAME rr is from src to dest.
    closest encloser encloses the to_name. */
-static size_t
+static uint32_t
 query_synthesize_cname(struct query* q, struct answer* answer, const dname_type* from_name,
 	const dname_type* to_name, domain_type* src, domain_type* to_closest_encloser,
 	domain_type** to_closest_match)
@@ -705,8 +705,7 @@ query_synthesize_cname(struct query* q, struct answer* answer, const dname_type*
 			return 0;
 		newdom->is_existing = 1;
 		newdom->parent = lastparent;
-		newdom->dname
-			= dname_partial_copy(q->region,
+		newdom->node.key = dname_partial_copy(q->region,
 			from_name, domain_dname(src)->label_count + i + 1);
 		if(dname_compare(domain_dname(newdom), q->qname) == 0) {
 			/* 0 good for query name, otherwise new number */
@@ -714,7 +713,7 @@ query_synthesize_cname(struct query* q, struct answer* answer, const dname_type*
 		}
 		DEBUG(DEBUG_QUERY,2, (LOG_INFO, "created temp domain src %d. %s nr %d", i,
 			dname_to_string(domain_dname(newdom), NULL),
-			(int)newdom->number));
+			newdom->number));
 		lastparent = newdom;
 	}
 	cname_domain = lastparent;
@@ -729,12 +728,11 @@ query_synthesize_cname(struct query* q, struct answer* answer, const dname_type*
 			return 0;
 		newdom->is_existing = 0;
 		newdom->parent = lastparent;
-		newdom->dname
-			= dname_partial_copy(q->region,
+		newdom->node.key = dname_partial_copy(q->region,
 			to_name, domain_dname(to_closest_encloser)->label_count + i + 1);
 		DEBUG(DEBUG_QUERY,2, (LOG_INFO, "created temp domain dest %d. %s nr %d", i,
 			dname_to_string(domain_dname(newdom), NULL),
-			(int)newdom->number));
+			newdom->number));
 		lastparent = newdom;
 	}
 	cname_dest = lastparent;
@@ -953,7 +951,7 @@ static void
 answer_authoritative(struct nsd   *nsd,
 		     struct query *q,
 		     answer_type  *answer,
-		     size_t        domain_number,
+		     uint32_t      domain_number,
 		     int           exact,
 		     domain_type  *closest_match,
 		     domain_type  *closest_encloser,
@@ -992,7 +990,7 @@ answer_authoritative(struct nsd   *nsd,
 			domain_type* src = closest_encloser;
 			const dname_type* newname = dname_replace(q->region, name,
 				domain_dname(src), domain_dname(dest));
-			size_t newnum = 0;
+			uint32_t newnum = 0;
 			zone_type* origzone = q->zone;
 			++q->cname_count;
 			if(!newname) { /* newname too long */
@@ -1028,8 +1026,7 @@ answer_authoritative(struct nsd   *nsd,
 
 		match = (domain_type *) region_alloc(q->region,
 						     sizeof(domain_type));
-		match->rnode = NULL;
-		match->dname = wildcard_child->dname;
+		memcpy(&match->node, &wildcard_child->node, sizeof(rbnode_t));
 		match->parent = closest_encloser;
 		match->wildcard_child_closest_match = match;
 		match->number = domain_number;
@@ -1112,7 +1109,7 @@ answer_authoritative(struct nsd   *nsd,
  */
 static void
 answer_lookup_zone(struct nsd *nsd, struct query *q, answer_type *answer,
-	size_t domain_number, int exact, domain_type *closest_match,
+	uint32_t domain_number, int exact, domain_type *closest_match,
 	domain_type *closest_encloser, const dname_type *qname)
 {
 	q->zone = domain_find_zone(closest_encloser);

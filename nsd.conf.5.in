@@ -500,7 +500,7 @@ default
 .B NSD
 database
 .TP
-@nsdconfigfile@
+@configdir@/nsd.conf
 default
 .B NSD
 configuration file

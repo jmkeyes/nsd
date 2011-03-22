@@ -14,7 +14,7 @@
 
 #include "dname.h"
 #include "dns.h"
-#include "radtree.h"
+#include "rbtree.h"
 struct zone_options;
 struct nsd_options;
 
@@ -35,14 +35,13 @@ typedef struct zone zone_type;
 struct domain_table
 {
 	region_type *region;
-	struct radtree *nametree;
+	rbtree_t      *names_to_domains;
 	domain_type *root;
 };
 
 struct domain
 {
-	struct radnode* rnode;
-	const dname_type* dname;
+	rbnode_t     node;
 	domain_type *parent;
 	domain_type *wildcard_child_closest_match;
 	rrset_type  *rrsets;
@@ -63,7 +62,7 @@ struct domain
 	 * an NSEC3 record, with hopefully the correct parameters. */
 	domain_type *nsec3_lookup;
 #endif
-	size_t     number; /* Unique domain name number.  */
+	uint32_t     number; /* Unique domain name number.  */
 
 	/*
 	 * This domain name exists (see wildcard clarification draft).
@@ -153,7 +152,7 @@ int domain_table_search(domain_table_type *table,
 static inline uint32_t
 domain_table_count(domain_table_type *table)
 {
-	return table->nametree->count;
+	return table->names_to_domains->count;
 }
 
 /*
@@ -209,21 +208,21 @@ int zone_is_secure(zone_type *zone);
 static inline const dname_type *
 domain_dname(domain_type *domain)
 {
-	return domain->dname;
+	return (const dname_type *) domain->node.key;
 }
 
 static inline domain_type *
 domain_previous(domain_type *domain)
 {
-	struct radnode *prev = radix_prev(domain->rnode);
-	return prev == NULL ? NULL : (domain_type*)prev->elem;
+	rbnode_t *prev = rbtree_previous((rbnode_t *) domain);
+	return prev == RBTREE_NULL ? NULL : (domain_type *) prev;
 }
 
 static inline domain_type *
 domain_next(domain_type *domain)
 {
-	struct radnode *next = radix_next(domain->rnode);
-	return next == NULL ? NULL : (domain_type*)next->elem;
+	rbnode_t *next = rbtree_next((rbnode_t *) domain);
+	return next == RBTREE_NULL ? NULL : (domain_type *) next;
 }
 
 /*

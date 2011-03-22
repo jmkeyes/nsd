@@ -1325,9 +1325,7 @@ static void
 check_dname(namedb_type* db)
 {
 	domain_type* domain;
-	for(domain = radix_first(db->domains->nametree)?
-		(domain_type*)radix_first(db->domains->nametree)->elem:NULL;
-		domain; domain = domain_next(domain))
+	RBTREE_FOR(domain, domain_type*, db->domains->names_to_domains)
 	{
 		if(domain->is_existing) {
 			/* there may not be DNAMEs above it */
