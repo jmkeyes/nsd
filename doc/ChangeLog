@@ -1,5 +1,6 @@
 16 March 2011: Matthijs
 	- undo #bug235: messes up dname compression.
+	- Tag 3.2.8 release.
 
 3 March 2011: Matthijs
 	- fix #bug352: fix hardcoded paths in manpages.
