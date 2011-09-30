@@ -2,13 +2,13 @@
 /*
  * zyparser.y -- yacc grammar for (DNS) zone files
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -46,6 +46,13 @@ nsec3_add_params(const char* hash_algo_str, const char* flag_str,
 	const char* iter_str, const char* salt_str, int salt_len);
 #endif /* NSEC3 */
 
+#ifdef NSEC4
+/* parse nsec4 parameters and add the (first) rdata elements */
+static void
+nsec4_add_params(const char* hash_algo_str, const char* flag_str,
+	const char* iter_str, const char* salt_str, int salt_len);
+#endif /* NSEC4 */
+
 %}
 %union {
 	domain_type	 *domain;
@@ -66,7 +73,7 @@ nsec3_add_params(const char* hash_algo_str, const char* flag_str,
 %token <type> T_GPOS T_EID T_NIMLOC T_ATMA T_NAPTR T_KX T_A6 T_DNAME T_SINK
 %token <type> T_OPT T_APL T_UINFO T_UID T_GID T_UNSPEC T_TKEY T_TSIG T_IXFR
 %token <type> T_AXFR T_MAILB T_MAILA T_DS T_DLV T_SSHFP T_RRSIG T_NSEC T_DNSKEY
-%token <type> T_SPF T_NSEC3 T_IPSECKEY T_DHCID T_NSEC3PARAM
+%token <type> T_SPF T_NSEC3 T_NSEC4 T_IPSECKEY T_DHCID T_NSEC3PARAM T_NSEC4PARAM
 
 /* other tokens */
 %token	       DOLLAR_TTL DOLLAR_ORIGIN NL SP
@@ -146,8 +153,6 @@ ttl_directive:	DOLLAR_TTL sp STR trail
 
 origin_directive:	DOLLAR_ORIGIN sp abs_dname trail
     {
-	    /* if previous origin is unused, remove it, do not leak it */
-	    domain_table_deldomain(parser->db->domains, parser->origin);
 	    parser->origin = $3;
     }
     |	DOLLAR_ORIGIN sp rel_dname trail
@@ -592,6 +597,10 @@ type_and_rdata:
     |	T_NSEC3 sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_NSEC3PARAM sp rdata_nsec3_param
     |	T_NSEC3PARAM sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
+    |	T_NSEC4 sp rdata_nsec4
+    |	T_NSEC4 sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
+    |	T_NSEC4PARAM sp rdata_nsec4_param
+    |	T_NSEC4PARAM sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_DNSKEY sp rdata_dnskey
     |	T_DNSKEY sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_UTYPE sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
@@ -887,6 +896,32 @@ rdata_nsec3_param:   STR sp STR sp STR sp STR trail
     }
     ;
 
+rdata_nsec4:   STR sp STR sp STR sp STR sp wire_dname nsec_seq
+    {
+#ifdef NSEC4
+	    nsec4_add_params($1.str, $3.str, $5.str, $7.str, $7.len);
+
+	    zadd_rdata_wireformat(zparser_conv_dns_name(parser->region, 
+				(const uint8_t*) $9.str, $9.len)); /* next (hashed) name */
+	    zadd_rdata_wireformat(zparser_conv_nsec(parser->region, nsecbits)); /* nsec bitlist */
+	    memset(nsecbits, 0, sizeof(nsecbits));
+	    nsec_highest_rcode = 0;
+#else
+	    zc_error_prev_line("nsec4 not supported");
+#endif /* NSEC4 */
+    }
+    ;
+
+rdata_nsec4_param:   STR sp STR sp STR sp STR trail
+    {
+#ifdef NSEC4
+	    nsec4_add_params($1.str, $3.str, $5.str, $7.str, $7.len);
+#else
+	    zc_error_prev_line("nsec4 not supported");
+#endif /* NSEC4 */
+    }
+    ;
+
 rdata_dnskey:	STR sp STR sp STR sp str_sp_seq trail
     {
 	    zadd_rdata_wireformat(zparser_conv_short(parser->region, $1.str)); /* flags */
@@ -1020,11 +1055,11 @@ static void
 error_va_list(unsigned line, const char *fmt, va_list args)
 {
 	if (parser->filename) {
-		char message[MAXSYSLOGMSGLEN];
-		vsnprintf(message, sizeof(message), fmt, args);
-		log_msg(LOG_ERR, "%s:%u: %s", parser->filename, line, message);
+		fprintf(stderr, "%s:%u: ", parser->filename, line);
 	}
-	else log_vmsg(LOG_ERR, fmt, args);
+	fprintf(stderr, "error: ");
+	vfprintf(stderr, fmt, args);
+	fprintf(stderr, "\n");
 
 	++parser->errors;
 	parser->error_occurred = 1;
@@ -1056,11 +1091,11 @@ static void
 warning_va_list(unsigned line, const char *fmt, va_list args)
 {
 	if (parser->filename) {
-		char m[MAXSYSLOGMSGLEN];
-		vsnprintf(m, sizeof(m), fmt, args);
-		log_msg(LOG_WARNING, "%s:%u: %s", parser->filename, line, m);
+		fprintf(stderr, "%s:%u: ", parser->filename, line);
 	}
-	else log_vmsg(LOG_WARNING, fmt, args);
+	fprintf(stderr, "warning: ");
+	vfprintf(stderr, fmt, args);
+	fprintf(stderr, "\n");
 }
 
 void
@@ -1098,3 +1133,21 @@ nsec3_add_params(const char* hashalgo_str, const char* flag_str,
 		zadd_rdata_wireformat(alloc_rdata_init(parser->region, "", 1));
 }
 #endif /* NSEC3 */
+
+#ifdef NSEC4
+static void
+nsec4_add_params(const char* hashalgo_str, const char* flag_str,
+	const char* iter_str, const char* salt_str, int salt_len)
+{
+	zadd_rdata_wireformat(zparser_conv_byte(parser->region, hashalgo_str));
+	zadd_rdata_wireformat(zparser_conv_byte(parser->region, flag_str));
+	zadd_rdata_wireformat(zparser_conv_short(parser->region, iter_str));
+
+	/* salt */
+	if(strcmp(salt_str, "-") != 0) 
+		zadd_rdata_wireformat(zparser_conv_hex_length(parser->region, 
+			salt_str, salt_len)); 
+	else 
+		zadd_rdata_wireformat(alloc_rdata_init(parser->region, "", 1));
+}
+#endif /* NSEC4 */

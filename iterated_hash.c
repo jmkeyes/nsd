@@ -1,14 +1,15 @@
 /*
  * iterated_hash.c -- nsec3 hash calculation.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  * With thanks to Ben Laurie.
  */
-#include "config.h"
-#ifdef NSEC3
+#include <config.h>
+
+#if defined(NSEC3) || defined(NSEC4)
 #include <openssl/sha.h>
 #include <stdio.h>
 #include <assert.h>
@@ -20,7 +21,7 @@ iterated_hash(unsigned char out[SHA_DIGEST_LENGTH],
 	const unsigned char *salt, int saltlength,
 	const unsigned char *in, int inlength, int iterations)
 {
-#if defined(NSEC3) && defined(HAVE_SSL)
+#if defined(HAVE_SSL)
 	SHA_CTX ctx;
 	int n;
 	assert(in && inlength > 0 && iterations >= 0);
@@ -36,10 +37,9 @@ iterated_hash(unsigned char out[SHA_DIGEST_LENGTH],
 	}
 	return SHA_DIGEST_LENGTH;
 #else
-	(void)out; (void)salt; (void)saltlength;
-	(void)in; (void)inlength; (void)iterations;
 	return 0;
 #endif
 }
 
-#endif /* NSEC3 */
+#endif /* NSEC3 || NSEC4 */
+

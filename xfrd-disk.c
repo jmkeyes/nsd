@@ -1,13 +1,13 @@
 /*
  * xfrd-disk.c - XFR (transfer) Daemon TCP system source file. Read/Write state to disk.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
-#include "config.h"
+#include <config.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -241,12 +241,12 @@ xfrd_read_state(struct xfrd_state* xfrd)
 		zone->timeout.tv_nsec = 0;
 
 		/* read the zone OK, now set the master properly */
-		zone->master = acl_find_num(zone->zone_options->pattern->
-			request_xfr, zone->master_num);
+		zone->master = acl_find_num(
+			zone->zone_options->request_xfr, zone->master_num);
 		if(!zone->master) {
 			DEBUG(DEBUG_XFRD,1, (LOG_INFO, "xfrd: masters changed for zone %s",
 				zone->apex_str));
-			zone->master = zone->zone_options->pattern->request_xfr;
+			zone->master = zone->zone_options->request_xfr;
 			zone->master_num = 0;
 			zone->round_num = 0;
 		}
@@ -297,7 +297,7 @@ xfrd_read_state(struct xfrd_state* xfrd)
 		return;
 	}
 
-	DEBUG(DEBUG_XFRD,1, (LOG_INFO, "xfrd: read %d zones from state file", (int)numzones));
+	DEBUG(DEBUG_XFRD,1, (LOG_INFO, "xfrd: read %d zones from state file", numzones));
 	fclose(in);
 	region_destroy(tempregion);
 }
@@ -308,23 +308,23 @@ neato_timeout(FILE* out, const char* str, uint32_t secs)
 {
 	fprintf(out, "%s", str);
 	if(secs <= 0) {
-		fprintf(out, " %ds", (int)secs);
+		fprintf(out, " %ds", secs);
 		return;
 	}
 	if(secs >= 3600*24) {
-		fprintf(out, " %dd", (int)secs/(3600*24));
+		fprintf(out, " %dd", secs/(3600*24));
 		secs = secs % (3600*24);
 	}
 	if(secs >= 3600) {
-		fprintf(out, " %dh", (int)secs/3600);
+		fprintf(out, " %dh", secs/3600);
 		secs = secs%3600;
 	}
 	if(secs >= 60) {
-		fprintf(out, " %dm", (int)secs/60);
+		fprintf(out, " %dm", secs/60);
 		secs = secs%60;
 	}
 	if(secs > 0) {
-		fprintf(out, " %ds", (int)secs);
+		fprintf(out, " %ds", secs);
 	}
 }
 
@@ -371,17 +371,17 @@ xfrd_write_state_soa(FILE* out, const char* id,
 	fprintf(out, " ago\n");
 
 	fprintf(out, "\t%s: %u %u %u %u", id,
-		(unsigned)ntohs(soa->type), (unsigned)ntohs(soa->klass),
-		(unsigned)ntohl(soa->ttl), (unsigned)ntohs(soa->rdata_count));
+		ntohs(soa->type), ntohs(soa->klass),
+		ntohl(soa->ttl), ntohs(soa->rdata_count));
 	fprintf(out, " ");
 	xfrd_write_dname(out, soa->prim_ns);
 	fprintf(out, " ");
 	xfrd_write_dname(out, soa->email);
-	fprintf(out, " %u", (unsigned)ntohl(soa->serial));
-	fprintf(out, " %u", (unsigned)ntohl(soa->refresh));
-	fprintf(out, " %u", (unsigned)ntohl(soa->retry));
-	fprintf(out, " %u", (unsigned)ntohl(soa->expire));
-	fprintf(out, " %u\n", (unsigned)ntohl(soa->minimum));
+	fprintf(out, " %u", ntohl(soa->serial));
+	fprintf(out, " %u", ntohl(soa->refresh));
+	fprintf(out, " %u", ntohl(soa->retry));
+	fprintf(out, " %u", ntohl(soa->expire));
+	fprintf(out, " %u\n", ntohl(soa->minimum));
 	fprintf(out, "\t#");
 	neato_timeout(out, " refresh =", ntohl(soa->refresh));
 	neato_timeout(out, " retry =", ntohl(soa->retry));

@@ -1,7 +1,7 @@
 /*
  * dns.h -- DNS definitions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -141,12 +141,18 @@ typedef enum nsd_rc nsd_rc_type;
 #define TYPE_ANY	255	/* any type (wildcard) */
 
 #define TYPE_DLV	32769	/* RFC 4431 */
-#define PSEUDO_TYPE_DLV	RRTYPE_DESCRIPTORS_LENGTH
+
+#define TYPE_NSEC4	65326	/* private NSEC4 */
+#define TYPE_NSEC4PARAM 65327	/* private NSEC4PARAM at zone apex nsec4 parameters */
+
+#define PSEUDO_TYPE_DLV		(TYPE_SPF+1)
+#define PSEUDO_TYPE_NSEC4	(TYPE_SPF+2)
+#define PSEUDO_TYPE_NSEC4PARAM	(TYPE_SPF+3)
 
 #define MAXLABELLEN	63
 #define MAXDOMAINLEN	255
 
-#define MAXRDATALEN	64      /* This is more than enough, think multiple TXT. */
+#define MAXRDATALEN	64      /* This is more than enough, think multiple TXT.  */
 #define MAX_RDLENGTH	65535
 
 /* Maximum size of a single RR.  */
@@ -155,8 +161,6 @@ typedef enum nsd_rc nsd_rc_type;
 
 #define IP4ADDRLEN	(32/8)
 #define IP6ADDRLEN	(128/8)
-
-#define NSEC3_HASH_LEN 20
 
 /*
  * The different types of RDATA wireformat data.
@@ -230,9 +234,9 @@ typedef struct rrtype_descriptor rrtype_descriptor_type;
  * Indexed by type.  The special type "0" can be used to get a
  * descriptor for unknown types (with one binary rdata).
  *
- * spf + 1
+ * spf + 3
  */
-#define RRTYPE_DESCRIPTORS_LENGTH  (TYPE_SPF + 1)
+#define RRTYPE_DESCRIPTORS_LENGTH  (TYPE_SPF + 3)
 rrtype_descriptor_type *rrtype_descriptor_by_name(const char *name);
 rrtype_descriptor_type *rrtype_descriptor_by_type(uint16_t type);
 

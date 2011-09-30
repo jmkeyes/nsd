@@ -1,12 +1,12 @@
 /*
  * nsec3.c -- nsec3 handling.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
-#include "config.h"
+#include <config.h>
 #ifdef NSEC3
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,12 +16,19 @@
 #include "namedb.h"
 #include "nsd.h"
 #include "answer.h"
-#include "udbzone.h"
+
+#define NSEC3_SHA1_HASH 1 /* same type code as DS hash */
+
+/* detect is the latter rrset has the same hashalgo, iterations and salt
+   as the base. Does not compare optout bit, or other rdata.
+   base=NULL uses the zone soa_rr. */
+static int nsec3_rrset_params_ok(rr_type* base, rrset_type* rrset);
 
 static void
 detect_nsec3_params(rr_type* nsec3_apex,
 	const unsigned char** salt, int* salt_len, int* iter)
 {
+	/* always uses first NSEC3 record with SOA bit set */
 	assert(salt && salt_len && iter);
 	assert(nsec3_apex);
 	*salt_len = rdata_atom_data(nsec3_apex->rdatas[3])[0];
@@ -29,600 +36,372 @@ detect_nsec3_params(rr_type* nsec3_apex,
 	*iter = read_uint16(rdata_atom_data(nsec3_apex->rdatas[2]));
 }
 
-const dname_type *
-nsec3_b32_create(region_type* region, zone_type* zone, unsigned char* hash)
+static const dname_type *
+nsec3_hash_dname_param(region_type *region, zone_type *zone,
+	const dname_type *dname, rr_type* param_rr)
 {
-	const dname_type* dname;
+	unsigned char hash[SHA_DIGEST_LENGTH];
 	char b32[SHA_DIGEST_LENGTH*2+1];
-	b32_ntop(hash, SHA_DIGEST_LENGTH, b32, sizeof(b32));
+	const unsigned char* nsec3_salt = NULL;
+	int nsec3_saltlength = 0;
+	int nsec3_iterations = 0;
+
+	detect_nsec3_params(param_rr, &nsec3_salt,
+		&nsec3_saltlength, &nsec3_iterations);
+	iterated_hash(hash, nsec3_salt, nsec3_saltlength, dname_name(dname),
+		dname->name_size, nsec3_iterations);
+	b32_ntop(hash, sizeof(hash), b32, sizeof(b32));
 	dname=dname_parse(region, b32);
 	dname=dname_concatenate(region, dname, domain_dname(zone->apex));
 	return dname;
 }
 
-void
-nsec3_hash_and_store(zone_type *zone, const dname_type *dname, uint8_t* store)
+const dname_type *
+nsec3_hash_dname(region_type *region, zone_type *zone,
+	const dname_type *dname)
 {
-	const unsigned char* nsec3_salt = NULL;
-	int nsec3_saltlength = 0;
-	int nsec3_iterations = 0;
-
-	detect_nsec3_params(zone->nsec3_param, &nsec3_salt,
-		&nsec3_saltlength, &nsec3_iterations);
-	iterated_hash((unsigned char*)store, nsec3_salt, nsec3_saltlength,
-		dname_name(dname), dname->name_size, nsec3_iterations);
-}
-
-#define STORE_HASH(x,y) memmove(domain->x,y,NSEC3_HASH_LEN); domain->have_##x =1;
-
-/** find hash or create it and store it */
-static void
-nsec3_lookup_hash_and_wc(namedb_type* db, zone_type* zone, udb_ptr* z,
-	const dname_type* dname, domain_type* domain)
-{
-	uint8_t h[NSEC3_HASH_LEN], h_wc[NSEC3_HASH_LEN];
-	const dname_type* wcard;
-	if(domain->have_nsec3_hash && domain->have_nsec3_wc_hash) {
-		return;
-	}
-	if(udb_zone_lookup_hash_wc(db->udb, z, dname_name(dname),
-		dname->name_size, h, h_wc)) {
-		STORE_HASH(nsec3_hash, h);
-		STORE_HASH(nsec3_wc_hash, h_wc);
-		return;
-	}
-	/* lookup failed; disk failure or so */
-	nsec3_hash_and_store(zone, dname, domain->nsec3_hash);
-	domain->have_nsec3_hash = 1;
-	if(1) {
-		region_type* region = region_create(xalloc, free);
-		wcard = dname_parse(region, "*");
-		wcard = dname_concatenate(region, wcard, dname);
-		nsec3_hash_and_store(zone, wcard, domain->nsec3_wc_hash);
-		domain->have_nsec3_wc_hash = 1;
-		region_destroy(region);
-	}
-}
-
-static void
-nsec3_lookup_hash_ds(namedb_type* db, zone_type* zone, udb_ptr* z,
-	const dname_type* dname, domain_type* domain)
-{
-	uint8_t h[NSEC3_HASH_LEN];
-	if(domain->have_nsec3_ds_parent_hash) {
-		return;
-	}
-	if(udb_zone_lookup_hash(db->udb, z, dname_name(dname),
-		dname->name_size, h)) {
-		STORE_HASH(nsec3_ds_parent_hash, h);
-		return;
-	}
-	/* lookup failed; disk failure or so */
-	nsec3_hash_and_store(zone, dname, domain->nsec3_ds_parent_hash);
-	domain->have_nsec3_ds_parent_hash = 1;
+	return nsec3_hash_dname_param(region, zone,
+		dname, zone->nsec3_soa_rr);
 }
 
 static int
 nsec3_has_soa(rr_type* rr)
 {
 	if(rdata_atom_size(rr->rdatas[5]) >= 3 && /* has types in bitmap */
-	  rdata_atom_data(rr->rdatas[5])[0] == 0 && /* first window = 0, */
-	  /* [1]: windowlen must be >= 1 */
-	  rdata_atom_data(rr->rdatas[5])[2]&0x02)  /* SOA bit set */
-	  return 1;
+		rdata_atom_data(rr->rdatas[5])[0] == 0 && /* first window = 0, */
+						/* [1]: windowlen must be >= 1 */
+		rdata_atom_data(rr->rdatas[5])[2]&0x02)  /* SOA bit set */
+		return 1;
 	return 0;
 }
 
 static rr_type*
-check_apex_soa(namedb_type* namedb, zone_type *zone, udb_ptr* z)
+find_zone_nsec3(namedb_type* namedb, zone_type *zone)
 {
-	uint8_t h[NSEC3_HASH_LEN];
+	size_t i;
 	domain_type* domain;
-	const dname_type* hashed_apex, *dname = domain_dname(zone->apex);
-	unsigned j;
-	rrset_type* nsec3_rrset;
 	region_type* tmpregion;
-	if(!udb_zone_lookup_hash(namedb->udb, z, dname_name(dname),
-		dname->name_size, h)) {
-		return NULL;
-	}
-	tmpregion = region_create(xalloc, free);
-	hashed_apex = nsec3_b32_create(tmpregion, zone, h);
-	domain = domain_table_find(namedb->domains, hashed_apex);
-	if(!domain) {
-		log_msg(LOG_ERR, "%s NSEC3PARAM entry has no hash(apex).",
-			domain_to_string(zone->apex));
-		log_msg(LOG_ERR, "hash(apex)= %s",
-			dname_to_string(hashed_apex, NULL));
-		region_destroy(tmpregion);
-		return NULL;
-	}
-	nsec3_rrset = domain_find_rrset(domain, zone, TYPE_NSEC3);
-	if(!nsec3_rrset) {
-		log_msg(LOG_ERR, "%s NSEC3PARAM entry: hash(apex) has no NSEC3 RRset.",
-			domain_to_string(zone->apex));
-		log_msg(LOG_ERR, "hash(apex)= %s",
-			dname_to_string(hashed_apex, NULL));
-		region_destroy(tmpregion);
-		return NULL;
-	}
-	for(j=0; j<nsec3_rrset->rr_count; j++) {
-		if(nsec3_has_soa(&nsec3_rrset->rrs[j])) {
-			region_destroy(tmpregion);
-			return &nsec3_rrset->rrs[j];
-		}
-	}
-	log_msg(LOG_ERR, "%s NSEC3PARAM entry: hash(apex) NSEC3 has no SOA flag.",
-		domain_to_string(zone->apex));
-	log_msg(LOG_ERR, "hash(apex)= %s",
-		dname_to_string(hashed_apex, NULL));
-	region_destroy(tmpregion);
-	return NULL;
-}
-
-static struct rr* udb_zone_find_nsec3param(udb_base* udb, udb_ptr* uz,
-        struct zone* z)
-{
-	udb_ptr urr;
-	unsigned i;
-	rrset_type* rrset = domain_find_rrset(z->apex, z, TYPE_NSEC3PARAM);
-	if(!rrset) /* no NSEC3PARAM in mem */
-		return NULL;
-	udb_ptr_new(&urr, udb, &ZONE(uz)->nsec3param);
-	if(!urr.data || RR(&urr)->len < 5) {
-		/* no NSEC3PARAM in udb */
-		udb_ptr_unlink(&urr, udb);
-		return NULL;
-	}
-	/* find matching NSEC3PARAM RR in memory */
-	for(i=0; i<rrset->rr_count; i++) {
-		/* if this RR matches the udb RR then we are done */
-		rdata_atom_type* rd = rrset->rrs[i].rdatas;
-		if(RR(&urr)->wire[0] == rdata_atom_data(rd[0])[0] && /*alg*/
-		   RR(&urr)->wire[1] == rdata_atom_data(rd[1])[0] && /*flg*/
-		   RR(&urr)->wire[2] == rdata_atom_data(rd[2])[0] && /*iter*/
-		   RR(&urr)->wire[3] == rdata_atom_data(rd[2])[1] &&
-		   RR(&urr)->wire[4] == rdata_atom_data(rd[3])[0] && /*slen*/
-		   RR(&urr)->len >= 5 + RR(&urr)->wire[4] &&
-		   memcmp(RR(&urr)->wire+5, rdata_atom_data(rd[3])+1,
-			rdata_atom_data(rd[3])[0]) == 0) {
-			udb_ptr_unlink(&urr, udb);
-			return &rrset->rrs[i];
-		}
-	}
-	udb_ptr_unlink(&urr, udb);
-	return NULL;
-}
-
-void nsec3_find_zone_param(struct namedb* db, struct zone* zone, udb_ptr* z)
-{
-	/* get nsec3param RR from udb */
-	zone->nsec3_param = udb_zone_find_nsec3param(db->udb, z, zone);
-}
-
-/* check params ok for one RR */
-static int
-nsec3_rdata_params_ok(rdata_atom_type* prd, rdata_atom_type* rd)
-{
-	return (rdata_atom_data(rd[0])[0] ==
-		rdata_atom_data(prd[0])[0] && /* hash algo */
-	   rdata_atom_data(rd[2])[0] ==
-		rdata_atom_data(prd[2])[0] && /* iterations 0 */
-	   rdata_atom_data(rd[2])[1] ==
-		rdata_atom_data(prd[2])[1] && /* iterations 1 */
-	   rdata_atom_data(rd[3])[0] ==
-		rdata_atom_data(prd[3])[0] && /* salt length */
-	   memcmp(rdata_atom_data(rd[3])+1,
-		rdata_atom_data(prd[3])+1, rdata_atom_data(rd[3])[0])
-		== 0 );
-}
-
-int nsec3_rr_uses_params(rr_type* rr, zone_type* zone)
-{
-	if(!rr || rr->rdata_count < 4)
+	/* Check settings in NSEC3PARAM.
+	   Hash algorithm must be OK. And a NSEC3 with soa bit
+	   must map to the zone apex.  */
+	rrset_type* paramset = domain_find_rrset(zone->apex, zone, TYPE_NSEC3PARAM);
+	if(!paramset || !paramset->rrs || !paramset->rr_count)
 		return 0;
-	return nsec3_rdata_params_ok(zone->nsec3_param->rdatas, rr->rdatas);
-}
+	tmpregion = region_create(xalloc, free);
+	for(i=0; i<paramset->rr_count; i++)
+	{
+		rr_type* rr = &paramset->rrs[i];
+		const dname_type* hashed_apex;
+		rrset_type* nsec3_rrset;
+		size_t j;
 
-int nsec3_in_chain_count(domain_type* domain, zone_type* zone)
-{
-	rrset_type* rrset = domain_find_rrset(domain, zone, TYPE_NSEC3);
-	unsigned i;
-	int count = 0;
-	if(!rrset || !zone->nsec3_param)
-		return 0; /* no NSEC3s, none in the chain */
-	for(i=0; i<rrset->rr_count; i++) {
-		if(nsec3_rr_uses_params(&rrset->rrs[i], zone))
-			count++;
-	}
-	return count;
-}
-
-struct domain* nsec3_chain_find_prev(struct zone* zone, struct domain* domain)
-{
-	if(domain->nsec3_node) {
-		/* see if there is a prev */
-		struct radnode* r = radix_prev(domain->nsec3_node);
-		if(r && r->parent) {
-			/* found a previous, which is not the root-node in
-			 * the prehash tree (and thus points to the tree) */
-			return (domain_type*)r->elem;
+		if(rdata_atom_data(rr->rdatas[0])[0] != NSEC3_SHA1_HASH) {
+			log_msg(LOG_ERR, "%s NSEC3PARAM entry %d has unknown hash algo %d",
+				dname_to_string(domain_dname(zone->apex), NULL), (int)i,
+				rdata_atom_data(rr->rdatas[0])[0]);
+			continue;
 		}
+		if(rdata_atom_data(rr->rdatas[1])[0] != 0) {
+			/* draft-nsec3-09: NSEC3PARAM records with flags
+			   field value other than zero MUST be ignored. */
+			continue;
+		}
+		/* check hash of apex -> NSEC3 with soa bit on */
+		hashed_apex = nsec3_hash_dname_param(tmpregion,
+			zone, domain_dname(zone->apex), &paramset->rrs[i]);
+		domain = domain_table_find(namedb->domains, hashed_apex);
+		if(!domain) {
+			log_msg(LOG_ERR, "%s NSEC3PARAM entry %d has no hash(apex).",
+				dname_to_string(domain_dname(zone->apex), NULL), (int)i);
+			log_msg(LOG_ERR, "hash(apex)= %s",
+				dname_to_string(hashed_apex, NULL));
+			continue;
+		}
+		nsec3_rrset = domain_find_rrset(domain, zone, TYPE_NSEC3);
+		if(!nsec3_rrset) {
+			log_msg(LOG_ERR, "%s NSEC3PARAM entry %d: hash(apex) has no NSEC3 RRset",
+				dname_to_string(domain_dname(zone->apex), NULL), (int)i);
+			continue;
+		}
+		/* find SOA bit enabled nsec3, with the same settings */
+		for(j=0; j<nsec3_rrset->rr_count; j++)
+		{
+			const unsigned char *salt1, *salt2;
+			int saltlen1, saltlen2, iter1, iter2;
+			if(!nsec3_has_soa(&nsec3_rrset->rrs[j]))
+				continue;
+			/* check params OK. Ignores the optout bit. */
+			detect_nsec3_params(rr, &salt1, &saltlen1, &iter1);
+			detect_nsec3_params(&nsec3_rrset->rrs[j],
+				&salt2, &saltlen2, &iter2);
+			if(saltlen1 == saltlen2 && iter1 == iter2 &&
+				rdata_atom_data(rr->rdatas[0])[0] == /* algo */
+					rdata_atom_data(nsec3_rrset->rrs[j].rdatas[0])[0]
+				&& memcmp(salt1, salt2, saltlen1) == 0) {
+				/* found it */
+				DEBUG(DEBUG_QUERY, 1, (LOG_INFO,
+					"detected NSEC3 for zone %s saltlen=%d iter=%d",
+					dname_to_string(domain_dname(
+					zone->apex),0), saltlen2, iter2));
+				region_destroy(tmpregion);
+				return &nsec3_rrset->rrs[j];
+			}
+		}
+		log_msg(LOG_ERR, "%s NSEC3PARAM entry %d: hash(apex) no NSEC3 with SOAbit",
+			dname_to_string(domain_dname(zone->apex), NULL), (int)i);
 	}
-	if(zone->nsec3_last)
-		return zone->nsec3_last;
-	return NULL;
+	region_destroy(tmpregion);
+	return 0;
 }
 
-void nsec3_clear_precompile(struct namedb* db, zone_type* zone)
+/* check that the rrset has an NSEC3 that uses the same parameters as the
+   zone is using. Pass NSEC3 rrset, and zone must have nsec3_rrset set.
+   if you pass NULL then 0 is returned. */
+static int
+nsec3_rrset_params_ok(rr_type* base, rrset_type* rrset)
 {
-	domain_type *walk;
-	/* clear prehash items (there must not be items for other zones) */
-	prehash_clear(db->domains);
-	/* clear trees */
-	if(zone->nsec3tree)
-		hash_tree_clear(zone->nsec3tree);
-	if(zone->hashtree)
-		hash_tree_clear(zone->hashtree);
-	if(zone->wchashtree)
-		hash_tree_clear(zone->wchashtree);
-	if(zone->dshashtree)
-		hash_tree_clear(zone->dshashtree);
-	/* wipe hashes */
-	/* wipe precompile */
-	walk = zone->apex;
-	while(walk && domain_is_subdomain(walk, zone->apex)) {
-		if(nsec3_domain_part_of_zone(walk, zone)) {
-			walk->nsec3_node = NULL;
-			walk->nsec3_cover = NULL;
-			walk->nsec3_wcard_child_cover = NULL;
-			walk->nsec3_is_exact = 0;
-			walk->have_nsec3_hash = 0;
-			walk->have_nsec3_wc_hash = 0;
-			walk->hash_node = NULL;
-			walk->wchash_node = NULL;
+	rdata_atom_type* prd;
+	rdata_atom_type* rd;
+	size_t i;
+	if(!rrset)
+		return 0; /* without rrset, no matching params either */
+	assert(rrset && rrset->zone && (base || rrset->zone->nsec3_soa_rr));
+	if(!base)
+		base = rrset->zone->nsec3_soa_rr;
+	prd = base->rdatas;
+	for(i=0; i<rrset->rr_count; ++i)
+	{
+		rd = rrset->rrs[i].rdatas;
+		assert(rrset->rrs[i].type == TYPE_NSEC3);
+		if(rdata_atom_data(rd[0])[0] ==
+			rdata_atom_data(prd[0])[0] && /* hash algo */
+		   rdata_atom_data(rd[2])[0] ==
+			rdata_atom_data(prd[2])[0] && /* iterations 0 */
+		   rdata_atom_data(rd[2])[1] ==
+			rdata_atom_data(prd[2])[1] && /* iterations 1 */
+		   rdata_atom_data(rd[3])[0] ==
+			rdata_atom_data(prd[3])[0] && /* salt length */
+		   memcmp(rdata_atom_data(rd[3])+1,
+			rdata_atom_data(prd[3])+1, rdata_atom_data(rd[3])[0])
+			== 0 )
+		{
+			/* this NSEC3 matches nsec3 parameters from zone */
+			return 1;
 		}
-		if(!walk->parent ||
-			nsec3_domain_part_of_zone(walk->parent, zone)) {
-			walk->nsec3_ds_parent_cover = NULL;
-			walk->nsec3_ds_parent_is_exact = 0;
-			walk->have_nsec3_ds_parent_hash = 0;
-			walk->dshash_node = NULL;
-		}
-		walk = domain_next(walk);
-	}
-	zone->nsec3_last = NULL;
-}
-
-/* see if domain name is part of (existing names in) the nsec3 zone */
-int
-nsec3_domain_part_of_zone(domain_type* d, zone_type* z)
-{
-	while(d) {
-		if(d->is_apex)
-			return (z->apex == d); /* zonecut, if right zone*/
-		d = d->parent;
 	}
 	return 0;
 }
 
-/* condition when a domain is precompiled */
 int
-nsec3_condition_hash(domain_type* d, zone_type* z)
+nsec3_find_cover(namedb_type* db, zone_type* zone,
+	const dname_type* hashname, domain_type** result)
 {
-	return d->is_existing && !domain_has_only_NSEC3(d, z) &&
-		nsec3_domain_part_of_zone(d, z) && !domain_is_glue(d, z);
-}
-
-/* condition when a domain is ds precompiled */
-int
-nsec3_condition_dshash(domain_type* d, zone_type* z)
-{
-	return d->is_existing && !domain_has_only_NSEC3(d, z) &&
-		(domain_find_rrset(d, z, TYPE_DS) ||
-		domain_find_rrset(d, z, TYPE_NS)) && d != z->apex;
-}
-
-int
-nsec3_find_cover(zone_type* zone, uint8_t* hash, size_t hashlen,
-	domain_type** result)
-{
-	struct radnode* r = NULL;
+	rrset_type *rrset;
+	domain_type *walk;
+	domain_type *closest_match;
+	domain_type *closest_encloser;
 	int exact;
 
 	assert(result);
-	assert(zone->nsec3_param && zone->nsec3tree);
+	assert(zone->nsec3_soa_rr);
 
-	exact = radix_find_less_equal(zone->nsec3tree, hash, hashlen, &r);
-	/* the r->parent check is to make sure we did not pick up the
-	 * rootnode in the nsec3tree which points to the tree itself */
-	if(r && r->parent) {
-		*result = (domain_type*)r->elem;
-	} else {
+	exact = domain_table_search(
+		db->domains, hashname, &closest_match, &closest_encloser);
+	/* exact match of hashed domain name + it has an NSEC3? */
+	if(exact &&
+	   nsec3_rrset_params_ok(NULL,
+	   	domain_find_rrset(closest_encloser, zone, TYPE_NSEC3))) {
+		*result = closest_encloser;
+		assert(*result != 0);
+		return 1;
+	}
+
+	/* find covering NSEC3 record, lexicographically before the closest match */
+	/* use nsec3_lookup to jumpstart the search */
+	walk = closest_match->nsec3_lookup;
+	rrset = 0;
+	while(walk && dname_is_subdomain(domain_dname(walk), domain_dname(zone->apex)))
+	{
+		if(nsec3_rrset_params_ok(NULL,
+			domain_find_rrset(walk, zone, TYPE_NSEC3))) {
+			/* this rrset is OK NSEC3, exit while */
+			rrset = domain_find_rrset(walk, zone, TYPE_NSEC3);
+			break;
+		}
+		walk = domain_previous(walk);
+	}
+	if(rrset)
+		*result = walk;
+	else 	{
+		/*
+		 * There are no NSEC3s before the closest match.
+		 * so the hash name is before the first NSEC3 record in the zone.
+		 * use last NSEC3, which covers the wraparound in hash space
+		 *
+		 * Since the zone has an NSEC3 with the SOA bit set for NSEC3 to turn on,
+		 * there is also a last nsec3, so find_cover always assigns *result!=0.
+		 */
 		*result = zone->nsec3_last;
 	}
-	return exact;
+	assert(*result != 0);
+	return 0;
 }
 
-void nsec3_precompile_domain(struct namedb* db, struct domain* domain,
-	struct zone* zone, struct udb_ptr* z)
+static void
+prehash_domain(namedb_type* db, zone_type* zone,
+	domain_type* domain, region_type* region)
 {
+	/* find it */
 	domain_type* result = 0;
+	const dname_type *wcard, *wcard_child, *hashname;
 	int exact;
 
-	/* hash it */
-	nsec3_lookup_hash_and_wc(db, zone, z, domain_dname(domain), domain);
+	if(!zone->nsec3_soa_rr)
+	{
+		/* set to 0 (in case NSEC3 removed after an update) */
+		domain->nsec3_is_exact = 0;
+		domain->nsec3_cover = NULL;
+		domain->nsec3_wcard_child_cover = NULL;
+		return;
+	}
 
-	/* add into tree */
-	zone_add_domain_in_hash_tree(&zone->hashtree, domain->nsec3_hash,
-		sizeof(domain->nsec3_hash), domain, &domain->hash_node);
-	zone_add_domain_in_hash_tree(&zone->wchashtree, domain->nsec3_wc_hash,
-		sizeof(domain->nsec3_wc_hash), domain, &domain->wchash_node);
-
-	/* lookup in tree cover ptr (or exact) */
-	exact = nsec3_find_cover(zone, domain->nsec3_hash,
-		sizeof(domain->nsec3_hash), &result);
+	hashname = nsec3_hash_dname(region, zone, domain_dname(domain));
+	exact = nsec3_find_cover(db, zone, hashname, &result);
 	domain->nsec3_cover = result;
 	if(exact)
 		domain->nsec3_is_exact = 1;
 	else	domain->nsec3_is_exact = 0;
 
 	/* find cover for *.domain for wildcard denial */
-	exact = nsec3_find_cover(zone, domain->nsec3_wc_hash,
-		sizeof(domain->nsec3_wc_hash), &result);
+	wcard = dname_parse(region, "*");
+	wcard_child = dname_concatenate(region, wcard, domain_dname(domain));
+	hashname = nsec3_hash_dname(region, zone, wcard_child);
+	exact = nsec3_find_cover(db, zone, hashname, &result);
 	domain->nsec3_wcard_child_cover = result;
+
+	if(exact && !domain_wildcard_child(domain))
+	{
+		/* We found an exact match for the *.domain NSEC3 hash,
+		 * but the domain wildcard child (*.domain) does not exist.
+		 * Thus there is a hash collision. It will cause servfail
+		 * for NXdomain queries below this domain.
+		 */
+		log_msg(LOG_WARNING, "prehash: collision of wildcard "
+			"denial for %s. Sign zone with different salt "
+			"to remove collision.",
+			dname_to_string(domain_dname(domain),0));
+	}
 }
 
-void nsec3_precompile_domain_ds(struct namedb* db, struct domain* domain,
-	struct zone* zone, struct udb_ptr* z)
+static void
+prehash_ds(namedb_type* db, zone_type* zone,
+	domain_type* domain, region_type* region)
 {
 	domain_type* result = 0;
+	const dname_type* hashname;
 	int exact;
 
-	/* hash it : it could have different hash parameters then the
-	   other hash for this domain name */
-	nsec3_lookup_hash_ds(db, zone, z, domain_dname(domain), domain);
-	/* lookup in tree cover ptr (or exact) */
-	exact = nsec3_find_cover(zone, domain->nsec3_ds_parent_hash,
-		sizeof(domain->nsec3_ds_parent_hash), &result);
+	if(!zone->nsec3_soa_rr) {
+		domain->nsec3_ds_parent_is_exact = 0;
+		domain->nsec3_ds_parent_cover = NULL;
+		return;
+	}
+
+	/* hash again, other zone could have different hash parameters */
+	hashname = nsec3_hash_dname(region, zone, domain_dname(domain));
+	exact = nsec3_find_cover(db, zone, hashname, &result);
 	if(exact)
 		domain->nsec3_ds_parent_is_exact = 1;
 	else 	domain->nsec3_ds_parent_is_exact = 0;
 	domain->nsec3_ds_parent_cover = result;
-	/* add into tree */
-	zone_add_domain_in_hash_tree(&zone->dshashtree,
-		domain->nsec3_ds_parent_hash,
-		sizeof(domain->nsec3_ds_parent_hash),
-		domain, &domain->dshash_node);
 }
 
 static void
-parse_nsec3_name(const dname_type* dname, uint8_t* hash, size_t buflen)
+prehash_zone(struct namedb* db, struct zone* zone)
 {
-	/* first label must be the match, */
-	size_t lablen = (buflen-1) * 8 / 5;
-	const uint8_t* wire = dname_name(dname);
-	assert(lablen == 32 && buflen == NSEC3_HASH_LEN+1);
-	/* labels of length 32 for SHA1, and must have space+1 for convert */
-	if(wire[0] != lablen) {
-		/* not NSEC3 */
-		memset(hash, 0, buflen);
+	domain_type *walk;
+	domain_type *last_nsec3_node;
+	region_type *temp_region;
+	assert(db && zone);
+
+	/* find zone settings */
+	zone->nsec3_soa_rr = find_zone_nsec3(db, zone);
+	if(!zone->nsec3_soa_rr) {
+		zone->nsec3_last = 0;
 		return;
 	}
-	(void)b32_pton((char*)wire+1, hash, buflen);
-}
 
-void nsec3_precompile_nsec3rr(struct domain* domain, struct zone* zone)
-{
-	uint8_t zehash[NSEC3_HASH_LEN+1];
-	/* add into nsec3tree */
-	parse_nsec3_name(domain_dname(domain), zehash, sizeof(zehash));
-	zone_add_domain_in_hash_tree(&zone->nsec3tree, zehash, NSEC3_HASH_LEN,
-		domain, &domain->nsec3_node);
-	/* fixup the last in the zone */
-	if(radix_last(zone->nsec3tree)->elem == domain) {
-		zone->nsec3_last = domain;
-	}
-}
+	temp_region = region_create(xalloc, free);
 
-void nsec3_precompile_newparam(namedb_type* db, zone_type* zone,
-	udb_ptr* udbz)
-{
-	domain_type* walk;
-	/* add nsec3s of chain to nsec3tree */
-	for(walk=zone->apex; walk && domain_is_subdomain(walk, zone->apex);
-		walk = domain_next(walk)) {
-		if(nsec3_in_chain_count(walk, zone) != 0) {
-			nsec3_precompile_nsec3rr(walk, zone);
+	/* go through entire zone and setup nsec3_lookup speedup */
+	walk = zone->apex;
+	last_nsec3_node = NULL;
+	/* since we walk in sorted order, we pass all NSEC3s in sorted
+	   order and we can set the lookup ptrs */
+	while(walk && dname_is_subdomain(
+		domain_dname(walk), domain_dname(zone->apex)))
+	{
+		zone_type* z = domain_find_zone(walk);
+		if(z && z==zone)
+		{
+			if(domain_find_rrset(walk, zone, TYPE_NSEC3))
+				last_nsec3_node = walk;
+			walk->nsec3_lookup = last_nsec3_node;
 		}
+		walk = domain_next(walk);
 	}
-	/* hash and precompile zone */
-	for(walk=zone->apex; walk && domain_is_subdomain(walk, zone->apex);
-		walk = domain_next(walk)) {
-		if(nsec3_condition_hash(walk, zone))
-			nsec3_precompile_domain(db, walk, zone, udbz);
-		if(nsec3_condition_dshash(walk, zone))
-			nsec3_precompile_domain_ds(db, walk, zone, udbz);
+	zone->nsec3_last = last_nsec3_node;
+
+	/* go through entire zone */
+	walk = zone->apex;
+	while(walk && dname_is_subdomain(
+		domain_dname(walk), domain_dname(zone->apex)))
+	{
+		zone_type* z;
+		if(!walk->is_existing && domain_has_only_NSEC3(walk, zone)) {
+			walk->nsec3_cover = NULL;
+			walk->nsec3_wcard_child_cover = NULL;
+			walk = domain_next(walk);
+			continue;
+		}
+		z = domain_find_zone(walk);
+		if(z && z==zone && !domain_is_glue(walk, zone))
+		{
+			prehash_domain(db, zone, walk, temp_region);
+			region_free_all(temp_region);
+		}
+		/* prehash the DS (parent zone) */
+		if(domain_find_rrset(walk, zone, TYPE_DS) ||
+			(domain_find_rrset(walk, zone, TYPE_NS) &&
+			 walk != zone->apex))
+		{
+			assert(walk != zone->apex /* DS must be above zone cut */);
+			prehash_ds(db, zone, walk, temp_region);
+			region_free_all(temp_region);
+		}
+		walk = domain_next(walk);
 	}
+	region_destroy(temp_region);
 }
 
 void
-prehash_zone_complete(struct namedb* db, struct zone* zone)
+nsec3_prehash(struct namedb* db, int updated_only)
 {
-	udb_ptr udbz;
-
-	/* robust clear it */
-	nsec3_clear_precompile(db, zone);
-	/* find zone settings */
-
-	assert(db && zone);
-	if(!udb_zone_search(db->udb, &udbz, dname_name(domain_dname(
-		zone->apex)), domain_dname(zone->apex)->name_size)) {
-		udb_ptr_init(&udbz, db->udb); /* zero the ptr */
-	}
-	nsec3_find_zone_param(db, zone, &udbz);
-	if(!zone->nsec3_param || !check_apex_soa(db, zone, &udbz)) {
-		zone->nsec3_param = NULL;
-		zone->nsec3_last = NULL;
-		udb_ptr_unlink(&udbz, db->udb);
-		return;
-	}
-	nsec3_precompile_newparam(db, zone, &udbz);
-	udb_ptr_unlink(&udbz, db->udb);
-}
-
-/* find first in the tree and true if the first to process it */
-static int
-process_first(struct radtree* tree, uint8_t* hash, size_t hashlen,
-	struct radnode** p)
-{
-	if(!tree) {
-		*p = NULL;
-		return 0;
-	}
-	if(radix_find_less_equal(tree, hash, hashlen, p)) {
-		/* found an exact match */
-		return 1;
-	}
-	if(!*p || !(*p)->parent) /* before first, go from first */
-		*p = radix_next(radix_first(tree));
-	/* the inexact, smaller, match we found, does not itself need to
-	 * be edited */
-	else	*p = radix_next(*p); /* if this becomes NULL, nothing to do */
-	return 0;
-}
-
-/* set end pointer if possible */
-static void
-process_end(struct radtree* tree, uint8_t* hash, size_t hashlen,
-	struct radnode** p)
-{
-	if(!tree) {
-		*p = NULL;
-		return;
-	}
-	if(radix_find_less_equal(tree, hash, hashlen, p)) {
-		/* an exact match, fine, because this one does not get
-		 * processed */
-		return;
-	}
-	/* inexact element, but if NULL, until first element in tree */
-	if(!*p || !(*p)->parent) {
-		*p = radix_next(radix_first(tree));
-		return;
-	}
-	/* inexact match, use next element, if possible, the smaller
-	 * element is part of the range */
-	*p = radix_next(*p);
-	/* if next returns null, we go until the end of the tree */
-}
-
-/* prehash domains in hash range start to end */
-static void
-process_range(zone_type* zone, domain_type* start, domain_type* end,
-	domain_type* nsec3)
-{
-	/* start NULL means from first in tree */
-	/* end NULL means to last in tree */
-	struct radnode *p = NULL, *pwc = NULL, *pds = NULL;
-	struct radnode *p_end = NULL, *pwc_end = NULL, *pds_end = NULL;
-	/* set start */
-	if(start) {
-		uint8_t hash[NSEC3_HASH_LEN+1];
-		parse_nsec3_name(domain_dname(start), hash, sizeof(hash));
-		/* if exact match on first, set is_exact */
-		if(process_first(zone->hashtree, hash, NSEC3_HASH_LEN, &p)) {
-			((domain_type*)(p->elem))->nsec3_cover = nsec3;
-			((domain_type*)(p->elem))->nsec3_is_exact = 1;
-			p = radix_next(p);
+	zone_type *z;
+	time_t end, start = time(NULL);
+	int count = 0;
+	for(z = db->zones; z; z = z->next)
+	{
+		if(!updated_only || z->updated) {
+			prehash_zone(db, z);
+			if(z->nsec3_soa_rr)
+				count++;
 		}
-		(void)process_first(zone->wchashtree, hash,NSEC3_HASH_LEN,&pwc);
-		if(process_first(zone->dshashtree, hash, NSEC3_HASH_LEN, &pds)){
-			((domain_type*)(pds->elem))->nsec3_ds_parent_cover
-				= nsec3;
-			((domain_type*)(pds->elem))->nsec3_ds_parent_is_exact
-				= 1;
-			pds = radix_next(pds);
-		}
-	} else {
-		if(zone->hashtree)
-			p = radix_next(radix_first(zone->hashtree));
-		if(zone->wchashtree)
-			pwc = radix_next(radix_first(zone->wchashtree));
-		if(zone->dshashtree)
-			pds = radix_next(radix_first(zone->dshashtree));
 	}
-	/* set end */
-	if(end) {
-		uint8_t hash[NSEC3_HASH_LEN+1];
-		parse_nsec3_name(domain_dname(end), hash, sizeof(hash));
-		process_end(zone->hashtree, hash, NSEC3_HASH_LEN, &p_end);
-		process_end(zone->wchashtree, hash, NSEC3_HASH_LEN, &pwc_end);
-		process_end(zone->dshashtree, hash, NSEC3_HASH_LEN, &pds_end);
-	}
-
-	/* precompile */
-	while(p && p != p_end) {
-		((domain_type*)(p->elem))->nsec3_cover = nsec3;
-		((domain_type*)(p->elem))->nsec3_is_exact = 0;
-		p = radix_next(p);
-	}
-	while(pwc && pwc != pwc_end) {
-		((domain_type*)(pwc->elem))->nsec3_wcard_child_cover = nsec3;
-		pwc = radix_next(pwc);
-	}
-	while(pds && pds != pds_end) {
-		((domain_type*)(pds->elem))->nsec3_ds_parent_cover = nsec3;
-		((domain_type*)(pds->elem))->nsec3_ds_parent_is_exact = 0;
-		pds = radix_next(pds);
-	}
-}
-
-/* prehash a domain from the prehash list */
-static void
-process_prehash_domain(domain_type* domain, zone_type* zone)
-{
-	/* in the hashtree, wchashtree, dshashtree walk through to next NSEC3
-	 * and set precompile pointers to point to this domain (or is_exact),
-	 * the first domain can be is_exact. If it is the last NSEC3, also
-	 * process the initial part (before the first) */
-	struct radnode* nx;
-
-	assert(domain->nsec3_node);
-	nx = radix_next(domain->nsec3_node);
-	if(nx) {
-		/* process until next nsec3 */
-		domain_type* end = (domain_type*)nx->elem;
-		process_range(zone, domain, end, domain);
-	} else {
-		/* first is root, but then comes the first nsec3 */
-		domain_type* first = (domain_type*)(radix_next(radix_first(
-			zone->nsec3tree))->elem);
-		/* last in zone */
-		process_range(zone, domain, NULL, domain);
-		/* also process before first in zone */
-		process_range(zone, NULL, first, domain);
-	}
-}
-
-void prehash_zone(struct namedb* db, struct zone* zone, udb_ptr* udbz)
-{
-	domain_type* d;
-	if(!zone->nsec3_param) {
-		prehash_clear(db->domains);
-		return;
-	}
-	/* process prehash list */
-	for(d = db->domains->prehash_list; d; d = d->prehash_next) {
-		process_prehash_domain(d, zone);
-	}
-	/* clear prehash list */
-	prehash_clear(db->domains);
-
-	if(!check_apex_soa(db, zone, udbz)) {
-		zone->nsec3_param = NULL;
-		zone->nsec3_last = NULL;
-	}
+	end = time(NULL);
+	if(count > 0)
+		VERBOSITY(1, (LOG_INFO, "nsec3-prepare took %d "
+		"seconds for %d zones.", (int)(end-start), count));
 }
 
 /* add the NSEC3 rrset to the query answer at the given domain */
@@ -640,10 +419,9 @@ nsec3_add_rrset(struct query *query, struct answer *answer,
 /* this routine does hashing at query-time. slow. */
 static void
 nsec3_add_nonexist_proof(struct query *query, struct answer *answer,
-        struct domain *encloser, const dname_type* qname)
+        struct domain *encloser, struct namedb* db, const dname_type* qname)
 {
-	uint8_t hash[NSEC3_HASH_LEN];
-	const dname_type *to_prove;
+	const dname_type *to_prove, *hashed;
 	domain_type *cover=0;
 	assert(encloser);
 	/* if query=a.b.c.d encloser=c.d. then proof needed for b.c.d. */
@@ -651,8 +429,8 @@ nsec3_add_nonexist_proof(struct query *query, struct answer *answer,
 	to_prove = dname_partial_copy(query->region, qname,
 		dname_label_match_count(qname, domain_dname(encloser))+1);
 	/* generate proof that one label below closest encloser does not exist */
-	nsec3_hash_and_store(query->zone, to_prove, hash);
-	if(nsec3_find_cover(query->zone, hash, sizeof(hash), &cover))
+	hashed = nsec3_hash_dname(query->region, query->zone, to_prove);
+	if(nsec3_find_cover(db, query->zone, hashed, &cover))
 	{
 		/* exact match, hash collision */
 		/* the hashed name of the query corresponds to an existing name. */
@@ -671,12 +449,13 @@ nsec3_add_nonexist_proof(struct query *query, struct answer *answer,
 static void
 nsec3_add_closest_encloser_proof(
 	struct query *query, struct answer *answer,
-	struct domain *closest_encloser, const dname_type* qname)
+	struct domain *closest_encloser, struct namedb* db,
+	const dname_type* qname)
 {
 	if(!closest_encloser)
 		return;
 	/* prove that below closest encloser nothing exists */
-	nsec3_add_nonexist_proof(query, answer, closest_encloser, qname);
+	nsec3_add_nonexist_proof(query, answer, closest_encloser, db, qname);
 	/* proof that closest encloser exists */
 	if(closest_encloser->nsec3_is_exact)
 		nsec3_add_rrset(query, answer, AUTHORITY_SECTION,
@@ -685,13 +464,13 @@ nsec3_add_closest_encloser_proof(
 
 void
 nsec3_answer_wildcard(struct query *query, struct answer *answer,
-        struct domain *wildcard, const dname_type* qname)
+        struct domain *wildcard, struct namedb* db, const dname_type* qname)
 {
 	if(!wildcard)
 		return;
-	if(!query->zone->nsec3_param)
+	if(!query->zone->nsec3_soa_rr)
 		return;
-	nsec3_add_nonexist_proof(query, answer, wildcard, qname);
+	nsec3_add_nonexist_proof(query, answer, wildcard, db, qname);
 }
 
 static void
@@ -739,9 +518,8 @@ void
 nsec3_answer_nodata(struct query *query, struct answer *answer,
 	struct domain *original)
 {
-	if(!query->zone->nsec3_param)
+	if(!query->zone->nsec3_soa_rr)
 		return;
-
 	/* nodata when asking for secure delegation */
 	if(query->qtype == TYPE_DS)
 	{
@@ -759,30 +537,26 @@ nsec3_answer_nodata(struct query *query, struct answer *answer,
 	/* the nodata is result from a wildcard match */
 	else if (original==original->wildcard_child_closest_match
 		&& label_is_wildcard(dname_name(domain_dname(original)))) {
-		/* denial for wildcard is already there */
-
+		/* denial for wildcard is already there (by answer_wildcard) */
 		/* add parent proof to have a closest encloser proof for wildcard parent */
-		/* in other words: nsec3 matching closest encloser */
 		if(original->parent && original->parent->nsec3_is_exact)
 			nsec3_add_rrset(query, answer, AUTHORITY_SECTION,
 				original->parent->nsec3_cover);
 		/* proof for wildcard itself */
-		/* in other words: nsec3 matching source of synthesis */
 		nsec3_add_rrset(query, answer, AUTHORITY_SECTION,
 			original->nsec3_cover);
 	}
 	else {	/* add nsec3 to prove rrset does not exist */
-		if(original->nsec3_is_exact) {
+		if(original->nsec3_is_exact)
 			nsec3_add_rrset(query, answer, AUTHORITY_SECTION,
 				original->nsec3_cover);
-		}
 	}
 }
 
 void
 nsec3_answer_delegation(struct query *query, struct answer *answer)
 {
-	if(!query->zone->nsec3_param)
+	if(!query->zone->nsec3_soa_rr)
 		return;
 	nsec3_add_ds_proof(query, answer, query->delegation_domain, 1);
 }
@@ -812,14 +586,13 @@ domain_has_only_NSEC3(struct domain* domain, struct zone* zone)
 void
 nsec3_answer_authoritative(struct domain** match, struct query *query,
 	struct answer *answer, struct domain* closest_encloser,
-	const dname_type* qname)
+	struct namedb* db, const dname_type* qname)
 {
-	if(!query->zone->nsec3_param)
+	if(!query->zone->nsec3_soa_rr)
 		return;
 	assert(match);
 	/* there is a match, this has 1 RRset, which is NSEC3, but qtype is not. */
-        /* !is_existing: no RR types exist at the QNAME, nor at any descendant of QNAME */
-	if(*match && !(*match)->is_existing &&
+	if(*match &&
 #if 0
 		query->qtype != TYPE_NSEC3 &&
 #endif
@@ -843,20 +616,10 @@ nsec3_answer_authoritative(struct domain** match, struct query *query,
 		}
 		return;
 	}
-	else if(*match && (*match)->is_existing &&
-#if 0
-		query->qtype != TYPE_NSEC3 &&
-#endif
-		domain_has_only_NSEC3(*match, query->zone))
-	{
-		/* this looks like a NSEC3 domain, but is actually an empty non-terminal. */
-		nsec3_answer_nodata(query, answer, *match);
-		return;
-	}
 	if(!*match) {
 		/* name error, domain does not exist */
 		nsec3_add_closest_encloser_proof(query, answer, closest_encloser,
-			qname);
+			db, qname);
 		nsec3_add_rrset(query, answer, AUTHORITY_SECTION,
 			closest_encloser->nsec3_wcard_child_cover);
 	}

@@ -1,13 +1,13 @@
 /*
  * nsd.c -- nsd(8)
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -43,7 +43,6 @@
 #include "nsd.h"
 #include "options.h"
 #include "tsig.h"
-#include "remote.h"
 
 /* The server handler... */
 static struct nsd nsd;
@@ -107,7 +106,7 @@ version(void)
 	fprintf(stderr, "%s version %s\n", PACKAGE_NAME, PACKAGE_VERSION);
 	fprintf(stderr, "Written by NLnet Labs.\n\n");
 	fprintf(stderr,
-		"Copyright (C) 2001-2006 NLnet Labs.  This is free software.\n"
+		"Copyright (C) 2001-2011 NLnet Labs.  This is free software.\n"
 		"There is NO warranty; not even for MERCHANTABILITY or FITNESS\n"
 		"FOR A PARTICULAR PURPOSE.\n");
 	exit(0);
@@ -278,7 +277,7 @@ sig_handler(int sig)
 		nsd.signal_hint_child = 1;
 		return;
 	case SIGHUP:
-		nsd.signal_hint_reload_hup = 1;
+		nsd.signal_hint_reload = 1;
 		return;
 	case SIGALRM:
 		nsd.signal_hint_stats = 1;
@@ -319,8 +318,6 @@ bind8_stats (struct nsd *nsd)
 
 	/* Current time... */
 	time_t now;
-	if(!nsd->st.period)
-		return;
 	time(&now);
 
 	/* NSTATS */
@@ -381,8 +378,9 @@ main(int argc, char *argv[])
 	pid_t	oldpid;
 	size_t i;
 	struct sigaction action;
+	FILE* dbfd;
 #ifdef HAVE_GETPWNAM
-	struct passwd *pwd = NULL;
+	struct passwd *pwd;
 #endif /* HAVE_GETPWNAM */
 
 	/* For initialising the address info structures */
@@ -572,19 +570,11 @@ main(int argc, char *argv[])
 		error("server identity too long (%u characters)",
 		      (unsigned) strlen(nsd.identity));
 	}
-	if(!tsig_init(nsd.region))
-		error("init tsig failed");
 
 	/* Read options */
-	nsd.options = nsd_options_create(region_create_custom(xalloc, free,
-		DEFAULT_CHUNK_SIZE, DEFAULT_LARGE_OBJECT_SIZE,
-		DEFAULT_INITIAL_CLEANUP_SIZE, 1));
-	if(!parse_options_file(nsd.options, configfile, NULL, NULL)) {
+	nsd.options = nsd_options_create(region_create(xalloc, free));
+	if(!parse_options_file(nsd.options, configfile)) {
 		error("could not read config: %s\n", configfile);
-	}
-	if(!parse_zone_list_file(nsd.options, nsd.options->zonelistfile)) {
-		error("could not read zonelist file %s\n",
-			nsd.options->zonelistfile);
 	}
 	if(nsd.options->ip4_only) {
 		for (i = 0; i < MAX_INTERFACES; ++i) {
@@ -729,6 +719,8 @@ main(int argc, char *argv[])
 		nsd.children[i].need_to_send_QUIT = 0;
 		nsd.children[i].need_to_exit = 0;
 		nsd.children[i].has_exited = 0;
+		nsd.children[i].dirty_zones = stack_create(nsd.region,
+			nsd_options_num_zones(nsd.options));
 	}
 
 	nsd.this_child = NULL;
@@ -833,6 +825,8 @@ main(int argc, char *argv[])
 	/* endpwent(); */
 #endif /* HAVE_GETPWNAM */
 
+	if(!tsig_init(nsd.region))
+		error("init tsig failed");
 #if defined(HAVE_SSL)
 	key_options_tsig_add(nsd.options);
 #endif
@@ -859,9 +853,6 @@ main(int argc, char *argv[])
 		} else if (strncmp(nsd.chrootdir, nsd.options->xfrdfile, l) != 0) {
 			error("%s is not relative to %s: chroot not possible",
 				nsd.options->xfrdfile, nsd.chrootdir);
-		} else if (strncmp(nsd.chrootdir, nsd.options->zonelistfile, l) != 0) {
-			error("%s is not relative to %s: chroot not possible",
-				nsd.options->zonelistfile, nsd.chrootdir);
 		} else if (strncmp(nsd.chrootdir, nsd.options->difffile, l) != 0) {
 			error("%s is not relative to %s: chroot not possible",
 				nsd.options->difffile, nsd.chrootdir);
@@ -906,7 +897,8 @@ main(int argc, char *argv[])
 			/* Child */
 			break;
 		case -1:
-			error("fork() failed: %s", strerror(errno));
+			log_msg(LOG_ERR, "fork() failed: %s", strerror(errno));
+			exit(1);
 		default:
 			/* Parent is done */
 			exit(0);
@@ -914,7 +906,8 @@ main(int argc, char *argv[])
 
 		/* Detach ourselves... */
 		if (setsid() == -1) {
-			error("setsid() failed: %s", strerror(errno));
+			log_msg(LOG_ERR, "setsid() failed: %s", strerror(errno));
+			exit(1);
 		}
 
 		if ((fd = open("/dev/null", O_RDWR, 0)) != -1) {
@@ -947,7 +940,6 @@ main(int argc, char *argv[])
 	nsd.mode = NSD_RUN;
 	nsd.signal_hint_child = 0;
 	nsd.signal_hint_reload = 0;
-	nsd.signal_hint_reload_hup = 0;
 	nsd.signal_hint_quit = 0;
 	nsd.signal_hint_shutdown = 0;
 	nsd.signal_hint_stats = 0;
@@ -956,16 +948,10 @@ main(int argc, char *argv[])
 
 	/* Initialize the server... */
 	if (server_init(&nsd) != 0) {
-		error("server initialization failed, %s could "
+		log_msg(LOG_ERR, "server initialization failed, %s could "
 			"not be started", argv0);
+		exit(1);
 	}
-#if defined(HAVE_SSL)
-	if(nsd.options->control_enable) {
-		/* read ssl keys while superuser and outside chroot */
-		if(!(nsd.rc = daemon_remote_create(nsd.options)))
-			error("could not perform remote control setup");
-	}
-#endif /* HAVE_SSL */
 
 	/* Set user context */
 #ifdef HAVE_GETPWNAM
@@ -1001,11 +987,11 @@ main(int argc, char *argv[])
 		nsd.dbfile += l;
 		nsd.pidfile += l;
 		nsd.options->xfrdfile += l;
-		nsd.options->zonelistfile += l;
 		nsd.options->difffile += l;
 
 		if (chroot(nsd.chrootdir)) {
-			error("unable to chroot: %s", strerror(errno));
+			log_msg(LOG_ERR, "unable to chroot: %s", strerror(errno));
+			exit(1);
 		}
 		DEBUG(DEBUG_IPC,1, (LOG_INFO, "changed root directory to %s",
 			nsd.chrootdir));
@@ -1017,6 +1003,13 @@ main(int argc, char *argv[])
 	DEBUG(DEBUG_IPC,1, (LOG_INFO, "file rotation on %s %sabled",
 		nsd.log_filename, nsd.file_rotation_ok?"en":"dis"));
 
+	/* Check if nsd.db exists */
+	if ((dbfd = fopen(nsd.dbfile, "r")) == NULL) {
+		log_msg(LOG_ERR, "unable to open %s for reading: %s", nsd.dbfile, strerror(errno));
+		exit(1);
+	}
+	fclose(dbfd);
+
 	/* Write pidfile */
 	if (writepid(&nsd) == -1) {
 		log_msg(LOG_ERR, "cannot overwrite the pidfile %s: %s",
@@ -1026,11 +1019,11 @@ main(int argc, char *argv[])
 	/* Drop the permissions */
 #ifdef HAVE_GETPWNAM
 	if (*nsd.username) {
-#ifdef HAVE_INITGROUPS
+ #ifdef HAVE_INITGROUPS
 		if(initgroups(nsd.username, nsd.gid) != 0)
 			log_msg(LOG_WARNING, "unable to initgroups %s: %s",
 				nsd.username, strerror(errno));
-#endif /* HAVE_INITGROUPS */
+ #endif /* HAVE_INITGROUPS */
 		endpwent();
 
 #ifdef HAVE_SETRESGID
@@ -1055,22 +1048,14 @@ main(int argc, char *argv[])
 
 		DEBUG(DEBUG_IPC,1, (LOG_INFO, "dropped user privileges, run as %s",
 			nsd.username));
-	}
+    }
 #endif /* HAVE_GETPWNAM */
 
-	if(nsd.server_kind == NSD_SERVER_MAIN) {
-		server_prepare_xfrd(&nsd);
-		/* fork xfrd before reading database, so it does not get
-		 * the memory size of the database */
-		server_start_xfrd(&nsd, 0, 0);
-	}
 	if (server_prepare(&nsd) != 0) {
-		unlinkpid(nsd.pidfile);
-		error("server preparation failed, %s could "
+		log_msg(LOG_ERR, "server preparation failed, %s could "
 			"not be started", argv0);
-	}
-	if(nsd.server_kind == NSD_SERVER_MAIN) {
-		server_send_soa_xfrd(&nsd, 0);
+		unlinkpid(nsd.pidfile);
+		exit(1);
 	}
 
 	/* Really take off */

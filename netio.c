@@ -1,12 +1,12 @@
 /*
  * netio.c -- network I/O support.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
-#include "config.h"
+#include <config.h>
 
 #include <assert.h>
 #include <errno.h>
@@ -24,6 +24,13 @@ int pselect(int n, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 #else
 #include <sys/select.h>
 #endif
+
+
+struct netio_handler_list
+{
+	netio_handler_list_type *next;
+	netio_handler_type      *handler;
+};
 
 netio_type *
 netio_create(region_type *region)

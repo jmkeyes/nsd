@@ -1,14 +1,14 @@
 /*
  * dname.c -- Domain name handling.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
 
-#include "config.h"
+#include <config.h>
 
 #include <sys/types.h>
 
@@ -495,54 +495,3 @@ dname_replace(region_type* region,
 	return res;
 }
 
-char* wirelabel2str(const uint8_t* label)
-{
-	static char buf[MAXDOMAINLEN*5+3];
-	char* p = buf;
-	uint8_t lablen;
-	lablen = *label++;
-	while(lablen--) {
-		uint8_t ch = *label++;
-		if (isalnum(ch) || ch == '-' || ch == '_') {
-			*p++ = ch;
-		} else if (ch == '.' || ch == '\\') {
-			*p++ = '\\';
-			*p++ = ch;
-		} else {
-			snprintf(p, 5, "\\%03u", (unsigned int)ch);
-			p += 4;
-		}
-	}
-	*p++ = 0;
-	return buf;
-}
-
-char* wiredname2str(const uint8_t* dname)
-{
-	static char buf[MAXDOMAINLEN*5+3];
-	char* p = buf;
-	uint8_t lablen;
-	if(*dname == 0) {
-		strlcpy(buf, ".", sizeof(buf));
-		return buf;
-	}
-	lablen = *dname++;
-	while(lablen) {
-		while(lablen--) {
-			uint8_t ch = *dname++;
-			if (isalnum(ch) || ch == '-' || ch == '_') {
-				*p++ = ch;
-			} else if (ch == '.' || ch == '\\') {
-				*p++ = '\\';
-				*p++ = ch;
-			} else {
-				snprintf(p, 5, "\\%03u", (unsigned int)ch);
-				p += 4;
-			}
-		}
-		lablen = *dname++;
-		*p++ = '.';
-	}
-	*p++ = 0;
-	return buf;
-}

@@ -1,7 +1,7 @@
 /*
  * dname.h -- Domain name handling.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -373,10 +373,5 @@ const dname_type *dname_replace(region_type* region,
 				const dname_type* name,
 				const dname_type* src,
 				const dname_type* dest);
-
-/** Convert uncompressed wireformat dname to a string */
-char* wiredname2str(const uint8_t* dname);
-/** convert uncompressed label to string */
-char* wirelabel2str(const uint8_t* label);
 
 #endif /* _DNAME_H_ */
