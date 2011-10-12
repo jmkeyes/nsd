@@ -1,7 +1,7 @@
 /*
  * dns.h -- DNS definitions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -146,7 +146,7 @@ typedef enum nsd_rc nsd_rc_type;
 #define MAXLABELLEN	63
 #define MAXDOMAINLEN	255
 
-#define MAXRDATALEN	64      /* This is more than enough, think multiple TXT. */
+#define MAXRDATALEN	64      /* This is more than enough, think multiple TXT.  */
 #define MAX_RDLENGTH	65535
 
 /* Maximum size of a single RR.  */
@@ -155,8 +155,6 @@ typedef enum nsd_rc nsd_rc_type;
 
 #define IP4ADDRLEN	(32/8)
 #define IP6ADDRLEN	(128/8)
-
-#define NSEC3_HASH_LEN 20
 
 /*
  * The different types of RDATA wireformat data.

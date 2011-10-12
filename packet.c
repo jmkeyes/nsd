@@ -1,13 +1,13 @@
 /*
  * packet.c -- low-level DNS packet encoding and decoding functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <string.h>
 
@@ -22,7 +22,7 @@ encode_dname(query_type *q, domain_type *domain)
 		query_put_dname_offset(q, domain, buffer_position(q->packet));
 		DEBUG(DEBUG_NAME_COMPRESSION, 2,
 		      (LOG_INFO, "dname: %s, number: %lu, offset: %u\n",
-		       domain_to_string(domain),
+		       dname_to_string(domain_dname(domain), NULL),
 		       (unsigned long) domain->number,
 		       query_get_dname_offset(q, domain)));
 		buffer_write(q->packet, dname_name(domain_dname(domain)),
@@ -32,7 +32,7 @@ encode_dname(query_type *q, domain_type *domain)
 	if (domain->parent) {
 		DEBUG(DEBUG_NAME_COMPRESSION, 2,
 		      (LOG_INFO, "dname: %s, number: %lu, pointer: %u\n",
-		       domain_to_string(domain),
+		       dname_to_string(domain_dname(domain), NULL),
 		       (unsigned long) domain->number,
 		       query_get_dname_offset(q, domain)));
 		assert(query_get_dname_offset(q, domain) <= MAX_COMPRESSION_OFFSET);
@@ -115,7 +115,7 @@ packet_encode_rrset(query_type *query,
 	uint16_t added = 0;
 	int all_added = 1;
 	int truncate_rrset = (section == ANSWER_SECTION ||
-							section == AUTHORITY_SECTION);
+		section == AUTHORITY_SECTION);
 	rrset_type *rrsig;
 
 	assert(rrset->rr_count > 0);

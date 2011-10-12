@@ -1,7 +1,7 @@
 /*
  * nsec3.h -- nsec3 handling.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -9,8 +9,9 @@
 #ifndef NSEC3_H
 #define NSEC3_H
 
+#include <config.h>
 #ifdef NSEC3
-struct udb_ptr;
+
 struct domain;
 struct dname;
 struct region;
@@ -19,22 +20,30 @@ struct namedb;
 struct query;
 struct answer;
 struct rr;
+struct nsec3_domain;
 
 /*
- * calculate prehash information for zone.
+ * Create the hashed name of the nsec3 record
+ * for the given dname.
  */
-void prehash_zone(struct namedb* db, struct zone* zone, struct udb_ptr* udbz);
-/*
- * calculate prehash for zone, assumes no partial precompile or prehashlist
- */
-void prehash_zone_complete(struct namedb* db, struct zone* zone);
+const struct dname *nsec3_hash_dname(struct region *region,
+	struct zone *zone, const struct dname *dname);
 
 /*
- * finds nsec3 that covers the given domain hash.
+ * calculate prehash information for all zones,
+ * selects only updated=1 zones if bool set.
+ */
+void prehash(struct namedb* db, int updated_only);
+void prehash_zone(struct namedb *db, struct zone *zone);
+void prehash_zone_incremental(struct namedb *db, struct zone *zone);
+
+/*
+ * finds nsec3 that covers the given domain dname.
  * returns true if the find is exact.
+ * hashname is the already hashed dname for the NSEC3.
  */
-int nsec3_find_cover(struct zone* zone, uint8_t* hash, size_t hashlen,
-	struct domain** result);
+int nsec3_find_cover(struct namedb* db, struct zone* zone,
+	const struct dname* hashname, struct nsec3_domain** result);
 
 /*
  * _answer_ Routines used to add the correct nsec3 record to a query answer.
@@ -45,7 +54,8 @@ int nsec3_find_cover(struct zone* zone, uint8_t* hash, size_t hashlen,
  * does not exist
  */
 void nsec3_answer_wildcard(struct query *query, struct answer *answer,
-        struct domain *wildcard, const struct dname *qname);
+        struct domain *wildcard, struct namedb* db,
+	const struct dname *qname);
 
 /*
  * add NSEC3 to provide domain name but not rrset exists,
@@ -65,48 +75,13 @@ void nsec3_answer_delegation(struct query *query, struct answer *answer);
  */
 void nsec3_answer_authoritative(struct domain** match, struct query *query,
 	struct answer *answer, struct domain* closest_encloser,
-	const struct dname* qname);
+	struct namedb* db, const struct dname* qname);
 
 /*
  * True if domain is a NSEC3 (+RRSIG) data only variety.
  * pass nonNULL zone to filter for particular zone.
  */
 int domain_has_only_NSEC3(struct domain* domain, struct zone* zone);
-
-/* get hashed bytes */
-void nsec3_hash_and_store(struct zone* zone, const struct dname* dname,
-	uint8_t* store);
-/* see if NSEC3 record uses the params in use for the zone */
-int nsec3_rr_uses_params(struct rr* rr, struct zone* zone);
-/* number of NSEC3s that are in the zone chain */
-int nsec3_in_chain_count(struct domain* domain, struct zone* zone);
-/* find previous NSEC3, or, lastinzone, or, NULL */
-struct domain* nsec3_chain_find_prev(struct zone* zone, struct domain* domain);
-/* clear nsec3 precompile for the zone */
-void nsec3_clear_precompile(struct namedb* db, struct zone* zone);
-/* if domain is part of nsec3hashed domains of a zone */
-int nsec3_domain_part_of_zone(struct domain* d, struct zone* z);
-/* condition when a domain is precompiled */
-int nsec3_condition_hash(struct domain* d, struct zone* z);
-/* condition when a domain is ds precompiled */
-int nsec3_condition_dshash(struct domain* d, struct zone* z);
-/* set nsec3param for this zone or NULL if no NSEC3 available */
-void nsec3_find_zone_param(struct namedb* db, struct zone* zone,
-	struct udb_ptr* z);
-/* hash domain and wcchild, and lookup nsec3 in tree, and precompile */
-void nsec3_precompile_domain(struct namedb* db, struct domain* domain,
-	struct zone* zone, struct udb_ptr* z);
-/* hash ds_parent_cover, and lookup nsec3 and precompile */
-void nsec3_precompile_domain_ds(struct namedb* db, struct domain* domain,
-	struct zone* zone, struct udb_ptr* z);
-/* put nsec3 into nsec3tree and adjust zonelast */
-void nsec3_precompile_nsec3rr(struct domain* domain, struct zone* zone);
-/* precompile entire zone, assumes all is null at start */
-void nsec3_precompile_newparam(struct namedb* db, struct zone* zone,
-	struct udb_ptr* udbz);
-/* create b32.zone for a hash, allocated in the region */
-const struct dname* nsec3_b32_create(struct region* region, struct zone* zone,
-	unsigned char* hash);
 
 #endif /* NSEC3 */
 #endif /* NSEC3_H*/

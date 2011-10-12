@@ -5,247 +5,46 @@
 10 October 2011: Wouter
 	- squelch EPIPE when writing AXFR, enable with verbosity 2.
 
-26 September 2011: (Matthijs, from NSD3_2 branch)
+26 September 2011: Matthijs
 	- Copy the DO bit to the response.
-	- Don't return SERVFAIL on a domain that looks like a NSEC3
-	  domain but is actually a empty non-terminal.
+	- Don't return SERVFAIL on a domain that looks like a NSEC3 domain but
+	  is actually a empty non-terminal.
 
-19 August 2011: Wouter
-	- Fix segfault if no logfile is used.
-
-5 August 2011: Wouter
-	- Fix make from repeating action already taken.
-	- Fix compile without openssl.
-
-3 August 2011: Wouter
-	- silence 'Broken pipe' messages in log (visible with verbosity 2).
-	- fix makedist.sh for removal of patch, notify, xfer. new nsd-control.
-	- tag 4.0.0-imp-5 created.
-	- trunk is 4.0.0-imp-6 under development.
-	- added nsd_munin_ script for statistics monitoring to contrib.
-
-2 August 2011: Wouter
-	- fix compile on Ubuntu 11.04 systems, detects cc system header issue.
-
-1 August 2011: Wouter
-	- fix checkconf test for remote control options.
-	- fix warning on Ubuntu 10.04, fix autoconf 2.68 warning on NetBSD.
-
-29 July 2011: Wouter
-	- zones with no zonefile are not written to text (assumes you can
-	  get AXFR and IXFR for the contents).  They are stored in nsd.db.
-	- test for repattern.
-
-28 July 2011: Wouter
-	- nsd-control repattern reads TSIG and pattern configuration.
-
-25 July 2011: Wouter
-	- fixed tests for removed tools from nsd, with replacements.
-	  replaced nsd-patch with nsd-control write. replaced nsd-notify with
-	  ldns-notify. replaced nsd-xfer with dig -t axfr.
-	- fix for xfrd restart if crashed. xfrd knows if a reload is
-	  active at that time so it cannot start another one at the same
-	  time.  New shortsoa track for start that does not use taskdb
-	  in use by reload.  taskdb in use by crashed xfrd is recreated,
-	  in case it is corrupt.  This keeps the nsd.db intact, keeps
-	  reload running with its updated and keeps service from the
-	  server processes active.
-
-22 July 2011: Wouter
-	- added contrib/nsd.init (nsdc.sh that only does start,stop).
-	- removed nsdc.sh, nsd-xfer, nsd-notify, nsd-patch.
-	  for rc.d: contrib/nsd.init, or platform specific init script.
-	  nsd-xfer: see nsd-control transfer, or force_transfer.
-	  nsd-notify: see nsd-control notify.
-	  nsd-patch: see (cron job to) nsd-control write.
-
-21 July 2011: Wouter
-	- nsd-control notify, transfer and force_transfer.
-	- fix for bug in write and reload zone option.
-	- nsd-control zonestatus command.
-
-20 July 2011: Wouter
-	- reload can be given optional zone argument.
-	- nsd-control reopen_logfile.
-	- nsd-control write changed zonefiles.
-
-18 July 2011: Wouter
-	- Fix xfrd activation of zones to not break running zone transfers.
-
-13 July 2011: Wouter
-	- fix that signal causes stats to be printed to log.
-	- fix stats without remotecontrol.
-	- ignore notify and soainfo for deleted zone, if due to race they
-	  arrive after the deletion.
-	- tpkg test for nsd-control, addzone and delzone
+27 July 2011: Wouter
+	- Fix nsd-checkconf to check tsig algorithms properly.
 
 5 July 2011: Wouter
-	- fix link to ssl with FreeBSD make.
-
-1 July 2011: Wouter
-	- fix optimize compile to link with ssl.
-
-29 June 2011: Wouter
-	- nsd-control delzone zone.  Removes zone from zonelist.
-	- stats includes number of zones.
-	- RAXFR stat, which has not worked since NSD 1.2.4, reinstated.
-	- print more memory statistics, for xfrd and config.
-
-28 June 2011: Wouter
-	- nsd-control addzone zone pattern.  Adds new zone, slave or master.
-
-27 June 2011: Wouter
-	- nsd-control stats and stats_noreset (if enabled at compile time).
-	  nsd does not print statistics to logfile if period is 0.
-
-23 June 2011: Wouter
-	- -flto check supports clang compiler.
-
-22 June 2011: Wouter
-	- remote control, config, client, setup and status command.
-	- reload nsd-control command.
-	- stop nsd-control command.
-	- verbosity nsd-control command.
+	- Increase nsd.db version number because nsd 3.2.7 and earlier zonec
+	  is not compatible due to the TXT strings change.
 
 14 June 2011: Wouter
 	- Fix to have no authority NS set processing for CNAMEs.
 
-9 June 2011: Wouter
-	- fix bug that relptrs have to be inited with rel_ptr_init() when
-	  created and zeroed with rptr_zero before deletion.
-	- tag 4.0.0-imp4 created
-	- trunk is 4.0.0-imp5 under development.
-
-8 June 2011: Wouter
-	- nsd reads the zonelist file on start.
-	- updated acx_nlnetlabs.m4 to version 11.
-	- configure checks size of off_t and increase region-allocator
-	  alignment to 8 if it is 64bit and alignment at 4.
-	- fixed bug where not all references were removed before mmap was
-	  synced to another process.
-
-7 June 2011: Wouter
-	- code to add and remove zonelist entries, and unit test.
-
-6 June 2011: Wouter
-	- fix unit tests for mmap with TODO and removal of -f in nsd-patch.
-	- zone expiry is communicated via the mmap, and not via the pipes,
-	  simplifying the code significantly as well as making a large number
-	  of zones more feasible.
-
-1 June 2011: Wouter
-	- mmap used for parent-xfrd communication of tasks and task results.
-	  SIGHUP is sent to xfrd so it can become a task in the normal
-	  workflow. This can process about 4500 zones per second (this was
-	  with lots of debug prints per zone, in debug compile). The mmaps
-	  are file-backed with /tmp/ files.  They are removed on a clean exit.
-	- nsd.db and tmp mmaps are created with mode 0600 for safety.
-	- updated flag removed, nsd-patch always in -f force mode (-f removed)
-	  and writes all zones always. Its role is taken over by task results.
-
-30 May 2011: Wouter
-	- Fix Makefile for U in environment, since wrong U is more common than
-	  deansification necessity.
-
-27 May 2011: Wouter
-	- xfrd is forked before the database is read in, thus it does not
-	  consume the memory of the database.  It can be reforked on a crash,
-	  which is like the current case.  Difffile is cleaned by main process
-	  and the soa serials are all sent via pipe instead of via forkmem.
-
-24 May 2011: Wouter
-	- implemented patterns in the nsd.conf file.
-	  they can be instantiated with include-pattern: x.
-	  existing zone definitions keep working (backwards compatible), such
-	  zones really have an implicit pattern and cannot_delete flag set.
-	- work on zonelist read and storage.
+27 May 2011: Matthijs
+	- Bump to 3.2.9
 
 20 May 2011: Wouter
-	- from NSD_3_2 branch the fix: bug if the zonefile is changed for a
-	secondary but stored transfers are applied, and stop ixfr to empty.
-	The zone is flagged with error, and the good zone is still in nsd.db
-	for NSD4.
-
-17 May 2011: Wouter
-	- unit test for code coverage on nsec3 ixfr.
-	- tag 4.0.0-imp3 created
-	- trunk is 4.0.0-imp4 under development.
+	- Fix bug if the zonefile is changed for a secondary but stored
+	  transfers are applied, and stop it from applying ixfr to empty zone.
+	  The zone is flagged with error and AXFR-ed.
 
 13 May 2011: Matthijs
+	- Fix bug #365, do renaming of NSDC_ZONEC_VERBOSE and NSDC_PATCH_STYLE
+	  environment variable names that were forgotten.
 	- Fix bug #381 - Binary escaped and transfers.
-
-13 May 2011: Wouter
-	- Unit test nsec3 salt change and fix for sanity check of nsec3 chain.
-	  pretty prints the nsec3 parameters if verbose.
-
-12 May 2011: Wouter
-	- more unit test for nsec3 precompile changes.
-	- unit test for salt change, rehash in udb fix, remove last NSEC3
-	  from chain works, NSEC3PARAM RR fixed up if RR added or removed
-	  from NSEC3PARAM RRset, hashtrees cleared properly, precompile clear
-	  more thorough (not dependant on nsec3_conditions).
-
-11 May 2011: Wouter
-	- fixes for nsec3 precompile code: precompile for empty nonterminals
-	  created when an RR is added. If SOA removed, precompile stays
-	  coherent even though domain_find_zone no longer returns correct zone.
-
-21 April 2011: Wouter
-	- unit test and fixes in nsec3 precompile code.
-
-20 April 2011: Wouter
-	- incremental NSEC3 precompile.
-
-14 April 2011: Wouter
-	- remove chnum. Added numlist sorted by domain.number.
-	  domains that are not used are removed.
 
 13 April 2011: Wouter
 	- Fix is_existing flag for ENT when domain that has a shared ENT
 	  is deleted by IXFR.
-	- zonec can parse strings with RR in it.
-	- unit test for namedb.
-
-8 April 2011: Wouter
-	- porting complete.
-	- tag 4.0.0-imp2 created
-	- trunk is version 4.0.0-imp3.
-
-7 April 2011: Wouter
-	- ported to sunos 4.1.4, the unit test works (udb, radtree in mmap).
-
-6 April 2011: Wouter
-	- UDB_CHECK is enabled if --enable-checking is used.
-	  Because it checks the pointer-administration lists it slows down.
-	- udb-inspect has feature -l that lists zones (and RRs) in nsd.db.
-	- fix memory leak by zonec; the region_cleanup triggers too late.
-	- set listen TCP_BACKLOG to 16 by default, it avoids connect reset
-	  by peer in 1000-zones transfer on an ultra10, thus for many-zones.
-	- default xfrd-reload-timeout to 1 second.
 
 5 April 2011: Wouter
 	- Fix uninitialised value in xfrd nsd_soa, the rdata_count.
-	- Unit test for update of the nsd.db with new contents.
-	- Fix array bounds check in radtree-search function.
 
 4 April 2011: Wouter
-	- removed zonec from tests. fix unknown_rr test, enable ipseckey test.
-	  increased timeouts on tests that are hard on the filesystem.
-	- Fixed IPSECKEY printout by nsd-patch.
+	- Fix printout of IPSECKEY by nsd-patch.
 
-30 March 2011: Wouter
-	- nsd edits nsd.db for IXFR and AXFR messages.  since xfrd already
-	  checks zone transfers completely for syntax those errors cannot
-	  happen, if they do (memory, disk error) the file is left dirty,
-	  to be recreated on the next start (and the process dies).
-
-29 March 2011: Wouter
-	- nsd recreates nsd.db if it has not been closed properly or is
-	  corrupted (bad header or wrong file format).
-
-28 March 2011: Wouter
-	- NSD without zonec.  NSD loads zonefiles on start.
-	  NSD stores NSEC3hashes on disk.
+26 March 2011: Matthijs
+	- @logfile@ was not substituted
 
 25 March 2011: Wouter
 	- Fix bug #365, you can set NSDC_ZONEC_VERBOSE and NSDC_PATCH_STYLE
@@ -253,56 +52,17 @@
 	- Fix bug #375, typos in nsd.conf.5.
 	- First step of bug #369: RRSIG DNSKEY sets zone to be treated DNSSEC.
 	- Fix bug #302, nsd accepts XFR but refuses to re-read the slave zone.
-	- NSD4 work: removed zonec, nsdc patch does not write text files
-	  for slave zones (as if option is always to binary, this capability
-	  returns later), nsdc patch deletes the ixfr.db.
-	  kill-HUP rereads zone files that have changed.
 
-24 March 2011: Wouter
-	- compile fixes for BSD. preserve RRset order.
+7 March 2011: Matthijs
+	- Update 3.2 branch (3.2.3 -> 3.2.8rc1, 18 August 2009 - 3 March 2011)
 
-23 March 2011: Wouter
-	- udbzone, store and read zone data in the random-access udb format.
-
-21 March 2011: Wouter
-	- udbradtree works. udb-inspect tool can print radtree details.
-
-16 March 2011: Matthijs
-	- undo fix bug#325: messes up dname compression
-
-14 March 2011: Wouter
-	- udb code added.  uses lookup3 from unbound (public domain).
-	- unit test for radix tree in cutest.
-	- unit test for udb in cutest.
-	- udb-inspect tool to printout internals of udb files.
-	  for debug, not installed or built by default.
-	- removed --disable-radixtree option.
-
-11 March 2011: Wouter
-	- Removed precompile features, speed gain took too much memory.
-	- domain number to size_t.
-
-9 March 2011: Wouter
-	- DNAME synthesis of CNAME.  Uses TTL of the DNAME record.
-	- nsec3 and wildcard code.  No additional section for wildcards.
-	  Also CNAME and DNAME replies contain only that record (and synth
-	  CNAME), the chain is not followed.
-
-8 March 2011: Wouter
-	- precompile work:
-		class ANY gets AA flag, SOA and type-NS processing, just
-		like BIND (9.6) and it simplifies processing for NSD.
-	  other than compression difference (precompile compresses smaller),
-	  there are no differences in a 49000 query testset against the root,
-	  without EDNS.
-
-7 March 2011: Wouter
+7 March 2011: Wouter:
 	- check chown value and report high verbosity its error.
 
-3 March 2011: Matthijs
+3 March 2011: Matthijs:
 	- fix #bug352: fix hardcoded paths in manpages.
 
-2 March 2011: Matthijs
+2 March 2011: Matthijs:
 	- fix #bug354: make realclean cleans too much
 	- added make devclean for cleaning up autoconf and automake stuff
 	- Fix hardcoded paths in nsd.conf.sample and nsd.conf.5
@@ -310,82 +70,37 @@
 24 February 2011: Matthijs
 	- fix #bug350: refused notifies should log client ip.
 
-2 March 2011: Wouter
-	- Fix AXFR service with radix tree.
-	- cutest for speed of answer encoding, and format of answers for root.
+24 February 2011: Wouter
+	- fix bug#362: outgoing-interface and v4 vs. v6 leads to spurious
+	  warning messages.
+	- fix bug#363: nsd-checkconf -v does not print outgoing-interface ok.
+	- fix that nsd-checkconf -o outgoing-interface omits NOKEY.
 
-1 March 2011: Wouter
-	- after merge, remove double -I. from makefile.
-	- radixtree is default.  Nicer makefile and no warnings from unused
-	  flex functions.
-
-1 March 2011: Wouter
-	- merge with trunk r3181:
-	24 February 2011: Matthijs
-		- fix #bug350: refused notifies should log client ip.
-	24 February 2011: Wouter
-		- fix bug#362: outgoing-interface and v4 vs. v6 leads to spurious
-		  warning messages.
-		- fix bug#363: nsd-checkconf -v does not print outgoing-interface ok.
-		- fix that nsd-checkconf -o outgoing-interface omits NOKEY.
-	23 February 2011: Wouter
-		- fix for bug#357, make xfrd quit with many zones.
-		
 23 February 2011: Wouter
-	- Merge trunk r3151.
-		22 February 2011: Matthijs
-			- Patch Jakob Schlyter (setusercontext before chroot).
-		18 February 2011: Wouter
-			- overhaul of testset, with port uniqueness and fast start and stop.
-		11 February 2011: Wouter
-			- added test case to do with bug357.
-		24 January 2011: Matthijs
-			- Patch Tom Hendrikx (only errors to stderr when doing nsdc patch).
+	- (merged with nsd4 on 22nd).
+	- fix for bug#357, make xfrd quit with many zones.
+	
+22 February 2011: Matthijs
+	- Patch Jakob Schlyter (setusercontext before chroot).
+
+18 February 2011: Wouter
+	- overhaul of testset, with port uniqueness and fast start and stop.
 
 17 February 2011: Wouter
 	- Fix leak of compressiontable when the domain table increases in size.
+	- 24 January 2011 was release 3.2.7, move trunk to 3.2.8.
+
+11 February 2011: Wouter
 	- added test case to do with bug357.
 
-10 February 2011: Wouter
-	- Merged with trunk r3115 changes:
-		20 January 2011: Wouter
-			- Fix on shutdown, then getaddrinfo acquired data uses freeaddrinfo.
-		19 January 2011: Wouter
-			- Bug #348: no -I/usr and -L/usr for libcrypto in /usr.
-		5 January 2011: Matthijs
-			- Fix nsdc update and nsdc notify
-			- Force outgoing interface to be a single range acl
-			- Update documentation about acl options
-			- Code review
-			- Fix nsdc so it can use hmac-sha* tsigs
-			- Bug #347: NSEC3 nodata QTYPE=DS not at delegation mismatch
-		4 January 2011: Yuri
-			- Doc spelling error, bug#345
-		15 December 2010: Wouter
-			- fix race condition when nsd is stopped while a reload is in
-			  progress, often when rc.d does nsdc patch; nsdc stop in sequence.
-			  reload is now signalled to stop too.
-		10 December 2010: Matthijs
-			- fix bug#306: applied documentation patch
-			- fix bug#253: now also for QTYPE=DS.
-		12 October 2010: Wouter
-			- Fix compilation on SunOS4.
-		24 September 2010: Matthijs
-			- Bug #328: nsd-checkconf overrun
-		1 September 2010: Yuri
-			- Support for huge TXT records.
-		23 Aug 2010: Wouter
-			- fix bug#325: remove stale files from cvs from repo.
-		16 Aug 2010: Yuri
-			- zonec, MAXRDATALEN check was off by one.
-		9 Aug 2010: Matthijs
-			- nsdc return 1 outside function, should be exit 1
-			- Bug #320: arc4random
-		2 Aug 2010: Matthijs
-			- Bump to 3.2.7.
-		21 July 2010: Wouter
-			- NUM_RECV_PER_SELECT 100 implemented, configure check if kernel
-			  supports this.
+24 January 2011: Matthijs
+	- Patch Tom Hendrikx (only errors to stderr when doing nsdc patch).
+
+20 January 2011: Wouter
+	- Fix on shutdown, then getaddrinfo acquired data uses freeaddrinfo.
+
+19 January 2011: Wouter
+	- Bug #348: no -I/usr and -L/usr for libcrypto in /usr.
 
 17 January 2011: Matthijs
 	- Bump to 3.2.8.
@@ -398,9 +113,39 @@
 	- Fix nsdc so it can use hmac-sha* tsigs
 	- Bug #347: NSEC3 nodata QTYPE=DS not at delegation mismatch
 
-20 July 2010: Wouter
-	- Branched from trunk. Added radix tree.
-	- use -fwhole-program if gcc supports it.
+4 January 2011: Yuri
+	- Doc spelling error, bug#345
+
+15 December 2010: Wouter
+	- fix race condition when nsd is stopped while a reload is in
+	  progress, often when rc.d does nsdc patch; nsdc stop in sequence.
+	  reload is now signalled to stop too.
+
+10 December 2010: Matthijs
+	- fix bug#306: applied documentation patch
+	- fix bug#253: now also for QTYPE=DS.
+
+12 October 2010: Wouter
+	- Fix compilation on SunOS4.
+
+24 September 2010: Matthijs
+	- Bug #328: nsd-checkconf overrun
+
+1 September 2010: Yuri
+	- Support for huge TXT records.
+
+23 Aug 2010: Wouter
+	- fix bug#325: remove stale files from cvs from repo.
+
+16 Aug 2010: Yuri
+	- zonec, MAXRDATALEN check was off by one.
+
+9 Aug 2010: Matthijs
+	- nsdc return 1 outside function, should be exit 1
+	- Bug #320: arc4random
+
+2 Aug 2010: Matthijs
+	- Bump to 3.2.7.
 
 19 July 2010: Matthijs
 	- fix bug#314, NSEC next field now correctly escapes spaces.

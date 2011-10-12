@@ -1,14 +1,14 @@
 /*
  * dname.c -- Domain name handling.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
 
-#include "config.h"
+#include <config.h>
 
 #include <sys/types.h>
 
@@ -17,10 +17,18 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 #include "dns.h"
 #include "dname.h"
 #include "query.h"
+
+/**
+ * The maximum number of labels is the maximum domain name, less 1 for
+ * the root (len == 0) label, divided by two (minimum non-root label of
+ * one character + length byte), then add back in one for the root label.
+ */
+#define	MAXLABELS	(((MAXDOMAINLEN - 1) / 2) + 1)
 
 const dname_type *
 dname_make(region_type *region, const uint8_t *name, int normalize)
@@ -301,8 +309,10 @@ dname_is_subdomain(const dname_type *left, const dname_type *right)
 
 
 int
-dname_compare(const dname_type *left, const dname_type *right)
+dname_compare(const void *vleft, const void *vright)
 {
+	const dname_type* left = (const dname_type*) vleft;
+	const dname_type* right = (const dname_type*) vright;
 	int result;
 	uint8_t label_count;
 	uint8_t i;
@@ -382,16 +392,27 @@ const char *
 dname_to_string(const dname_type *dname, const dname_type *origin)
 {
 	static char buf[MAXDOMAINLEN * 5];
+	return dname_to_string_r(dname, origin, buf);
+}
+
+const char *
+dname_to_string_r(const dname_type *dname, const dname_type *origin,
+	char* buf)
+{
 	size_t i;
-	size_t labels_to_convert = dname->label_count - 1;
+	size_t labels_to_convert = 0;
 	int absolute = 1;
 	char *dst;
 	const uint8_t *src;
-
+	if (!dname) {
+		*buf = '\0';
+		return buf;
+	}
 	if (dname->label_count == 1) {
 		strlcpy(buf, ".", sizeof(buf));
 		return buf;
 	}
+	labels_to_convert = dname->label_count - 1;
 
 	if (origin && dname_is_subdomain(dname, origin)) {
 		int common_labels = dname_label_match_count(dname, origin);
@@ -495,54 +516,58 @@ dname_replace(region_type* region,
 	return res;
 }
 
-char* wirelabel2str(const uint8_t* label)
-{
-	static char buf[MAXDOMAINLEN*5+3];
-	char* p = buf;
-	uint8_t lablen;
-	lablen = *label++;
-	while(lablen--) {
-		uint8_t ch = *label++;
-		if (isalnum(ch) || ch == '-' || ch == '_') {
-			*p++ = ch;
-		} else if (ch == '.' || ch == '\\') {
-			*p++ = '\\';
-			*p++ = ch;
-		} else {
-			snprintf(p, 5, "\\%03u", (unsigned int)ch);
-			p += 4;
-		}
-	}
-	*p++ = 0;
-	return buf;
-}
 
-char* wiredname2str(const uint8_t* dname)
+/**
+ * Make wildcard synthesis.
+ *
+ */
+int
+dname_make_wildcard(struct region *region,
+		    struct dname const *dname,
+		    struct dname const **wildcard)
 {
-	static char buf[MAXDOMAINLEN*5+3];
-	char* p = buf;
-	uint8_t lablen;
-	if(*dname == 0) {
-		strlcpy(buf, ".", sizeof(buf));
-		return buf;
+	uint8_t name_size;
+	uint8_t label_count;
+	uint8_t *names;
+	uint8_t *labels;
+	struct dname *new_dname;
+	unsigned int i;
+	/*
+	 * Checks:
+	 *	dname label_count + 1 < MAXLABELS
+	 * 	dname size + 2 < MAXDOMAINLEN
+	 */
+	if (dname->label_count > (MAXLABELS - 1)) {
+		return EINVAL;
 	}
-	lablen = *dname++;
-	while(lablen) {
-		while(lablen--) {
-			uint8_t ch = *dname++;
-			if (isalnum(ch) || ch == '-' || ch == '_') {
-				*p++ = ch;
-			} else if (ch == '.' || ch == '\\') {
-				*p++ = '\\';
-				*p++ = ch;
-			} else {
-				snprintf(p, 5, "\\%03u", (unsigned int)ch);
-				p += 4;
-			}
-		}
-		lablen = *dname++;
-		*p++ = '.';
+	if (dname->name_size > (MAXDOMAINLEN - 2)) {
+		return EINVAL;
 	}
-	*p++ = 0;
-	return buf;
+
+	label_count = dname->label_count + 1;
+	name_size = dname->name_size + 2;
+	new_dname = (struct dname *) region_alloc(region,
+						  sizeof(dname_type) +
+						  (label_count * sizeof(uint8_t)) +
+						  (name_size * sizeof(uint8_t)));
+	if (new_dname == NULL) {
+		return ENOMEM;
+	}
+	new_dname->label_count = label_count;
+	new_dname->name_size = name_size;
+	labels = (uint8_t *) dname_label_offsets(new_dname);
+	memcpy(labels, dname_label_offsets(dname),
+	       dname->label_count * sizeof(uint8_t));
+	for (i = 0; i < dname->label_count; i++) {
+		labels[i] += 2;
+	}
+	labels[i] = 0;
+
+	names = (uint8_t *) dname_name(new_dname);
+	*names++ = '\001';
+	*names++ = '*';
+	memcpy(names, dname_name(dname),
+	       dname->name_size * sizeof(uint8_t));
+	*wildcard = new_dname;
+	return 0;
 }

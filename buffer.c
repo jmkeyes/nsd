@@ -1,13 +1,13 @@
 /*
  * buffer.c -- generic memory buffer .
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
-#include "config.h"
+#include <config.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -28,7 +28,7 @@ buffer_create(region_type *region, size_t capacity)
 		= (buffer_type *) region_alloc(region, sizeof(buffer_type));
 	if (!buffer)
 		return NULL;
-
+	
 	buffer->_data = (uint8_t *) xalloc(capacity);
 	buffer->_position = 0;
 	buffer->_limit = buffer->_capacity = capacity;

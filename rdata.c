@@ -1,13 +1,13 @@
 /*
  * rdata.c -- RDATA conversion functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -454,8 +454,17 @@ rdata_ipsecgateway_to_string(buffer_type *output, rdata_atom_type rdata, rr_type
 		rdata_aaaa_to_string(output, rdata, rr);
 		break;
 	case IPSECKEY_DNAME:
-		buffer_printf(output, "%s",
-			wiredname2str(rdata_atom_data(rdata)));
+		{
+			region_type* temp = region_create(xalloc, free);
+			const dname_type* d = dname_make(temp,
+				rdata_atom_data(rdata), 0);
+			if(!d) {
+				region_destroy(temp);
+				return 0;
+			}
+			buffer_printf(output, "%s", dname_to_string(d, NULL));
+			region_destroy(temp);
+		}
 		break;
 	default:
 		return 0;
@@ -698,11 +707,9 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 				temp_rdatas[i].data[0] = dname->name_size;
 				memcpy(temp_rdatas[i].data+1, dname_name(dname),
 					dname->name_size);
-			} else {
+			} else
 				temp_rdatas[i].domain
 					= domain_table_insert(owners, dname);
-				temp_rdatas[i].domain->usage ++;
-			}
 		} else {
 			if (buffer_position(packet) + length > end) {
 				if (required) {
