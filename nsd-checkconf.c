@@ -1,12 +1,12 @@
 /*
  * checkconf - Read and repeat configuration file to output.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
-#include "config.h"
+#include <config.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -20,36 +20,34 @@
 extern char *optarg;
 extern int optind;
 
-#define ZONE_GET_ACL(NAME, VAR, PATTERN) 		\
+#define ZONE_GET_ACL(NAME, VAR) 		\
 	if (strcasecmp(#NAME, (VAR)) == 0) { 	\
-		quote_acl(PATTERN->NAME); 	\
+		quote_acl((zone->NAME)); 	\
 		return; 			\
 	}
 
-#define ZONE_GET_OUTGOING(NAME, VAR, PATTERN)			\
+#define ZONE_GET_OUTGOING(NAME, VAR)			\
 	if (strcasecmp(#NAME, (VAR)) == 0) {		\
 		acl_options_t* acl; 			\
-		for(acl=PATTERN->NAME; acl; acl=acl->next)	\
+		for(acl=zone->NAME; acl; acl=acl->next)	\
 			quote(acl->ip_address_spec);	\
 		return; 				\
 	}
 
-#define ZONE_GET_STR(NAME, VAR, PATTERN) 		\
+#define ZONE_GET_STR(NAME, VAR) 		\
 	if (strcasecmp(#NAME, (VAR)) == 0) { 	\
-		quote(PATTERN->NAME); 		\
+		quote(zone->NAME); 		\
 		return; 			\
 	}
 
-#define ZONE_GET_BIN(NAME, VAR, PATTERN) 			\
+#define ZONE_GET_BIN(NAME, VAR) 			\
 	if (strcasecmp(#NAME, (VAR)) == 0) { 		\
-		printf("%s\n", (PATTERN->NAME)?"yes":"no"); 	\
-		return;					\
+		printf("%s\n", zone->NAME?"yes":"no"); 	\
 	}
 
 #define SERV_GET_BIN(NAME, VAR) 			\
 	if (strcasecmp(#NAME, (VAR)) == 0) { 		\
 		printf("%s\n", opt->NAME?"yes":"no"); 	\
-		return;					\
 	}
 
 #define SERV_GET_STR(NAME, VAR) 		\
@@ -64,9 +62,9 @@ extern int optind;
 		return; 			\
 	}
 
-#define SERV_GET_IP(NAME, MEMBER, VAR) 				\
+#define SERV_GET_IP(NAME, VAR) 				\
 	if (strcasecmp(#NAME, (VAR)) == 0) { 		\
-		for(ip = opt->MEMBER; ip; ip=ip->next)	\
+		for(ip = opt->ip_addresses; ip; ip=ip->next)	\
 		{						\
 			quote(ip->address);			\
 		}						\
@@ -108,7 +106,6 @@ usage(void)
 	fprintf(stderr, "-v		Verbose, echo settings that take effect to std output.\n");
 	fprintf(stderr, "-h		Print this help information.\n");
 	fprintf(stderr, "-o option	Print value of the option specified to stdout.\n");
-	fprintf(stderr, "-p pattern	Print option value for the pattern given.\n");
 	fprintf(stderr, "-z zonename	Print option value for the zone given.\n");
 	fprintf(stderr, "-a keyname	Print algorithm name for the TSIG key.\n");
 	fprintf(stderr, "-s keyname	Print base64 secret blob for the TSIG key.\n");
@@ -159,7 +156,7 @@ print_acl(const char* varname, acl_options_t* acl)
 		printf("%s %s\n", acl->ip_address_spec,
 			acl->nokey?"NOKEY":(acl->blocked?"BLOCKED":
 			(acl->key_name?acl->key_name:"(null)")));
-		if(verbosity>1) {
+		if(1) {
 			printf("\t# %s", acl->is_ipv6?"ip6":"ip4");
 			if(acl->port == 0) printf(" noport");
 			else printf(" port=%d", acl->port);
@@ -205,21 +202,23 @@ print_acl_ips(const char* varname, acl_options_t* acl)
 }
 
 void
-config_print_zone(nsd_options_t* opt, const char* k, int s, const char *o,
-	const char *z, const char* pat)
+config_print_zone(nsd_options_t* opt, const char* k, int s, const char *o, const char *z)
 {
+	zone_options_t* zone;
 	ip_address_option_t* ip;
 
 	if (k) {
 		/* find key */
-		key_options_t* key = key_options_find(opt, k);
-		if(key) {
-			if (s) {
-				quote(key->secret);
-			} else {
-				quote(key->algorithm);
+		key_options_t* key = opt->keys;
+		for( ; key ; key=key->next) {
+			if(strcmp(key->name, k) == 0) {
+				if (s) {
+					quote(key->secret);
+				} else {
+					quote(key->algorithm);
+				}
+				return;
 			}
-			return;
 		}
 		printf("Could not find key %s\n", k);
 		return;
@@ -230,56 +229,34 @@ config_print_zone(nsd_options_t* opt, const char* k, int s, const char *o,
 	}
 
 	if (z) {
-		zone_options_t* zone;
 		const dname_type *dname = dname_parse(opt->region, z);
 		if(!dname) {
 			printf("Could not parse zone name %s\n", z);
 			exit(1);
 		}
-		zone = zone_options_find(opt, dname);
-		if(!zone) {
-			printf("Zone does not exist: %s\n", z);
-			exit(1);
+		/* look per zone */
+		RBTREE_FOR(zone, zone_options_t*, opt->zone_options)
+		{
+			if (dname_compare(dname, zone->node.key) == 0) {
+				/* -z matches, return are in the defines */
+				ZONE_GET_STR(name, o);
+				ZONE_GET_STR(zonefile, o);
+				ZONE_GET_ACL(request_xfr, o);
+				ZONE_GET_ACL(provide_xfr, o);
+				ZONE_GET_ACL(allow_notify, o);
+				ZONE_GET_ACL(notify, o);
+				ZONE_GET_BIN(notify_retry, o);
+				ZONE_GET_OUTGOING(outgoing_interface, o);
+				ZONE_GET_BIN(allow_axfr_fallback, o);
+				printf("Zone option not handled: %s %s\n", z, o);
+				exit(1);
+			}
 		}
-		ZONE_GET_STR(name, o, zone);
-		if(strcasecmp("pattern", o)==0) {
-			quote(zone->pattern->pname);
-			return;
-		}
-		ZONE_GET_BIN(part_of_config, o, zone);
-		ZONE_GET_STR(zonefile, o, zone->pattern);
-		ZONE_GET_ACL(request_xfr, o, zone->pattern);
-		ZONE_GET_ACL(provide_xfr, o, zone->pattern);
-		ZONE_GET_ACL(allow_notify, o, zone->pattern);
-		ZONE_GET_ACL(notify, o, zone->pattern);
-		ZONE_GET_BIN(notify_retry, o, zone->pattern);
-		ZONE_GET_OUTGOING(outgoing_interface, o, zone->pattern);
-		ZONE_GET_BIN(allow_axfr_fallback, o, zone->pattern);
-		printf("Zone option not handled: %s %s\n", z, o);
-		exit(1);
-	} else if(pat) {
-		pattern_options_t* p = pattern_options_find(opt, pat);
-		if(!p) {
-			printf("Pattern does not exist: %s\n", pat);
-			exit(1);
-		}
-		if(strcasecmp("name", o)==0) {
-			quote(p->pname);
-			return;
-		}
-		ZONE_GET_STR(zonefile, o, p);
-		ZONE_GET_ACL(request_xfr, o, p);
-		ZONE_GET_ACL(provide_xfr, o, p);
-		ZONE_GET_ACL(allow_notify, o, p);
-		ZONE_GET_ACL(notify, o, p);
-		ZONE_GET_BIN(notify_retry, o, p);
-		ZONE_GET_OUTGOING(outgoing_interface, o, p);
-		ZONE_GET_BIN(allow_axfr_fallback, o, p);
-		printf("Pattern option not handled: %s %s\n", pat, o);
+		printf("Zone does not exist: %s\n", z);
 		exit(1);
 	} else {
 		/* look in the server section */
-		SERV_GET_IP(ip_address, ip_addresses, o);
+		SERV_GET_IP(ip_address, o);
 		/* bin */
 		SERV_GET_BIN(debug_mode, o);
 		SERV_GET_BIN(ip4_only, o);
@@ -296,7 +273,6 @@ config_print_zone(nsd_options_t* opt, const char* k, int s, const char *o,
 		SERV_GET_STR(zonesdir, o);
 		SERV_GET_STR(difffile, o);
 		SERV_GET_STR(xfrdfile, o);
-		SERV_GET_STR(zonelistfile, o);
 		SERV_GET_STR(port, o);
 		/* int */
 		SERV_GET_INT(server_count, o);
@@ -308,47 +284,15 @@ config_print_zone(nsd_options_t* opt, const char* k, int s, const char *o,
 		SERV_GET_INT(statistics, o);
 		SERV_GET_INT(xfrd_reload_timeout, o);
 		SERV_GET_INT(verbosity, o);
-		/* remote control */
-		SERV_GET_BIN(control_enable, o);
-		SERV_GET_IP(control_interface, control_interface, o);
-		SERV_GET_INT(control_port, o);
-		SERV_GET_STR(server_key_file, o);
-		SERV_GET_STR(server_cert_file, o);
-		SERV_GET_STR(control_key_file, o);
-		SERV_GET_STR(control_cert_file, o);
 
 		if(strcasecmp(o, "zones") == 0) {
-			zone_options_t* zone;
 			RBTREE_FOR(zone, zone_options_t*, opt->zone_options)
 				quote(zone->name);
-			return;
-		}
-		if(strcasecmp(o, "patterns") == 0) {
-			pattern_options_t* p;
-			RBTREE_FOR(p, pattern_options_t*, opt->patterns)
-				quote(p->pname);
 			return;
 		}
 		printf("Server option not handled: %s\n", o);
 		exit(1);
 	}
-}
-
-/* print zone content items */
-static void print_zone_content_elems(pattern_options_t* pat)
-{
-	if(pat->zonefile)
-		print_string_var("zonefile:", pat->zonefile);
-	print_acl("allow-notify:", pat->allow_notify);
-	print_acl("request-xfr:", pat->request_xfr);
-	if(!pat->notify_retry_is_default)
-		printf("\tnotify-retry: %d\n", pat->notify_retry);
-	print_acl("notify:", pat->notify);
-	print_acl("provide-xfr:", pat->provide_xfr);
-	print_acl_ips("outgoing-interface:", pat->outgoing_interface);
-	if(!pat->allow_axfr_fallback_is_default)
-		printf("\tallow-axfr-fallback: %s\n",
-			pat->allow_axfr_fallback?"yes":"no");
 }
 
 void
@@ -357,7 +301,6 @@ config_test_print_server(nsd_options_t* opt)
 	ip_address_option_t* ip;
 	key_options_t* key;
 	zone_options_t* zone;
-	pattern_options_t* pat;
 
 	printf("# Config settings.\n");
 	printf("server:\n");
@@ -383,45 +326,32 @@ config_test_print_server(nsd_options_t* opt)
 	print_string_var("zonesdir:", opt->zonesdir);
 	print_string_var("difffile:", opt->difffile);
 	print_string_var("xfrdfile:", opt->xfrdfile);
-	print_string_var("zonelistfile:", opt->zonelistfile);
 	printf("\txfrd_reload_timeout: %d\n", opt->xfrd_reload_timeout);
 	printf("\tverbosity: %d\n", opt->verbosity);
+
 	for(ip = opt->ip_addresses; ip; ip=ip->next)
 	{
 		print_string_var("ip-address:", ip->address);
 	}
-
-	printf("\nremote-control:\n");
-	printf("\tcontrol-enable: %s\n", opt->control_enable?"yes":"no");
-	for(ip = opt->control_interface; ip; ip=ip->next)
-		print_string_var("control-interface:", ip->address);
-	printf("\tcontrol-port: %d\n", opt->control_port);
-	print_string_var("server-key-file:", opt->server_key_file);
-	print_string_var("server-cert-file:", opt->server_cert_file);
-	print_string_var("control-key-file:", opt->control_key_file);
-	print_string_var("control-cert-file:", opt->control_cert_file);
-
-	RBTREE_FOR(key, key_options_t*, opt->keys)
+	for(key = opt->keys; key; key=key->next)
 	{
 		printf("\nkey:\n");
 		print_string_var("name:", key->name);
 		print_string_var("algorithm:", key->algorithm);
 		print_string_var("secret:", key->secret);
 	}
-	RBTREE_FOR(pat, pattern_options_t*, opt->patterns)
-	{
-		if(pat->implicit) continue;
-		printf("\npattern:\n");
-		print_string_var("name:", pat->pname);
-		print_zone_content_elems(pat);
-	}
 	RBTREE_FOR(zone, zone_options_t*, opt->zone_options)
 	{
-		if(!zone->part_of_config)
-			continue;
 		printf("\nzone:\n");
 		print_string_var("name:", zone->name);
-		print_zone_content_elems(zone->pattern);
+		print_string_var("zonefile:", zone->zonefile);
+		print_acl("allow-notify:", zone->allow_notify);
+		print_acl("request-xfr:", zone->request_xfr);
+		printf("\tnotify-retry: %d\n", zone->notify_retry);
+		print_acl("notify:", zone->notify);
+		print_acl("provide-xfr:", zone->provide_xfr);
+		print_acl_ips("outgoing-interface:", zone->outgoing_interface);
+		printf("\tallow-axfr-fallback: %s\n", zone->allow_axfr_fallback?"yes":"no");
 	}
 
 }
@@ -431,6 +361,7 @@ additional_checks(nsd_options_t* opt, const char* filename)
 {
 	ip_address_option_t* ip = opt->ip_addresses;
 	zone_options_t* zone;
+	key_options_t* key;
 	int num = 0;
 	int errors = 0;
 	while(ip) {
@@ -449,10 +380,33 @@ additional_checks(nsd_options_t* opt, const char* filename)
 			fprintf(stderr, "%s: cannot parse zone name syntax for zone %s.\n", filename, zone->name);
 			errors ++;
 		}
-		if(zone->pattern->allow_notify && !zone->pattern->request_xfr) {
+		if(zone->allow_notify && !zone->request_xfr) {
 			fprintf(stderr, "%s: zone %s has allow-notify but no request-xfr"
 				" items. Where can it get a zone transfer when a notify "
 				"is received?\n", filename, zone->name);
+			errors ++;
+		}
+	}
+
+	for(key = opt->keys; key; key=key->next)
+	{
+		const dname_type* dname = dname_parse(opt->region, key->name); /* memory leak. */
+		uint8_t data[4000];
+		int size;
+
+		if(!dname) {
+			fprintf(stderr, "%s: cannot parse tsig name syntax for key %s.\n", filename, key->name);
+			errors ++;
+		}
+		size = b64_pton(key->secret, data, sizeof(data));
+		if(size == -1) {
+			fprintf(stderr, "%s: cannot base64 decode tsig secret: for key %s.\n", filename, key->name);
+			errors ++;
+		}
+		if(tsig_get_algorithm_by_name(key->algorithm) == NULL)
+		{
+			fprintf(stderr, "%s: bad tsig algorithm %s: for key \
+%s.\n", filename, key->algorithm, key->name);
 			errors ++;
 		}
 	}
@@ -504,12 +458,7 @@ additional_checks(nsd_options_t* opt, const char* filename)
 				filename, opt->xfrdfile, opt->chroot);
 			errors ++;
                 }
-       		if (strncmp(opt->chroot, opt->zonelistfile, l) != 0) {
-			fprintf(stderr, "%s: zonelistfile %s is not relative to chroot %s.\n",
-				filename, opt->zonelistfile, opt->chroot);
-			errors ++;
-                }
- }
+        }
 	if (atoi(opt->port) <= 0) {
 		fprintf(stderr, "%s: port number '%s' is not a positive number.\n",
 			filename, opt->port);
@@ -518,7 +467,7 @@ additional_checks(nsd_options_t* opt, const char* filename)
 	if(errors != 0) {
 		fprintf(stderr, "%s: %d semantic errors in %d zones, %d keys.\n",
 			filename, errors, (int)nsd_options_num_zones(opt),
-			(int)opt->keys->count);
+			(int)opt->numkeys);
 	}
 
 	return (errors == 0);
@@ -533,24 +482,20 @@ main(int argc, char* argv[])
 	const char * conf_opt = NULL; /* what option do you want? Can be NULL -> print all */
 	const char * conf_zone = NULL; /* what zone are we talking about */
 	const char * conf_key = NULL; /* what key is needed */
-	const char * conf_pat = NULL; /* what pattern is talked about */
 	const char* configfile;
 	nsd_options_t *options;
 
 	log_init("nsd-checkconf");
 
+
         /* Parse the command line... */
-        while ((c = getopt(argc, argv, "vo:a:p:s:z:")) != -1) {
+        while ((c = getopt(argc, argv, "vo:a:s:z:")) != -1) {
 		switch (c) {
 		case 'v':
 			verbose = 1;
-			verbosity++;
 			break;
 		case 'o':
 			conf_opt = optarg;
-			break;
-		case 'p':
-			conf_pat = optarg;
 			break;
 		case 'a':
 			if (conf_key) {
@@ -584,21 +529,18 @@ main(int argc, char* argv[])
 	/* read config file */
 	options = nsd_options_create(region_create(xalloc, free));
 	tsig_init(options->region);
-	if (!parse_options_file(options, configfile, NULL, NULL) ||
+	if (!parse_options_file(options, configfile) ||
 	   !additional_checks(options, configfile)) {
 		exit(2);
 	}
 	if (conf_opt || conf_key) {
-		config_print_zone(options, conf_key, key_sec,
-			underscore(conf_opt), conf_zone, conf_pat);
+		config_print_zone(options, conf_key, key_sec, underscore(conf_opt), conf_zone);
 	} else {
 		if (verbose) {
-			printf("# Read file %s: %d patterns, %d fixed-zones, "
-				"%d keys.\n",
+			printf("# Read file %s: %d zones, %d keys.\n",
 				configfile,
-				(int)options->patterns->count,
 				(int)nsd_options_num_zones(options),
-				(int)options->keys->count);
+				(int)options->numkeys);
 			config_test_print_server(options);
 		}
 	}

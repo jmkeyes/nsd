@@ -2,13 +2,13 @@
 /*
  * zlexer.lex - lexical analyzer for (DNS) zone files
  * 
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -18,6 +18,8 @@
 #include "zonec.h"
 #include "dname.h"
 #include "zparser.h"
+
+#define YY_NO_UNPUT
 
 #if 0
 #define LEXOUT(s)  printf s /* used ONLY when debugging */
@@ -66,23 +68,6 @@ pop_parser_state(void)
 	yy_switch_to_buffer(include_stack[include_stack_ptr]);
 }
 
-static YY_BUFFER_STATE oldstate;
-/* Start string scan */
-void
-parser_push_stringbuf(char* str)
-{
-	oldstate = YY_CURRENT_BUFFER;
-	yy_switch_to_buffer(yy_scan_string(str));
-}
-
-void
-parser_pop_stringbuf(void)
-{
-	yy_delete_buffer(YY_CURRENT_BUFFER);
-	yy_switch_to_buffer(oldstate);
-	oldstate = NULL;
-}
-
 #ifndef yy_set_bol /* compat definition, for flex 2.4.6 */
 #define yy_set_bol(at_bol) \
 	{ \
@@ -92,16 +77,6 @@ parser_pop_stringbuf(void)
 	}
 #endif
 	
-%}
-%option noinput
-%option nounput
-%{
-#ifndef YY_NO_UNPUT
-#define YY_NO_UNPUT 1
-#endif
-#ifndef YY_NO_INPUT
-#define YY_NO_INPUT 1
-#endif
 %}
 
 SPACE   [ \t]
@@ -169,11 +144,13 @@ ANY     [^\"\n\\]|\\.
 			/* split the original yytext */
 			*tmp = '\0';
 			strip_string(yytext);
-			
+
 			dname = dname_parse(parser->region, tmp + 1);
 			if (!dname) {
 				zc_error("incorrect include origin '%s'",
 					 tmp + 1);
+			} else if (*(tmp + strlen(tmp + 1)) != '.') {
+				zc_error("$INCLUDE directive requires absolute domain name");
 			} else {
 				origin = domain_table_insert(
 					parser->db->domains, dname);
