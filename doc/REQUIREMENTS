@@ -604,10 +604,6 @@ C 4.4 Truncation handling. (as rfc2181 9)
   empty and the truncation (TC) bit is set. If the DO bit is set RRSIG
   RRs are required in the answer and authority section.
 
-  Inclusion of NS RRs in the authority section when QTYPE=DNSKEY is
-  removed since NSD version 3.2.3. This is to prevent resolvers from 
-  unnecessarily falling back to TCP. Only DNSKEYs are considered, 
-  because it showed that especially these DNS packets are 'troublesome'.
 
   If inclusion of an RRset in the Additional section is not possible
   RRs are omitted one by one. This may lead to incomplete RRsets.
@@ -838,9 +834,7 @@ RR records details.
 
   "DHCID"    49,    # draft-ietf-dnsext-dhcid-rr-13.txt
 
-  "NSEC3"    50,    # RFC 5155.
-
-  Unknown    51 - 98,
+  Unknown    50 - 98,
 
   "SPF"      99,    # RFC 4408 (Experimental).
 
@@ -855,6 +849,9 @@ RR records details.
   "MAILB"    253,   # RFC 1035 (MB, MG, MR)
   "MAILA"    254,   # RFC 1035 (obsolete - see MX)
   "ANY"      255,   # RFC 1035
+
+  "NSEC3"    65324, # Experimental number for NSEC3 dns secure denial
+  		      that prevents zone walking.
 
 
 ______________________________________________________________________
@@ -970,10 +967,6 @@ NSD Version 3.0. and above
    RFC 4635 (HMAC SHA TSIG) support for mandatory algorithms: hmac-md5, 
 		hmac-sha1, hmac-sha256.
 
-   RFC 5001 (NSID) support.
-
-   RFC 5155 (NSEC3) support.
-
 Not implemented:
 
   RFC2136 (Dynamic update) are not implemented and will not be implemented as
@@ -981,10 +974,6 @@ Not implemented:
 
 
 Appendix D. Changes to this file.
-
-24 february 2010 (Matthijs Mekking).
-- Updated file with RFC 5001 (NSID) and RFC 5155 (NSEC3) support (version
-  3.0.0 and above).
 
 30 october 2008 (Matthijs Mekking).
 - Added support for RFC 4635 (HMAC SHA TSIG).

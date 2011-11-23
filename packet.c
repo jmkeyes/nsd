@@ -7,7 +7,7 @@
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <string.h>
 
@@ -22,7 +22,7 @@ encode_dname(query_type *q, domain_type *domain)
 		query_put_dname_offset(q, domain, buffer_position(q->packet));
 		DEBUG(DEBUG_NAME_COMPRESSION, 2,
 		      (LOG_INFO, "dname: %s, number: %lu, offset: %u\n",
-		       domain_to_string(domain),
+		       dname_to_string(domain_dname(domain), NULL),
 		       (unsigned long) domain->number,
 		       query_get_dname_offset(q, domain)));
 		buffer_write(q->packet, dname_name(domain_dname(domain)),
@@ -32,7 +32,7 @@ encode_dname(query_type *q, domain_type *domain)
 	if (domain->parent) {
 		DEBUG(DEBUG_NAME_COMPRESSION, 2,
 		      (LOG_INFO, "dname: %s, number: %lu, pointer: %u\n",
-		       domain_to_string(domain),
+		       dname_to_string(domain_dname(domain), NULL),
 		       (unsigned long) domain->number,
 		       query_get_dname_offset(q, domain)));
 		assert(query_get_dname_offset(q, domain) <= MAX_COMPRESSION_OFFSET);
@@ -108,14 +108,12 @@ int
 packet_encode_rrset(query_type *query,
 		    domain_type *owner,
 		    rrset_type *rrset,
-		    int section)
+		    int truncate_rrset)
 {
 	uint16_t i;
 	size_t truncation_mark;
 	uint16_t added = 0;
 	int all_added = 1;
-	int truncate_rrset = (section == ANSWER_SECTION ||
-							section == AUTHORITY_SECTION);
 	rrset_type *rrsig;
 
 	assert(rrset->rr_count > 0);
@@ -154,7 +152,7 @@ packet_encode_rrset(query_type *query,
 	}
 
 	if (!all_added && truncate_rrset) {
-		/* Truncate entire RRset and set truncate flag. */
+		/* Truncate entire RRset and set truncate flag.  */
 		buffer_set_position(query->packet, truncation_mark);
 		query_clear_dname_offsets(query, truncation_mark);
 		TC_SET(query->packet);
@@ -254,17 +252,19 @@ packet_read_rr(region_type *region, domain_table_type *owners,
 	}
 	result->rdata_count = rdata_count;
 	result->rdatas = rdatas;
-
+	
 	return result;
 }
 
 int packet_read_query_section(buffer_type *packet,
-	uint8_t* dst, uint16_t* qtype, uint16_t* qclass)
+                	uint8_t* dst,
+			uint16_t* qtype,
+			uint16_t* qclass)
 {
 	uint8_t *query_name = buffer_current(packet);
 	uint8_t *src = query_name;
 	size_t len;
-
+	
 	while (*src) {
 		/*
 		 * If we are out of buffer limits or we have a pointer
@@ -272,8 +272,8 @@ int packet_read_query_section(buffer_type *packet,
 		 * MAXDOMAINLEN ...
 		 */
 		if ((*src & 0xc0) ||
-		    (src + *src + 2 > buffer_end(packet)) ||
-		    (src + *src + 2 > query_name + MAXDOMAINLEN))
+		    (src + *src + 1 > buffer_end(packet)) || 
+		    (src + *src + 1 > query_name + MAXDOMAINLEN))
 		{
 			return 0;
 		}

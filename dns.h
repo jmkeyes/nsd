@@ -140,13 +140,10 @@ typedef enum nsd_rc nsd_rc_type;
 #define TYPE_MAILA	254	/* A request for mail agent RRs (Obsolete - see MX) */
 #define TYPE_ANY	255	/* any type (wildcard) */
 
-#define TYPE_DLV	32769	/* RFC 4431 */
-#define PSEUDO_TYPE_DLV	RRTYPE_DESCRIPTORS_LENGTH
-
 #define MAXLABELLEN	63
 #define MAXDOMAINLEN	255
 
-#define MAXRDATALEN	64      /* This is more than enough, think multiple TXT. */
+#define MAXRDATALEN	64      /* This is more than enough, think multiple TXT.  */
 #define MAX_RDLENGTH	65535
 
 /* Maximum size of a single RR.  */
@@ -155,8 +152,6 @@ typedef enum nsd_rc nsd_rc_type;
 
 #define IP4ADDRLEN	(32/8)
 #define IP6ADDRLEN	(128/8)
-
-#define NSEC3_HASH_LEN 20
 
 /*
  * The different types of RDATA wireformat data.
@@ -170,13 +165,12 @@ enum rdata_wireformat
 	RDATA_WF_SHORT,		     /* 16-bit integer.  */
 	RDATA_WF_LONG,		     /* 32-bit integer.  */
 	RDATA_WF_TEXT,		     /* Text string.  */
-	RDATA_WF_TEXTS,		     /* Text string sequence.  */
 	RDATA_WF_A,		     /* 32-bit IPv4 address.  */
 	RDATA_WF_AAAA,		     /* 128-bit IPv6 address.  */
 	RDATA_WF_BINARY, 	     /* Binary data (unknown length).  */
 	RDATA_WF_BINARYWITHLENGTH,   /* Binary data preceded by 1 byte length */
 	RDATA_WF_APL,		     /* APL data.  */
-	RDATA_WF_IPSECGATEWAY	     /* IPSECKEY gateway ip4, ip6 or dname. */
+	RDATA_WF_IPSECGATEWAY,	     /* IPSECKEY gateway ip4, ip6 or dname. */
 };
 typedef enum rdata_wireformat rdata_wireformat_type;
 
@@ -188,7 +182,6 @@ enum rdata_zoneformat
 	RDATA_ZF_DNAME,		/* Domain name.  */
 	RDATA_ZF_LITERAL_DNAME,	/* DNS name (not lowercased domain name).  */
 	RDATA_ZF_TEXT,		/* Text string.  */
-	RDATA_ZF_TEXTS,		/* Text string sequence.  */
 	RDATA_ZF_BYTE,		/* 8-bit integer.  */
 	RDATA_ZF_SHORT,		/* 16-bit integer.  */
 	RDATA_ZF_LONG,		/* 32-bit integer.  */
@@ -219,8 +212,8 @@ struct rrtype_descriptor
 	uint16_t    type;	/* RR type */
 	const char *name;	/* Textual name.  */
 	int         token;	/* Parser token.  */
-	uint32_t    minimum;	/* Minimum number of RDATAs.  */
-	uint32_t    maximum;	/* Maximum number of RDATAs.  */
+	uint8_t     minimum;	/* Minimum number of RDATAs.  */
+	uint8_t     maximum;	/* Maximum number of RDATAs.  */
 	uint8_t     wireformat[MAXRDATALEN]; /* rdata_wireformat_type */
 	uint8_t     zoneformat[MAXRDATALEN]; /* rdata_zoneformat_type  */
 };

@@ -42,12 +42,12 @@ struct zparser {
 	namedb_type *db;
 
 	const char *filename;
-	uint32_t default_ttl;
+	int32_t default_ttl;
+	int32_t default_minimum;
 	uint16_t default_class;
 	zone_type *current_zone;
 	domain_type *origin;
 	domain_type *prev_dname;
-	domain_type *default_apex;
 
 	int error_occurred;
 	unsigned int errors;
@@ -71,7 +71,6 @@ extern domain_type *error_domain;
 
 int yyparse(void);
 int yylex(void);
-int yylex_destroy(void);
 /*int yyerror(const char *s);*/
 void yyrestart(FILE *);
 
@@ -80,15 +79,11 @@ void zc_warning_prev_line(const char *fmt, ...) ATTR_FORMAT(printf, 1, 2);
 void zc_error(const char *fmt, ...) ATTR_FORMAT(printf, 1, 2);
 void zc_error_prev_line(const char *fmt, ...) ATTR_FORMAT(printf, 1, 2);
 
-void parser_push_stringbuf(char* str);
-void parser_pop_stringbuf(void);
-
 int process_rr(void);
 uint16_t *zparser_conv_hex(region_type *region, const char *hex, size_t len);
 uint16_t *zparser_conv_hex_length(region_type *region, const char *hex, size_t len);
 uint16_t *zparser_conv_time(region_type *region, const char *time);
 uint16_t *zparser_conv_services(region_type *region, const char *protostr, char *servicestr);
-uint16_t *zparser_conv_serial(region_type *region, const char *periodstr);
 uint16_t *zparser_conv_period(region_type *region, const char *periodstr);
 uint16_t *zparser_conv_short(region_type *region, const char *text);
 uint16_t *zparser_conv_long(region_type *region, const char *text);
@@ -110,10 +105,8 @@ uint16_t *zparser_conv_apl_rdata(region_type *region, char *str);
 
 void parse_unknown_rdata(uint16_t type, uint16_t *wireformat);
 
-uint32_t zparser_ttl2int(const char *ttlstr, int* error);
+int32_t zparser_ttl2int(const char *ttlstr);
 void zadd_rdata_wireformat(uint16_t *data);
-void zadd_rdata_txt_wireformat(uint16_t *data, int first);
-void zadd_rdata_txt_clean_wireformat();
 void zadd_rdata_domain(domain_type *domain);
 
 void set_bitnsec(uint8_t  bits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE],
@@ -125,18 +118,5 @@ zparser_type *zparser_create(region_type *region, region_type *rr_region,
 			     namedb_type *db);
 void zparser_init(const char *filename, uint32_t ttl, uint16_t klass,
 		  const dname_type *origin);
-
-/* parser start and stop to parse a zone */
-void zonec_setup_parser(namedb_type* db);
-void zonec_desetup_parser(void);
-/* parse a zone into memory. name is origin. zonefile is file to read.
- * returns number of errors; failure may have read a partial zone */
-unsigned int zonec_read(const char *name, const char *zonefile, zone_type* zone);
-/* parse a string into the region. and with given domaintable. global parser
- * is restored afterwards. zone needs apex set. returns last domain name
- * parsed and the number rrs parse. return number of errors, 0 is success.
- * The string must end with a newline after the RR. */
-int zonec_parse_string(region_type* region, domain_table_type* domains,
-	zone_type* zone, char* str, domain_type** parsed, int* num_rrs);
 
 #endif /* _ZONEC_H_ */

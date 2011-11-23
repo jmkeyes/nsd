@@ -1,13 +1,8 @@
 dnl
 dnl Some global settings
 dnl
-
-sinclude(acx_nlnetlabs.m4)
-
-AC_INIT(NSD,4.0.0_imp_6,nsd-bugs@nlnetlabs.nl)
+AC_INIT(NSD,3.2.1,nsd-bugs@nlnetlabs.nl)
 AC_CONFIG_HEADER([config.h])
-
-AC_AIX
 
 dnl
 dnl By default set $sysconfdir to /etc and $localstatedir to /var
@@ -34,7 +29,6 @@ configdir=$sysconfdir/nsd
 AC_ARG_WITH([configdir],
 	AC_HELP_STRING([--with-configdir=dir], [NSD configuration directory]),
 	[configdir=$withval])
-AC_DEFINE_UNQUOTED(CONFIGDIR, ["`eval echo $configdir`"], [NSD config dir])
 AC_SUBST(configdir)
 
 #
@@ -49,10 +43,18 @@ AC_SUBST(nsd_conf_file)
 AC_DEFINE_UNQUOTED(CONFIGFILE, ["`eval echo $nsd_conf_file`"], [Pathname to the NSD configuration file])
 
 #
-# Default logfile
-#
-logfile=${localstatedir}/log/nsd.log
-AC_SUBST(logfile)
+# Determine start and kill priorities
+start_priority=45
+AC_ARG_WITH([start_priority],
+	AC_HELP_STRING([--with-start_priority=number], [NSD startup priority]),
+	[start_priority=$withval])
+AC_SUBST(start_priority)
+
+kill_priority=74
+AC_ARG_WITH([kill_priority],
+	AC_HELP_STRING([--with-kill_priority=number], [NSD shutdown priority]),
+	[kill_priority=$withval])
+AC_SUBST(kill_priority)
 
 #
 # Database directory
@@ -84,12 +86,6 @@ AC_ARG_WITH([dbfile],
 AC_SUBST(dbfile)
 AC_DEFINE_UNQUOTED(DBFILE, ["`eval echo $dbfile`"], [Pathname to the NSD database])
 
-dbdir=`dirname $dbfile`
-AC_SUBST(dbdir)
-
-piddir=`dirname $pidfile`
-AC_SUBST(piddir)
-
 #
 # Determine the default directory for the zone files
 #
@@ -113,23 +109,6 @@ AC_ARG_WITH([xfrdfile], AC_HELP_STRING([--with-xfrdfile=path],
 	[Pathname to the NSD xfrd zone timer state file]), [xfrdfile=$withval])
 AC_DEFINE_UNQUOTED(XFRDFILE, ["`eval echo $xfrdfile`"], [Pathname to the NSD xfrd zone timer state file.])
 AC_SUBST(xfrdfile)
-
-# default zonelist file location.
-zonelistfile=${dbdir}/zone.list
-AC_ARG_WITH([zonelistfile], AC_HELP_STRING([--with-zonelistfile=path], 
-	[Pathname to the NSD zone list file]), [zonelistfile=$withval])
-AC_DEFINE_UNQUOTED(ZONELISTFILE, ["`eval echo $zonelistfile`"], [Pathname to the NSD zone list file.])
-AC_SUBST(zonelistfile)
-
-#
-# Determine default chroot directory
-#
-AC_ARG_WITH([chroot],
-	AC_HELP_STRING([--with-chroot=dir], [NSD default chroot directory]),
-	[
-		chrootdir=$withval
-		AC_DEFINE_UNQUOTED(CHROOTDIR, ["`eval echo $chrootdir`"], [NSD default chroot directory])
-	])
 
 #
 # Determine the user name to drop privileges to
@@ -240,211 +219,7 @@ fi
 ])dnl
 
 # Checks for typedefs, structures, and compiler characteristics.
-CHECK_COMPILER_FLAG(O2, [], [ CFLAGS=`echo $CFLAGS | sed -e "s/-O2//g"` ])
-CHECK_COMPILER_FLAG(fwhole-program, [
-	# check first, because it triggerts the gcc optimizer system header
-	# troubles on ubuntu 10.04 and 11.04 more easily.  Also if it works
-	# on its own this is optimized.
-	ACX_CHECK_FLTO
-	# check if it really works
-	AC_MSG_CHECKING([if -combine and system headers work (u10.04)])
-[
-cat >conftest1.c <<EOF 
-#include <string.h>
-#include <stdio.h>
-#include <errno.h>
-
-struct nsd {
-	char* pidfile;
-	unsigned long pid;
-};
-
-static struct nsd nsd;
-
-void log_msg(int x, char* s, ...) { }
-
-int write_data(FILE* f, char* buf, size_t len) { }
-
-int writepid(struct nsd *nsd) {
-	FILE * fd;
-	char pidbuf[32];
-
-	memset(&fd, 0, sizeof(fd));
-
-	if ((fd = fopen(nsd->pidfile, "w")) ==  NULL ) {
-		log_msg(1, "cannot open pidfile %s: %s",
-			nsd->pidfile, strerror(errno));
-		return -1;
-	}
-
-	if (!write_data(fd, pidbuf, strlen(pidbuf))) {
-		log_msg(1, "cannot write pidfile %s: %s",
-			nsd->pidfile, strerror(errno));
-		fclose(fd);
-		return -1;
-	}
-	fclose(fd);
-
-	return 0;
-}
-
-int main(void)
-{
-	return writepid(&nsd);
-}
-EOF
-cat >conftest2.c <<EOF
-#include <string.h>
-#include <stdio.h>
-EOF
-]
-	if $CC $CFLAGS -o conftest.out -combine -fwhole-program conftest1.c conftest2.c >/dev/null 2>&1; then
-		AC_MSG_RESULT(yes)
-		AC_MSG_CHECKING([if -combine and system headers work (u11.04)])
-[
-cat >conftest1.c <<EOF
-#include <inttypes.h>
-#include <string.h>
-#include <stdlib.h>
-
-void *xalloc(size_t size) { return malloc(size); }
-struct region;
-struct region *region_create(void *(*allocator)(size_t),
-	void (*deallocator)(void *))
-{ (void)allocator; (void)deallocator; return (struct region*)malloc(10); }
-struct udb_base;
-struct udb_ptr;
-#define NSEC3_HASH_LEN 20
-int udb_zone_lookup_hash_wc(struct udb_base* udb, struct udb_ptr* zone,
-	const uint8_t* nm, size_t nmlen, uint8_t hash[NSEC3_HASH_LEN],
-        uint8_t wchash[NSEC3_HASH_LEN]);
-struct dname { uint8_t name_size, label_count; };
-const struct dname *dname_parse(struct region *region, const char *name);
-const struct dname *dname_concatenate(struct region *region,
-	const struct dname *left, const struct dname *right);
-static inline const uint8_t *
-dname_name(const struct dname *dname)
-{
-        return (const uint8_t *) ((const char *) dname + sizeof(struct dname)
-		+ dname->label_count * sizeof(uint8_t));
-}
-struct radnode;
-struct radtree;
-struct domain { struct dname* dname; 
-        uint8_t nsec3_hash[NSEC3_HASH_LEN];
-        uint8_t nsec3_wc_hash[NSEC3_HASH_LEN];
-        uint8_t nsec3_ds_parent_hash[NSEC3_HASH_LEN];
-        unsigned  have_nsec3_hash : 1;
-        unsigned  have_nsec3_wc_hash : 1;
-        unsigned  have_nsec3_ds_parent_hash : 1;
-} ;
-struct zone;
-struct namedb { struct udb_base* udb; } ;
-static inline const struct dname *
-domain_dname(struct domain *domain)
-{
-        return domain->dname;
-}
-
-void nsec3_hash_and_store(struct zone* zone, const struct dname* dname,
-        uint8_t* store);
-
-#define STORE_HASH(x,y) memmove(domain->x,y,NSEC3_HASH_LEN); domain->have_##x =1;
-
-static void
-nsec3_lookup_hash_and_wc(struct namedb* db, struct zone* zone,
-	struct udb_ptr* z, const struct dname* dname, struct domain* domain)
-{
-	uint8_t h[NSEC3_HASH_LEN], h_wc[NSEC3_HASH_LEN];
-	const struct dname* wcard;
-	if(domain->have_nsec3_hash && domain->have_nsec3_wc_hash) {
-		return;
-	}
-	if( udb_zone_lookup_hash_wc(db->udb, z, dname_name(dname),
-		dname->name_size, h, h_wc)) {
-		STORE_HASH(nsec3_hash, h);
-		STORE_HASH(nsec3_wc_hash, h_wc);
-		return;
-	}
-	nsec3_hash_and_store(zone, dname, domain->nsec3_hash);
-	struct region* region = region_create(xalloc, free);
-	wcard = dname_parse(region, "*");
-	wcard = dname_concatenate(region, wcard, dname);
-}
-
-void nsec3_precompile_domain(struct namedb* db, struct domain* domain,
-	struct zone* zone, struct udb_ptr* z)
-{
-	nsec3_lookup_hash_and_wc(db, zone, z, domain_dname(domain), domain);
-}
-EOF
-cat >conftest2.c <<EOF
-#include <sys/types.h>
-#include <inttypes.h>
-#include <string.h>
-struct radtree;
-struct radnode;
-struct region;
-typedef uint16_t radstrlen_t;
-struct domain;
-struct radtree* radix_tree_create(void) { return (struct radtree*)malloc(10); }
-struct radnode* radix_insert(struct radtree* rt, uint8_t* k, radstrlen_t len,
-        void* elem) { (void)rt; (void)k; (void)len; (void)elem; return 0; }
-
-static struct radtree* hash_tree_create(void)
-{
-	struct radtree* tree = radix_tree_create();
-	(void)radix_insert(tree, NULL, 0, tree);
-	return tree;
-}
-
-void zone_add_domain_in_hash_tree(struct radtree** tree, uint8_t* hash,
-	size_t hashlen, struct domain* domain, struct radnode** node)
-{
-	if(!*tree) *tree = hash_tree_create();
-	*node = radix_insert(*tree, hash, hashlen, domain);
-}
-
-const struct dname *dname_parse(struct region *region, const char *name)
-{ (void)region; (void)name; return (struct dname*)malloc(10); }
-
-const struct dname *dname_concatenate(struct region *region,
-        const struct dname *left, const struct dname *right)
-{ (void)region; (void)left; return right; }
-
-struct udb_base;
-struct udb_ptr;
-#define NSEC3_HASH_LEN 20
-int udb_zone_lookup_hash_wc(struct udb_base* udb, struct udb_ptr* zone,
-        const uint8_t* nm, size_t nmlen, uint8_t hash[NSEC3_HASH_LEN],
-        uint8_t wchash[NSEC3_HASH_LEN])
-{ (void)udb; (void)zone; (void)nm; (void)hash; (void)wchash; return nmlen; }
-
-struct zone;
-void nsec3_hash_and_store(struct zone* zone, const struct dname* dname,
-        uint8_t* store) { (void)zone; (void)dname; (void)store; }
-
-int main(void) { return 0; }
-EOF
-]
-		if $CC $CFLAGS -o conftest.out -combine -fwhole-program conftest1.c conftest2.c >/dev/null 2>&1; then
-			AC_MSG_RESULT(yes)
-			CCWHOLE="whole"
-		else
-			AC_MSG_RESULT(no)
-			echo "failed command $CC $CFLAGS -o conftest.out -combine -fwhole-program conftest1.c conftest2.c" >&AS_MESSAGE_LOG_FD
-			$CC $CFLAGS -o conftest.out -combine -fwhole-program conftest1.c conftest2.c >&AS_MESSAGE_LOG_FD 2>&1
-			CCWHOLE="unwhole"
-		fi
-	else
-		AC_MSG_RESULT(no)
-		echo "failed command $CC $CFLAGS -o conftest.out -combine -fwhole-program conftest1.c conftest2.c" >&AS_MESSAGE_LOG_FD
-		$CC $CFLAGS -o conftest.out -combine -fwhole-program conftest1.c conftest2.c >&AS_MESSAGE_LOG_FD 2>&1
-		CCWHOLE="unwhole"
-	fi
-	rm -f conftest1.c conftest2.c conftest.out
-], [ CCWHOLE="unwhole" ])
-AC_SUBST(CCWHOLE)
+CHECK_COMPILER_FLAG(O2, [], [ CFLAGS="-g" ])
 AC_C_CONST
 AC_C_INLINE
 AC_TYPE_UID_T
@@ -454,7 +229,6 @@ AC_TYPE_OFF_T
 
 AC_CHECK_FORMAT_ATTRIBUTE
 AC_CHECK_UNUSED_ATTRIBUTE
-ACX_CHECK_MEMCMP_SIGNED
 AC_CHECK_CTIME_R
 
 # Checks for libraries.
@@ -479,9 +253,7 @@ AC_DEFUN([CHECK_SSL], [
             if test -f "$dir/include/openssl/ssl.h"; then
                 found_ssl="yes";
                 AC_DEFINE_UNQUOTED([HAVE_SSL], [], [Define if you have the SSL libraries installed.])
-                if test x_$ssldir != x_/usr; then
-                    CPPFLAGS="$CPPFLAGS -I$ssldir/include";
-                fi
+                CPPFLAGS="$CPPFLAGS -I$ssldir/include";
                 break;
             fi
         done 
@@ -490,9 +262,7 @@ AC_DEFUN([CHECK_SSL], [
         else
             AC_MSG_RESULT(found in $ssldir)
             HAVE_SSL=yes 
-            if test x_$ssldir != x_/usr; then
-                LDFLAGS="$LDFLAGS -L$ssldir/lib";
-            fi
+            LDFLAGS="$LDFLAGS -L$ssldir/lib";
 	    if test x_$ssldir = x_/usr/sfw; then
 		LDFLAGS="$LDFLAGS -R$ssldir/lib";
 	    fi
@@ -508,7 +278,7 @@ AC_DEFUN([CHECK_SSL], [
 # Checks for header files.
 AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS([time.h arpa/inet.h signal.h string.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h tcpd.h grp.h])
+AC_CHECK_HEADERS([time.h arpa/inet.h signal.h strings.h fcntl.h limits.h netinet/in.h stddef.h sys/param.h sys/socket.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h tcpd.h])
 
 AC_DEFUN([CHECK_VALIST_DEF],
 [
@@ -571,13 +341,13 @@ AC_DEFUN([AC_CHECK_STRPTIME_WORKS],
 [AC_REQUIRE([AC_PROG_CC])
 AC_MSG_CHECKING(whether strptime works)
 if test c${cross_compiling} = cno; then
-AC_RUN_IFELSE([AC_LANG_SOURCE([[
+AC_TRY_RUN([
 #define _XOPEN_SOURCE
 #include <time.h>
 int main(void) { struct tm tm; char *res; 
 res = strptime("20070207111842", "%Y%m%d%H%M%S", &tm);
 if (!res) return 1; return 0; }
-]])] , [eval "ac_cv_c_strptime_works=yes"], [eval "ac_cv_c_strptime_works=no"])
+] , [eval "ac_cv_c_strptime_works=yes"], [eval "ac_cv_c_strptime_works=no"])
 else
 eval "ac_cv_c_strptime_works=maybe"
 fi
@@ -589,22 +359,10 @@ AC_DEFINE_UNQUOTED([STRPTIME_WORKS], 1, [use default strptime.])
 fi
 ])dnl
 
+AC_CHECK_STRPTIME_WORKS
+
 AC_SEARCH_LIBS(inet_pton, [nsl])
 AC_SEARCH_LIBS(socket, [socket])
-
-AC_CHECK_STRPTIME_WORKS
-ACX_CHECK_NONBLOCKING_BROKEN
-ACX_MKDIR_ONE_ARG
-
-# set -I. and -Isrcdir
-if test -n "$CPPFLAGS"; then
-	CPPFLAGS="$CPPFLAGS -I."
-else
-	CPPFLAGS="-I."
-fi
-if test "$srcdir" != "."; then
-	CPPFLAGS="$CPPFLAGS -I$srcdir"
-fi
 
 dnl LIBGTOP_CHECK_TYPE
 dnl Stolen from Gnome's anjuta
@@ -665,7 +423,6 @@ AC_LIBGTOP_CHECK_TYPE(uint64_t, unsigned long long)
 AC_LIBGTOP_CHECK_TYPE(socklen_t, int)
 AC_LIBGTOP_CHECK_TYPE(sig_atomic_t, int)
 AC_LIBGTOP_CHECK_TYPE(ssize_t, int)
-AC_LIBGTOP_CHECK_TYPE(suseconds_t, time_t)
 
 AC_CHECK_TYPE(in_addr_t, [], [AC_DEFINE([in_addr_t], [uint32_t], [in_addr_t])], [
 #if HAVE_SYS_TYPES_H
@@ -674,7 +431,6 @@ AC_CHECK_TYPE(in_addr_t, [], [AC_DEFINE([in_addr_t], [uint32_t], [in_addr_t])], 
 #if HAVE_NETINET_IN_H
 # include <netinet/in.h>
 #endif])
-ACX_CHECK_SS_FAMILY
 
 # Checks for library functions.
 AC_FUNC_CHOWN
@@ -683,16 +439,8 @@ AC_FUNC_MALLOC
 AC_TYPE_SIGNAL
 AC_FUNC_FSEEKO
 AC_SYS_LARGEFILE
-AC_CHECK_SIZEOF(void*)
-AC_CHECK_SIZEOF(off_t)
-AC_CHECK_FUNCS([arc4random arc4random_uniform])
-AC_CHECK_FUNCS([alarm chroot dup2 endpwent gethostname memset memcpy pwrite socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask strptime setusercontext initgroups setresuid setreuid setresgid setregid getpwnam])
-
-# check if setreuid en setregid fail, on MacOSX10.4(darwin8).
-if echo $build_os | grep darwin8 > /dev/null; then
-	AC_DEFINE(DARWIN_BROKEN_SETREUID, 1, [Define this if on macOSX10.4-darwin8 and setreuid and setregid do not work])
-fi
-
+AC_CHECK_FUNCS([alarm chroot dup2 endpwent gethostname memset memcpy socket strcasecmp strchr strdup strerror strncasecmp strtol getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask strptime])
+ 
 #
 # Checking for missing functions we can replace
 #
@@ -701,7 +449,6 @@ AC_REPLACE_FUNCS(inet_aton)
 AC_REPLACE_FUNCS(inet_pton)
 AC_REPLACE_FUNCS(inet_ntop)
 AC_REPLACE_FUNCS(snprintf)
-AC_REPLACE_FUNCS(strlcat)
 AC_REPLACE_FUNCS(strlcpy)
 AC_REPLACE_FUNCS(strptime)
 AC_REPLACE_FUNCS(b64_pton)
@@ -732,15 +479,16 @@ dnl Some random defines's
 dnl
 AC_DEFINE_UNQUOTED([IDENTITY], ["unidentified server"], [Define to the default nsd identity.])
 AC_DEFINE_UNQUOTED([VERSION], [PACKAGE_STRING], [Define to the NSD version to answer version.server query.])
-AC_DEFINE_UNQUOTED([TCP_BACKLOG], [16], [Define to the backlog to be used with listen.])
+AC_DEFINE_UNQUOTED([TCP_BACKLOG], [5], [Define to the backlog to be used with listen.])
 AC_DEFINE_UNQUOTED([TCP_PORT], ["53"], [Define to the default tcp port.])
 AC_DEFINE_UNQUOTED([TCP_MAX_MESSAGE_LEN], [65535], [Define to the default maximum message length.])
+AC_DEFINE_UNQUOTED([TCP_TIMEOUT], [120], [Define to the default tcp timeout.])
 AC_DEFINE_UNQUOTED([UDP_PORT], ["53"], [Define to the default udp port.])
 AC_DEFINE_UNQUOTED([UDP_MAX_MESSAGE_LEN], [512], [Define to the default maximum udp message length.])
 AC_DEFINE_UNQUOTED([EDNS_MAX_MESSAGE_LEN], [4096], [Define to the default maximum message length with EDNS.])
+dnl AC_DEFINE_UNQUOTED([MAX_INTERFACES], [8], [Define to the maximum interfaces to serve.])
+dnl AC_DEFINE_UNQUOTED([FACILITY], [LOG_DAEMON], [Define to the default facility for syslog.])
 AC_DEFINE_UNQUOTED([MAXSYSLOGMSGLEN], [512], [Define to the maximum message length to pass to syslog.])
-AC_DEFINE_UNQUOTED([NSD_CONTROL_PORT], [8952], [Define to the default nsd-control port.])
-AC_DEFINE_UNQUOTED([NSD_CONTROL_VERSION], [1], [Define to nsd-control proto version.])
 
 dnl
 dnl Determine the syslog facility to use
@@ -752,22 +500,13 @@ AC_ARG_WITH([facility],
 AC_DEFINE_UNQUOTED([FACILITY], $facility, [Define to the default facility for syslog.])
 
 dnl
-dnl Determine the maximum number of ip-addresses that are allowed
+dnl Determine the maximum number of interfaces that are allowed
 dnl
-max_ips=8
-AC_ARG_WITH([max_ips],
-	AC_HELP_STRING([--with-max-ips=number], [Limit on the number of ip-addresses that may be specified]),
-	[max_ips=$withval])
-AC_DEFINE_UNQUOTED([MAX_INTERFACES], $max_ips, [Define to the maximum ip-addresses to serve.])
-
-dnl
-dnl Determine the default tcp timeout
-dnl
-tcp_timeout=120
-AC_ARG_WITH([tcp_timeout],
-	AC_HELP_STRING([--with-tcp-timeout=number], [Limit the default tcp timeout]),
-	[tcp_timeout=$withval])
-AC_DEFINE_UNQUOTED([TCP_TIMEOUT], $tcp_timeout, [Define to the default tcp timeout.])
+max_interfaces=8
+AC_ARG_WITH([max_interfaces],
+	AC_HELP_STRING([--with-max_interfaces=number], [Limit on the number of ip-addresses that may be specified]),
+	[max_interfaces=$withval])
+AC_DEFINE_UNQUOTED([MAX_INTERFACES], $max_interfaces, [Define to the maximum interfaces to serve.])
 
 dnl
 dnl Features
@@ -787,6 +526,15 @@ case "$enable_ipv6" in
                 ;;
         yes|*)
 		AC_DEFINE_UNQUOTED([INET6], [], [Define this to enable IPv6 support.])
+		;;
+esac
+
+AC_ARG_ENABLE(dnssec, AC_HELP_STRING([--disable-dnssec], [Disable DNSSEC support.]))
+case "$enable_dnssec" in
+        no)
+                ;;
+        yes|*)
+		AC_DEFINE_UNQUOTED([DNSSEC], [], [Define this to enable DNSSEC (RFCs 4033, 4034, and 4035) support.])
 		;;
 esac
 
@@ -812,43 +560,33 @@ case "$enable_checking" in
                 ;;
 esac
 
-# we need SSL for TSIG (and maybe also for NSEC3).
-CHECK_SSL
-if test x$HAVE_SSL = x"yes"; then
-	ACX_LIB_SSL
-	SSL_LIBS="-lssl"
-	AC_SUBST(SSL_LIBS)
-	AC_CHECK_HEADERS([openssl/ssl.h],,, [AC_INCLUDES_DEFAULT])
-	AC_CHECK_HEADERS([openssl/err.h],,, [AC_INCLUDES_DEFAULT])
-	AC_CHECK_HEADERS([openssl/rand.h],,, [AC_INCLUDES_DEFAULT])
-else
-	AC_MSG_WARN([No SSL, therefore remote-control is disabled])
-fi
+AC_ARG_ENABLE(tsig, AC_HELP_STRING([--disable-tsig], [Disable TSIG support]))
+case "$enable_tsig" in
+        no)
+		;;
+        yes|*)
+                CHECK_SSL
+                if test x_$HAVE_SSL != x_yes; then
+                   AC_MSG_ERROR(SSL is required to enable TSIG support.  Use --with-ssl to specify the location of the SSL libraries or --disable-tsig to disable TSIG support.)
+                fi
+                AC_DEFINE([TSIG], [], [Define this to enable TSIG support.])
+                ;;
+esac
 
 AC_ARG_ENABLE(nsec3, AC_HELP_STRING([--disable-nsec3], [Disable NSEC3 support]))
 case "$enable_nsec3" in
         no)
 		;;
-        yes)
+        yes|*)
 		AC_DEFINE_UNQUOTED([NSEC3], [], [Define this to enable NSEC3 support.])
-		;;
-	*)
-		if test x$HAVE_SSL = x"yes"; then
-			AC_DEFINE_UNQUOTED([NSEC3], [], [Define this to enable NSEC3 support.])
-		else
-			AC_MSG_WARN([No SSL, therefore NSEC3 is disabled])
-		fi
                 ;;
 esac
 
-AC_ARG_ENABLE(mmap, AC_HELP_STRING([--enable-mmap], [Use mmap instead of malloc. Experimental.]))
-case "$enable_mmap" in
+AC_ARG_ENABLE(nsid, AC_HELP_STRING([--enable-nsid], [Enable NSID support]))
+case "$enable_nsid" in
         yes)
-		AC_CHECK_HEADERS([sys/mman.h])
-		AC_LIBGTOP_CHECK_TYPE(uintptr_t, void*)
-		AC_CHECK_FUNCS([mmap munmap])
-		AC_DEFINE_UNQUOTED([USE_MMAP_ALLOC], [], [Define this to enable mmap instead of malloc. Experimental.])
-		;;
+               AC_DEFINE([NSID], [], [Define this to enable NSID support.])
+               ;;
         no|*)
                 ;;
 esac
@@ -985,9 +723,6 @@ int inet_aton(const char *cp, struct in_addr *addr);
 #ifndef HAVE_MEMMOVE
 void *memmove(void *dest, const void *src, size_t n);
 #endif
-#ifndef HAVE_STRLCAT
-size_t strlcat(char *dst, const char *src, size_t siz);
-#endif
 #ifndef HAVE_STRLCPY
 size_t strlcpy(char *dst, const char *src, size_t siz);
 #endif
@@ -995,18 +730,11 @@ size_t strlcpy(char *dst, const char *src, size_t siz);
 #include "compat/fake-rfc2553.h"
 #endif
 #ifndef HAVE_STRPTIME
-#define HAVE_STRPTIME 1
 char *strptime(const char *s, const char *format, struct tm *tm); 
 #endif
 #ifndef STRPTIME_WORKS
-#define STRPTIME_WORKS 1
 #define strptime(a,b,c) nsd_strptime((a),(b),(c))
 #endif
-])
-AH_BOTTOM(
-AHX_MEMCMP_BROKEN(nsd)
-)
-AH_BOTTOM([
 
 /* provide timespec def if not available */
 #ifndef CONFIG_DEFINES

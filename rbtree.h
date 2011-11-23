@@ -73,4 +73,10 @@ rbnode_t *rbtree_previous(rbnode_t *rbtree);
 		(rbnode_t*)node != RBTREE_NULL; \
 		node = (type)rbtree_next((rbnode_t*)node))
 
+extern rbnode_t *
+rbtree_postorder_first(rbnode_t *root);
+
+extern rbnode_t *
+rbtree_postorder_next(rbnode_t *node);
+
 #endif /* _RBTREE_H_ */

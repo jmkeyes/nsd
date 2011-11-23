@@ -181,7 +181,7 @@ dname_label(const dname_type *dname, uint8_t label)
  *
  * Pre: left != NULL && right != NULL
  */
-int dname_compare(const dname_type *left, const dname_type *right);
+int dname_compare(void const *vleft, void const *vright);
 
 
 /*
@@ -346,6 +346,22 @@ label_next(const uint8_t *label)
 const char *dname_to_string(const dname_type *dname,
 			    const dname_type *origin);
 
+/*
+ * Convert DNAME to its string representation.  This is a reentrant
+ * version of dname_to_string.  The bufptr argument is a pointer to a
+ * user defined result buffer capable of holding the string representation
+ * of a DNAME.  Due to escape sequences and such, this buffer is recommeneded
+ * to be at least 5 * MAXDOMAINLEN in size.
+ *
+ * If ORIGIN is provided and DNAME is a subdomain of ORIGIN the dname
+ * will be represented relative to ORIGIN.
+ *
+ * Pre: dname != NULL
+ */
+const char *dname_to_string_r(const dname_type *dname,
+			      const dname_type *origin,
+			      char *bufptr);
+
 
 /*
  * Create a dname containing the single label specified by STR
@@ -374,9 +390,14 @@ const dname_type *dname_replace(region_type* region,
 				const dname_type* src,
 				const dname_type* dest);
 
-/** Convert uncompressed wireformat dname to a string */
-char* wiredname2str(const uint8_t* dname);
-/** convert uncompressed label to string */
-char* wirelabel2str(const uint8_t* label);
+/**
+ ************************************************************************
+ * Create a dname representing the wildcard form of the passed dname
+ */
+
+extern int
+dname_make_wildcard(struct region *region,
+		    struct dname const *dname,
+		    struct dname const **wildcard);
 
 #endif /* _DNAME_H_ */

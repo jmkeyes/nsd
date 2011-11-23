@@ -7,7 +7,7 @@
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -33,7 +33,7 @@ static lookup_table_type dns_rrclasses[] = {
 	{ 0, NULL }
 };
 
-static rrtype_descriptor_type rrtype_descriptors[(RRTYPE_DESCRIPTORS_LENGTH+1)] = {
+static rrtype_descriptor_type rrtype_descriptors[RRTYPE_DESCRIPTORS_LENGTH] = {
 	/* 0 */
 	{ 0, NULL, T_UTYPE, 1, 1, { RDATA_WF_BINARY }, { RDATA_ZF_UNKNOWN } },
 	/* 1 */
@@ -88,9 +88,39 @@ static rrtype_descriptor_type rrtype_descriptors[(RRTYPE_DESCRIPTORS_LENGTH+1)] 
 	  { RDATA_WF_SHORT, RDATA_WF_COMPRESSED_DNAME },
 	  { RDATA_ZF_SHORT, RDATA_ZF_DNAME } },
 	/* 16 */
-	{ TYPE_TXT, "TXT", T_TXT, 1, 1,
-	  { RDATA_WF_TEXTS },
-	  { RDATA_ZF_TEXTS } },
+	{ TYPE_TXT, "TXT", T_TXT, 1, MAXRDATALEN,
+	  { RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT,
+	    RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT, RDATA_WF_TEXT },
+	  { RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
+	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT } },
 	/* 17 */
 	{ TYPE_RP, "RP", T_RP, 2, 2,
 	  { RDATA_WF_COMPRESSED_DNAME, RDATA_WF_COMPRESSED_DNAME },
@@ -397,10 +427,6 @@ static rrtype_descriptor_type rrtype_descriptors[(RRTYPE_DESCRIPTORS_LENGTH+1)] 
 	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
 	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT,
 	    RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT, RDATA_ZF_TEXT } },
-	/* 32769 */
-	{ TYPE_DLV, "DLV", T_DLV, 4, 4,
-	  { RDATA_WF_SHORT, RDATA_WF_BYTE, RDATA_WF_BYTE, RDATA_WF_BINARY },
-	  { RDATA_ZF_SHORT, RDATA_ZF_ALGORITHM, RDATA_ZF_BYTE, RDATA_ZF_HEX } },
 };
 
 rrtype_descriptor_type *
@@ -408,8 +434,6 @@ rrtype_descriptor_by_type(uint16_t type)
 {
 	if (type < RRTYPE_DESCRIPTORS_LENGTH)
 		return &rrtype_descriptors[type];
-	else if (type == TYPE_DLV)
-		return &rrtype_descriptors[PSEUDO_TYPE_DLV];
 	return &rrtype_descriptors[0];
 }
 
@@ -424,12 +448,6 @@ rrtype_descriptor_by_name(const char *name)
 		{
 			return &rrtype_descriptors[i];
 		}
-	}
-
-	if (rrtype_descriptors[PSEUDO_TYPE_DLV].name
-	    && strcasecmp(rrtype_descriptors[PSEUDO_TYPE_DLV].name, name) == 0)
-	{
-		return &rrtype_descriptors[PSEUDO_TYPE_DLV];
 	}
 
 	return NULL;
@@ -472,7 +490,7 @@ rrtype_from_string(const char *name)
 	if (strncasecmp(name, "TYPE", 4) != 0)
 		return 0;
 
-	if (!isdigit((int)name[4]))
+	if (!isdigit(name[4]))
 		return 0;
 
 	/* The rest from the string must be a number.  */
@@ -492,7 +510,7 @@ rrclass_to_string(uint16_t rrclass)
 	lookup_table_type *entry = lookup_by_id(dns_rrclasses, rrclass);
 	if (entry) {
 		assert(strlen(entry->name) < sizeof(buf));
-		strlcpy(buf, entry->name, sizeof(buf));
+		strcpy(buf, entry->name);
 	} else {
 		snprintf(buf, sizeof(buf), "CLASS%d", (int) rrclass);
 	}
@@ -513,19 +531,20 @@ rrclass_from_string(const char *name)
 
 	if (strlen(name) < 6)
 		return 0;
-
+	
 	if (strncasecmp(name, "CLASS", 5) != 0)
 		return 0;
 
-	if (!isdigit((int)name[5]))
+	if (!isdigit(name[5]))
 		return 0;
-
+	
 	/* The rest from the string must be a number.  */
 	rrclass = strtol(name + 5, &end, 10);
 	if (*end != '\0')
 		return 0;
 	if (rrclass < 0 || rrclass > 65535L)
 		return 0;
-
-	return (uint16_t) rrclass;
+	
+        return (uint16_t) rrclass;
+	
 }

@@ -7,7 +7,7 @@
  *
  */
 
-#include "config.h"
+#include <config.h>
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -41,7 +41,7 @@ xfrd_setup_packet(buffer_type* packet,
 {
 	/* Set up the header */
 	buffer_clear(packet);
-	ID_SET(packet, qid_generate());
+	ID_SET(packet, (uint16_t) random());
 	FLAGS_SET(packet, 0);
 	OPCODE_SET(packet, OPCODE_QUERY);
 	QDCOUNT_SET(packet, 1);
@@ -200,7 +200,6 @@ xfrd_tcp_obtain(xfrd_tcp_set_t* set, xfrd_zone_t* zone)
 	DEBUG(DEBUG_XFRD,2, (LOG_INFO, "xfrd: max number of tcp "
 		"connections (%d) reached.", XFRD_MAX_TCP));
 	zone->tcp_waiting_next = 0;
-	zone->tcp_waiting_prev = set->tcp_waiting_last;
 	zone->tcp_waiting = 1;
 	if(!set->tcp_waiting_last) {
 		set->tcp_waiting_first = zone;
@@ -261,8 +260,9 @@ xfrd_tcp_open(xfrd_tcp_set_t* set, xfrd_zone_t* zone)
 	to_len = xfrd_acl_sockaddr_to(zone->master, &to);
 
 	/* bind it */
-	if (!xfrd_bind_local_interface(fd, zone->zone_options->pattern->
-		outgoing_interface, zone->master, 1)) {
+	if (!xfrd_bind_local_interface(fd,
+		zone->zone_options->outgoing_interface, zone->master, 1)) {
+
 		xfrd_set_refresh_now(zone);
 		xfrd_tcp_release(set, zone);
 		return 0;
@@ -279,7 +279,7 @@ xfrd_tcp_open(xfrd_tcp_set_t* set, xfrd_zone_t* zone)
 
 	zone->zone_handler.fd = fd;
 	zone->zone_handler.event_types = NETIO_EVENT_TIMEOUT|NETIO_EVENT_WRITE;
-	xfrd_set_timer(zone, xfrd_time() + set->tcp_timeout);
+	xfrd_set_timer(zone, xfrd_time() + XFRD_TCP_TIMEOUT);
 	return 1;
 }
 
@@ -309,9 +309,11 @@ xfrd_tcp_xfr(xfrd_tcp_set_t* set, xfrd_zone_t* zone)
 	zone->query_id = ID(tcp->packet);
 	zone->msg_seq_nr = 0;
 	zone->msg_rr_count = 0;
+#ifdef TSIG
 	if(zone->master->key_options && zone->master->key_options->tsig_key) {
 		xfrd_tsig_sign_request(tcp->packet, &zone->tsig, zone->master);
 	}
+#endif /* TSIG */
 	buffer_flip(tcp->packet);
 	DEBUG(DEBUG_XFRD,1, (LOG_INFO, "sent tcp query with ID %d", zone->query_id));
 	tcp->msglen = buffer_limit(tcp->packet);
@@ -434,9 +436,6 @@ conn_read(xfrd_tcp_t* tcp)
 				/* read would block, try later */
 				return 0;
 			} else {
-#ifdef ECONNRESET
-				if (verbosity >= 2 || errno != ECONNRESET)
-#endif /* ECONNRESET */
 				log_msg(LOG_ERR, "tcp read sz: %s", strerror(errno));
 				return -1;
 			}
@@ -469,10 +468,8 @@ conn_read(xfrd_tcp_t* tcp)
 			/* read would block, try later */
 			return 0;
 		} else {
-#ifdef ECONNRESET
-			if (verbosity >= 2 || errno != ECONNRESET)
-#endif /* ECONNRESET */
-			log_msg(LOG_ERR, "tcp read %s", strerror(errno));
+			log_msg(LOG_ERR, "tcp read %s",
+				strerror(errno));
 			return -1;
 		}
 	} else if(received == 0) {
@@ -561,8 +558,6 @@ xfrd_tcp_release(xfrd_tcp_set_t* set, xfrd_zone_t* zone)
 			set->tcp_waiting_last = 0;
 
 		set->tcp_waiting_first = zone->tcp_waiting_next;
-		if(zone->tcp_waiting_next)
-			zone->tcp_waiting_next->tcp_waiting_prev = NULL;
 		zone->tcp_waiting_next = 0;
 		/* start it */
 		assert(zone->tcp_conn == -1);

@@ -7,7 +7,7 @@
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <assert.h>
 #include <ctype.h>
@@ -26,17 +26,6 @@
 #include "dname.h"
 #include "namedb.h"
 #include "rdata.h"
-
-#ifdef USE_MMAP_ALLOC
-#include <sys/mman.h>
-
-#if defined(MAP_ANON) && !defined(MAP_ANONYMOUS)
-#define	MAP_ANONYMOUS	MAP_ANON
-#elif defined(MAP_ANONYMOUS) && !defined(MAP_ANON)
-#define	MAP_ANON	MAP_ANONYMOUS
-#endif
-
-#endif /* USE_MMAP_ALLOC */
 
 #ifndef NDEBUG
 unsigned nsd_debug_facilities = 0xffff;
@@ -78,10 +67,7 @@ void
 log_reopen(const char *filename, uint8_t verbose)
 {
 	if (filename) {
-		FILE *file;
-		if(strcmp(filename, "/dev/stdout")==0 || strcmp(filename, "/dev/stderr")==0)
-			return;
-		file = fopen(filename, "a");
+		FILE *file = fopen(filename, "a");
 		if (!file) {
 			if (verbose)
 				VERBOSITY(2, (LOG_WARNING,
@@ -256,54 +242,6 @@ xrealloc(void *ptr, size_t size)
 	return ptr;
 }
 
-#ifdef USE_MMAP_ALLOC
-
-void *
-mmap_alloc(size_t size)
-{
-	void *base;
-
-	size += MMAP_ALLOC_HEADER_SIZE;
-#ifdef HAVE_MMAP
-	base = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (base == MAP_FAILED) {
-		log_msg(LOG_ERR, "mmap failed: %s", strerror(errno));
-		exit(1);
-	}
-#else /* !HAVE_MMAP */
-	log_msg(LOG_ERR, "mmap failed: don't have mmap");
-	exit(1);
-#endif /* HAVE_MMAP */
-
-	*((size_t*) base) = size;
-	return (void*)((uintptr_t)base + MMAP_ALLOC_HEADER_SIZE);
-}
-
-
-void
-mmap_free(void *ptr)
-{
-	void *base;
-	size_t size;
-
-	if (!ptr) return;
-
-	base = (void*)((uintptr_t)ptr - MMAP_ALLOC_HEADER_SIZE);
-	size = *((size_t*) base);
-
-#ifdef HAVE_MUNMAP
-	if (munmap(base, size) == -1) {
-		log_msg(LOG_ERR, "munmap failed: %s", strerror(errno));
-		exit(1);
-	}
-#else /* !HAVE_MUNMAP */
-	log_msg(LOG_ERR, "munmap failed: don't have munmap");
-	exit(1);
-#endif /* HAVE_MUNMAP */
-}
-
-#endif /* USE_MMAP_ALLOC */
-
 int
 write_data(FILE *file, const void *data, size_t size)
 {
@@ -325,8 +263,7 @@ write_data(FILE *file, const void *data, size_t size)
 	}
 }
 
-int
-write_socket(int s, const void *buf, size_t size)
+int write_socket(int s, const void *buf, size_t size)
 {
 	const char* data = (const char*)buf;
 	size_t total_count = 0;
@@ -397,48 +334,32 @@ timespec_subtract(struct timespec *left,
 	}
 }
 
-uint32_t
-strtoserial(const char* nptr, const char** endptr)
-{
-	uint32_t i = 0;
-	uint32_t serial = 0;
 
-	for(*endptr = nptr; **endptr; (*endptr)++) {
-		switch (**endptr) {
-		case ' ':
-		case '\t':
-			break;
-		case '0':
-		case '1':
-		case '2':
-		case '3':
-		case '4':
-		case '5':
-		case '6':
-		case '7':
-		case '8':
-		case '9':
-			i *= 10;
-			i += (**endptr - '0');
-			break;
-		default:
-			break;
-		}
-	}
-	serial += i;
-	return serial;
-}
-
-uint32_t
+long
 strtottl(const char *nptr, const char **endptr)
 {
-	uint32_t i = 0;
-	uint32_t seconds = 0;
+	int sign = 0;
+	long i = 0;
+	long seconds = 0;
 
 	for(*endptr = nptr; **endptr; (*endptr)++) {
 		switch (**endptr) {
 		case ' ':
 		case '\t':
+			break;
+		case '-':
+			if(sign == 0) {
+				sign = -1;
+			} else {
+				return (sign == -1) ? -seconds : seconds;
+			}
+			break;
+		case '+':
+			if(sign == 0) {
+				sign = 1;
+			} else {
+				return (sign == -1) ? -seconds : seconds;
+			}
 			break;
 		case 's':
 		case 'S':
@@ -480,11 +401,11 @@ strtottl(const char *nptr, const char **endptr)
 			break;
 		default:
 			seconds += i;
-			return seconds;
+			return (sign == -1) ? -seconds : seconds;
 		}
 	}
 	seconds += i;
-	return seconds;
+	return (sign == -1) ? -seconds : seconds;
 }
 
 
@@ -517,7 +438,7 @@ hex_pton(const char* src, uint8_t* target, size_t targsize)
 		return -1;
 	}
 	while(*src) {
-		if(!isxdigit((int)src[0]) || !isxdigit((int)src[1]))
+		if(!isxdigit(src[0]) || !isxdigit(src[1]))
 			return -1;
 		*t++ = hexdigit_to_int(src[0]) * 16 +
 			hexdigit_to_int(src[1]) ;
@@ -597,7 +518,7 @@ b32_ntop(uint8_t const *src, size_t srclength, char *target, size_t targsize)
 	{
 		if(targsize < strlen(buf)+1)
 			return -1;
-		strlcpy(target, buf, targsize);
+		strcpy(target, buf);
 		len += strlen(buf);
 	}
 	else if(targsize < 1)
@@ -802,8 +723,7 @@ static u_long crctab[] = {
 
 #define	COMPUTE(var, ch)	(var) = (var) << 8 ^ crctab[(var) >> 24 ^ (ch)]
 
-uint32_t
-compute_crc(uint32_t crc, uint8_t* data, size_t len)
+uint32_t compute_crc(uint32_t crc, uint8_t* data, size_t len)
 {
 	size_t i;
 	for(i=0; i<len; ++i)
@@ -811,8 +731,7 @@ compute_crc(uint32_t crc, uint8_t* data, size_t len)
 	return crc;
 }
 
-int
-write_data_crc(FILE *file, const void *data, size_t size, uint32_t* crc)
+int write_data_crc(FILE *file, const void *data, size_t size, uint32_t* crc)
 {
 	int ret = write_data(file, data, size);
 	*crc = compute_crc(*crc, (uint8_t*)data, size);
@@ -820,8 +739,7 @@ write_data_crc(FILE *file, const void *data, size_t size, uint32_t* crc)
 }
 
 #define SERIAL_BITS      32
-int
-compare_serial(uint32_t a, uint32_t b)
+int compare_serial(uint32_t a, uint32_t b)
 {
         const uint32_t cutoff = ((uint32_t) 1 << (SERIAL_BITS - 1));
 
@@ -832,18 +750,6 @@ compare_serial(uint32_t a, uint32_t b)
         } else {
                 return 1;
         }
-}
-
-uint16_t
-qid_generate(void)
-{
-#ifdef HAVE_ARC4RANDOM_UNIFORM
-    return (uint16_t) arc4random_uniform(65536);
-#elif HAVE_ARC4RANDOM
-    return (uint16_t) arc4random();
-#else
-    return (uint16_t) random();
-#endif
 }
 
 void
@@ -888,9 +794,10 @@ print_rr(FILE *out,
         const dname_type *owner = domain_dname(record->owner);
         const dname_type *owner_origin
                 = dname_origin(region, owner);
-        if (state) {
-	  if (!state->previous_owner
-                   || dname_compare(state->previous_owner, owner) != 0) {
+        int owner_changed
+                = (!state->previous_owner
+                   || dname_compare(state->previous_owner, owner) != 0);
+        if (owner_changed) {
                 int origin_changed = (!state->previous_owner_origin
                                       || dname_compare(
                                               state->previous_owner_origin,
@@ -907,10 +814,7 @@ print_rr(FILE *out,
                               "%s",
                               dname_to_string(owner,
                                               state->previous_owner_origin));
-	  }
-        } else {
-		buffer_printf(output, "%s", dname_to_string(owner, NULL));
-	}
+        }
 
         buffer_printf(output,
                       "\t%lu\t%s\t%s",
@@ -933,8 +837,8 @@ print_rr(FILE *out,
         if (result) {
                 buffer_printf(output, "\n");
                 buffer_flip(output);
-		result = write_data(out, buffer_current(output),
-			buffer_remaining(output));
+		(void)write_data(out, buffer_current(output), buffer_remaining(output));
+/*              fflush(out); */
         }
 
 	region_destroy(region);
@@ -974,24 +878,67 @@ rcode2str(int rc)
         return NULL; /* ENOREACH */
 }
 
-void
-addr2str(
-#ifdef INET6
-        struct sockaddr_storage *addr
-#else
-        struct sockaddr_in *addr
-#endif
-	, char* str, size_t len)
+stack_type*
+stack_create(struct region* region, size_t size)
 {
-#ifdef INET6
-	if (addr->ss_family == AF_INET6) {
-		if (!inet_ntop(AF_INET6,
-			&((struct sockaddr_in6 *)addr)->sin6_addr, str, len))
-			strlcpy(str, "[unknown ip6, inet_ntop failed]", len);
+	stack_type* stack = (stack_type*)region_alloc(region,
+		sizeof(stack_type));
+	stack->capacity = size;
+	stack->num = 0;
+	stack->data = (void**) region_alloc(region, sizeof(void*)*size);
+	memset(stack->data, 0, sizeof(void*)*size);
+	return stack;
+}
+
+void
+stack_push(stack_type* stack, void* elem)
+{
+	assert(stack);
+	if(stack->num >= stack->capacity) {
+		/* stack out of capacity, elem falls off stack */
 		return;
 	}
+	stack->data[stack->num] = elem;
+	stack->num ++;
+}
+
+void*
+stack_pop(stack_type* stack)
+{
+	void* elem;
+	assert(stack);
+	if(stack->num <= 0)
+		return NULL;
+	stack->num --;
+	elem = stack->data[stack->num];
+	stack->data[stack->num] = NULL;
+	return elem;
+}
+
+int
+addr2ip(
+#ifdef INET6
+        struct sockaddr_storage addr
+#else
+        struct sockaddr_in addr
 #endif
-	if (!inet_ntop(AF_INET, &((struct sockaddr_in *)addr)->sin_addr,
-		str, len))
-		strlcpy(str, "[unknown ip4, inet_ntop failed]", len);
+, char *address, socklen_t size)
+{
+#ifdef INET6
+	if (addr.ss_family == AF_INET6) {
+		if (!inet_ntop(AF_INET6,
+			&((struct sockaddr_in6 *)&addr)->sin6_addr,
+			address, size))
+			return (1);
+#else
+	if (0) {
+#endif
+	} else {
+		if (!inet_ntop(AF_INET,
+			&((struct sockaddr_in *)&addr)->sin_addr,
+			address, size))
+			return (1);
+	}
+
+	return (0);
 }

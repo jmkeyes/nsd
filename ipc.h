@@ -10,12 +10,12 @@
 #ifndef NSD_IPC_H
 #define NSD_IPC_H
 
+#include <config.h>
 #include "netio.h"
 struct buffer;
 struct nsd;
 struct nsd_child;
 struct xfrd_tcp;
-struct nsdst;
 
 /*
  * Data for the server_main IPC handler 
@@ -34,6 +34,10 @@ struct main_ipc_handler_data
 	size_t		got_bytes;
 	uint16_t	total_bytes;
 	uint32_t	acl_num;
+	
+	/* writing data, connection and state */
+	uint8_t		busy_writing_zone_state;
+	struct xfrd_tcp	*write_conn;
 };
 
 /*
@@ -85,8 +89,5 @@ void xfrd_handle_ipc(netio_type *netio,
 
 /* check if all children have exited in an orderly fashion and set mode */
 void parent_check_all_children_exited(struct nsd* nsd);
-
-/** add stats to total */
-void stats_add(struct nsdst* total, struct nsdst* s);
 
 #endif /* NSD_IPC_H */

@@ -10,6 +10,7 @@
 #ifndef XFRD_TCP_H
 #define XFRD_TCP_H
 
+#include <config.h>
 #include "xfrd.h"
 
 struct buffer;
@@ -19,6 +20,8 @@ struct xfrd_state;
 struct region;
 struct dname;
 struct acl_options;
+
+#define XFRD_TCP_TIMEOUT TCP_TIMEOUT /* seconds */
 
 typedef struct xfrd_tcp xfrd_tcp_t;
 typedef struct xfrd_tcp_set xfrd_tcp_set_t;
@@ -30,9 +33,7 @@ struct xfrd_tcp_set {
 	struct xfrd_tcp *tcp_state[XFRD_MAX_TCP];
 	/* number of TCP connections in use. */
 	int tcp_count;
-	/* TCP timeout. */
-	int tcp_timeout;
-	/* double linked list of zones waiting for a TCP connection */
+	/* linked list of zones waiting for a TCP connection */
 	struct xfrd_zone *tcp_waiting_first, *tcp_waiting_last;
 };
 

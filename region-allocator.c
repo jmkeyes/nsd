@@ -7,7 +7,7 @@
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -19,11 +19,7 @@
 #undef ALIGNMENT
 #endif
 #define ALIGN_UP(x, s)     (((x) + s - 1) & (~(s - 1)))
-#if SIZEOF_OFF_T > SIZEOF_VOIDP
-#define ALIGNMENT	(sizeof(off_t))
-#else
-#define ALIGNMENT	(sizeof(void *))
-#endif
+#define ALIGNMENT          (sizeof(void *))
 #define CHECK_DOUBLE_FREE 0 /* set to 1 to perform expensive check for double recycle() */
 
 typedef struct cleanup cleanup_type;
@@ -206,21 +202,6 @@ region_add_cleanup(region_type *region, void (*action)(void *), void *data)
 
 	++region->cleanup_count;
 	return region->cleanup_count;
-}
-
-void
-region_remove_cleanup(region_type *region, void (*action)(void *), void *data)
-{
-	size_t i;
-	for(i=0; i<region->cleanup_count; i++) {
-		if(region->cleanups[i].action == action &&
-		   region->cleanups[i].data == data) {
-			region->cleanup_count--;
-			region->cleanups[i] =
-				region->cleanups[region->cleanup_count];
-			return;
-		}
-	}
 }
 
 void *
@@ -438,11 +419,6 @@ size_t region_get_recycle_size(region_type* region)
 	return region->recycle_size;
 }
 
-size_t region_get_mem(region_type* region)
-{
-	return region->total_allocated;
-}
-
 /* debug routine, includes here to keep base region-allocator independent */
 #undef ALIGN_UP
 #include "util.h"
@@ -450,9 +426,8 @@ void
 region_log_stats(region_type *region)
 {
 	char buf[10240], *str=buf;
-	int strl = sizeof(buf);
 	int len=0;
-	snprintf(str, strl, "%lu objects (%lu small/%lu large), %lu bytes allocated (%lu wasted) in %lu chunks, %lu cleanups, %lu in recyclebin%n",
+	sprintf(str, "%lu objects (%lu small/%lu large), %lu bytes allocated (%lu wasted) in %lu chunks, %lu cleanups, %lu in recyclebin%n",
 		(unsigned long) (region->small_objects + region->large_objects),
 		(unsigned long) region->small_objects,
 		(unsigned long) region->large_objects,
@@ -463,7 +438,6 @@ region_log_stats(region_type *region)
 		(unsigned long) region->recycle_size,
 		&len);
 	str+=len;
-	strl-=len;
 	if(1 && region->recycle_bin) {
 		/* print details of the recycle bin */
 		size_t i;
@@ -475,10 +449,9 @@ region_log_stats(region_type *region)
 				el = el->next;
 			}
 			if(i%ALIGNMENT == 0 && i!=0) {
-				snprintf(str, strl, " %lu%n", (unsigned long)count,
+				sprintf(str, " %lu%n", (unsigned long)count,
 					&len);
 				str+=len;
-				strl-=len;
 			}
 		}
 	}

@@ -10,6 +10,7 @@
 #ifndef _UTIL_H_
 #define _UTIL_H_
 
+#include <config.h>
 #include <sys/time.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -137,15 +138,6 @@ void *xalloc_zero(size_t size);
 void *xrealloc(void *ptr, size_t size);
 
 /*
- * Mmap allocator routines.
- *
- */
-#ifdef USE_MMAP_ALLOC
-void *mmap_alloc(size_t size);
-void mmap_free(void *ptr);
-#endif /* USE_MMAP_ALLOC */
-
-/*
  * Write SIZE bytes of DATA to FILE.  Report an error on failure.
  *
  * Returns 0 on failure, 1 on success.
@@ -266,7 +258,7 @@ timeval_to_timespec(struct timespec *left,
 
 /*
  * Converts a string representation of a period of time into
- * a long integer of seconds or serial value.
+ * a long integer of seconds.
  *
  * Set the endptr to the first illegal character.
  *
@@ -277,11 +269,10 @@ timeval_to_timespec(struct timespec *left,
  *	LONG_MAX if overflow occurs.
  *	otherwise number of seconds
  *
- * XXX These functions do not check the range.
+ * XXX This functions does not check the range.
  *
  */
-uint32_t strtoserial(const char *nptr, const char **endptr);
-uint32_t strtottl(const char *nptr, const char **endptr);
+long strtottl(const char *nptr, const char **endptr);
 
 /*
  * Convert binary data to a string of hexadecimal characters.
@@ -330,11 +321,6 @@ uint32_t compute_crc(uint32_t crc, uint8_t* data, size_t len);
 int compare_serial(uint32_t a, uint32_t b);
 
 /*
- * Generate a random query ID.
- */
-uint16_t qid_generate(void);
-
-/*
  * call region_destroy on (region*)data, useful for region_add_cleanup().
  */
 void cleanup_region(void *data);
@@ -358,12 +344,24 @@ int print_rr(FILE *out, struct state_pretty_rr* state, struct rr *record);
  */
 const char* rcode2str(int rc);
 
-void addr2str(
+/*
+ * Stack of pointers.
+ * Stack is fixed size on start. More elems fall off stack.
+ */
+struct stack {
+	void** data;
+	size_t num, capacity;
+};
+typedef struct stack stack_type;
+stack_type* stack_create(struct region* region, size_t size);
+void stack_push(stack_type* stack, void* elem);
+void* stack_pop(stack_type* stack);
+int addr2ip(
 #ifdef INET6
-	struct sockaddr_storage *addr
+	struct sockaddr_storage addr
 #else
-	struct sockaddr_in *addr
+	struct sockaddr_in addr
 #endif
-	, char* str, size_t len);
+, char address[], socklen_t size);
 
 #endif /* _UTIL_H_ */

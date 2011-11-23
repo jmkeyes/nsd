@@ -7,7 +7,7 @@
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -87,17 +87,11 @@ rdata_dns_name_to_string(buffer_type *output, rdata_atom_type rdata,
 			buffer_printf(output, ".");
 
 		for (i = 1; i <= length; ++i) {
-			uint8_t ch = data[i+offset];
-
-			if (ch=='.' || ch==';' || ch=='(' || ch==')' || ch=='\\') {
-				buffer_printf(output, "\\%c", (char) ch);
-			} else if (!isgraph((int) ch)) {
-				buffer_printf(output, "\\%03u", (unsigned int) ch);
-			} else if (isprint((int) ch)) {
-				buffer_printf(output, "%c", (char) ch);
-			} else {
-				buffer_printf(output, "\\%03u", (unsigned int) ch);
-			}
+			char ch = (char) data[i+offset];
+			if (isprint(ch))
+				buffer_printf(output, "%c", ch);
+			else
+				buffer_printf(output, "\\%03u", (unsigned) ch);
 		}
 		/* next label */
 		offset = offset+length+1;
@@ -120,44 +114,16 @@ rdata_text_to_string(buffer_type *output, rdata_atom_type rdata,
 	buffer_printf(output, "\"");
 	for (i = 1; i <= length; ++i) {
 		char ch = (char) data[i];
-		if (isprint((int)ch)) {
+		if (isprint(ch)) {
 			if (ch == '"' || ch == '\\') {
 				buffer_printf(output, "\\");
 			}
 			buffer_printf(output, "%c", ch);
 		} else {
-			buffer_printf(output, "\\%03u", (unsigned) data[i]);
+			buffer_printf(output, "\\%03u", (unsigned) ch);
 		}
 	}
 	buffer_printf(output, "\"");
-	return 1;
-}
-
-static int
-rdata_texts_to_string(buffer_type *output, rdata_atom_type rdata,
-	rr_type* ATTR_UNUSED(rr))
-{
-	uint16_t pos = 0;
-	const uint8_t *data = rdata_atom_data(rdata);
-	uint16_t length = rdata_atom_size(rdata);
-	size_t i;
-
-	while (pos < length && pos + data[pos] < length) {
-		buffer_printf(output, "\"");
-		for (i = 1; i <= data[pos]; ++i) {
-			char ch = (char) data[pos + i];
-			if (isprint((int)ch)) {
-				if (ch == '"' || ch == '\\') {
-					buffer_printf(output, "\\");
-				}
-				buffer_printf(output, "%c", ch);
-			} else {
-				buffer_printf(output, "\\%03u", (unsigned) data[pos+i]);
-			}
-		}
-		pos += data[pos]+1;
-		buffer_printf(output, pos < length?"\" ":"\"");
-	}
 	return 1;
 }
 
@@ -303,8 +269,6 @@ rdata_base64_to_string(buffer_type *output, rdata_atom_type rdata,
 {
 	int length;
 	size_t size = rdata_atom_size(rdata);
-	if(size == 0)
-		return 1;
 	buffer_reserve(output, size * 2 + 1);
 	length = b64_ntop(rdata_atom_data(rdata), size,
 			  (char *) buffer_current(output), size * 2);
@@ -454,8 +418,7 @@ rdata_ipsecgateway_to_string(buffer_type *output, rdata_atom_type rdata, rr_type
 		rdata_aaaa_to_string(output, rdata, rr);
 		break;
 	case IPSECKEY_DNAME:
-		buffer_printf(output, "%s",
-			wiredname2str(rdata_atom_data(rdata)));
+		rdata_dname_to_string(output, rdata, rr);
 		break;
 	default:
 		return 0;
@@ -546,7 +509,6 @@ static rdata_to_string_type rdata_to_string_table[RDATA_ZF_UNKNOWN + 1] = {
 	rdata_dname_to_string,
 	rdata_dns_name_to_string,
 	rdata_text_to_string,
-	rdata_texts_to_string,
 	rdata_byte_to_string,
 	rdata_short_to_string,
 	rdata_long_to_string,
@@ -587,7 +549,7 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 				rdata_atom_type **rdatas)
 {
 	size_t end = buffer_position(packet) + data_size;
-	size_t i;
+	ssize_t i;
 	rdata_atom_type temp_rdatas[MAXRDATALEN];
 	rrtype_descriptor_type *descriptor = rrtype_descriptor_by_type(rrtype);
 	region_type *temp_region;
@@ -625,9 +587,6 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 			break;
 		case RDATA_WF_LONG:
 			length = sizeof(uint32_t);
-			break;
-		case RDATA_WF_TEXTS:
-			length = data_size;
 			break;
 		case RDATA_WF_TEXT:
 		case RDATA_WF_BINARYWITHLENGTH:
@@ -698,11 +657,9 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 				temp_rdatas[i].data[0] = dname->name_size;
 				memcpy(temp_rdatas[i].data+1, dname_name(dname),
 					dname->name_size);
-			} else {
+			} else
 				temp_rdatas[i].domain
 					= domain_table_insert(owners, dname);
-				temp_rdatas[i].domain->usage ++;
-			}
 		} else {
 			if (buffer_position(packet) + length > end) {
 				if (required) {
@@ -712,9 +669,6 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 				} else {
 					break;
 				}
-			}
-			if (!required && buffer_position(packet) == end) {
-				break;
 			}
 
 			temp_rdatas[i].data = (uint16_t *) region_alloc(
@@ -733,7 +687,7 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 	*rdatas = (rdata_atom_type *) region_alloc_init(
 		region, temp_rdatas, i * sizeof(rdata_atom_type));
 	region_destroy(temp_region);
-	return (ssize_t)i;
+	return i;
 }
 
 size_t

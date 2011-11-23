@@ -7,7 +7,7 @@
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <assert.h>
 #include <fcntl.h>
@@ -44,11 +44,16 @@
 const dname_type *error_dname;
 domain_type *error_domain;
 
+/* The database file... */
+static const char *dbfile = 0;
+
 /* Some global flags... */
 static int vflag = 0;
 /* if -v then print progress each 'progress' RRs */
 static int progress = 10000;
 
+/* Total errors counter */
+static long int totalerrors = 0;
 static long int totalrrs = 0;
 
 extern uint8_t nsecbits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE];
@@ -101,7 +106,7 @@ zparser_conv_hex(region_type *region, const char *hex, size_t len)
 		while (*hex) {
 			*t = 0;
 			for (i = 16; i >= 1; i -= 15) {
-				if (isxdigit((int)*hex)) {
+				if (isxdigit(*hex)) {
 					*t += hexdigit_to_int(*hex) * i;
 				} else {
 					zc_error_prev_line(
@@ -142,7 +147,7 @@ zparser_conv_hex_length(region_type *region, const char *hex, size_t len)
 		while (*hex) {
 			*t = 0;
 			for (i = 16; i >= 1; i -= 15) {
-				if (isxdigit((int)*hex)) {
+				if (isxdigit(*hex)) {
 					*t += hexdigit_to_int(*hex) * i;
 				} else {
 					zc_error_prev_line(
@@ -240,23 +245,6 @@ zparser_conv_services(region_type *region, const char *protostr,
 }
 
 uint16_t *
-zparser_conv_serial(region_type *region, const char *serialstr)
-{
-	uint16_t *r = NULL;
-	uint32_t serial;
-	const char *t;
-
-	serial = strtoserial(serialstr, &t);
-	if (*t != '\0') {
-		zc_error_prev_line("serial is expected");
-	} else {
-		serial = htonl(serial);
-		r = alloc_rdata_init(region, &serial, sizeof(serial));
-	}
-	return r;
-}
-
-uint16_t *
 zparser_conv_period(region_type *region, const char *periodstr)
 {
 	/* convert a time period (think TTL's) to wireformat) */
@@ -265,7 +253,7 @@ zparser_conv_period(region_type *region, const char *periodstr)
 	const char *end;
 
 	/* Allocate required space... */
-	period = strtottl(periodstr, &end);
+	period = (uint32_t) strtottl(periodstr, &end);
 	if (*end != '\0') {
 		zc_error_prev_line("time period is expected");
 	} else {
@@ -579,14 +567,14 @@ precsize_aton (char *cp, char **endptr)
 	int exponent;
 	int mantissa;
 
-	while (isdigit((int)*cp))
+	while (isdigit(*cp))
 		mval = mval * 10 + hexdigit_to_int(*cp++);
 
 	if (*cp == '.') {	/* centimeters */
 		cp++;
-		if (isdigit((int)*cp)) {
+		if (isdigit(*cp)) {
 			cmval = hexdigit_to_int(*cp++) * 10;
-			if (isdigit((int)*cp)) {
+			if (isdigit(*cp)) {
 				cmval += hexdigit_to_int(*cp++);
 			}
 		}
@@ -640,6 +628,7 @@ zparser_conv_loc(region_type *region, char *str)
 	char *start;
 	double d;
 
+
 	for(;;) {
 		deg = min = secs = 0;
 
@@ -651,17 +640,17 @@ zparser_conv_loc(region_type *region, char *str)
 
 		if (!parse_int(str, &str, &deg, "degrees", 0, 180))
 			return NULL;
-		if (!isspace((int)*str)) {
+		if (!isspace(*str)) {
 			zc_error_prev_line("space expected after degrees");
 			return NULL;
 		}
 		++str;
 
 		/* Minutes? */
-		if (isdigit((int)*str)) {
+		if (isdigit(*str)) {
 			if (!parse_int(str, &str, &min, "minutes", 0, 60))
 				return NULL;
-			if (!isspace((int)*str)) {
+			if (!isspace(*str)) {
 				zc_error_prev_line("space expected after minutes");
 				return NULL;
 			}
@@ -669,7 +658,7 @@ zparser_conv_loc(region_type *region, char *str)
 		}
 
 		/* Seconds? */
-		if (isdigit((int)*str)) {
+		if (isdigit(*str)) {
 			start = str;
 			if (!parse_int(str, &str, &i, "seconds", 0, 60)) {
 				return NULL;
@@ -679,7 +668,7 @@ zparser_conv_loc(region_type *region, char *str)
 				return NULL;
 			}
 
-			if (!isspace((int)*str)) {
+			if (!isspace(*str)) {
 				zc_error_prev_line("space expected after seconds");
 				return NULL;
 			}
@@ -722,7 +711,7 @@ zparser_conv_loc(region_type *region, char *str)
 		if (lat != 0 && lon != 0)
 			break;
 
-		if (!isspace((int)*str)) {
+		if (!isspace(*str)) {
 			zc_error_prev_line("space expected after latitude/longitude");
 			return NULL;
 		}
@@ -735,7 +724,7 @@ zparser_conv_loc(region_type *region, char *str)
 		return NULL;
 	}
 
-	if (!isspace((int)*str)) {
+	if (!isspace(*str)) {
 		zc_error_prev_line("space expected before altitude");
 		return NULL;
 	}
@@ -749,7 +738,7 @@ zparser_conv_loc(region_type *region, char *str)
 	}
 
 	/* Meters of altitude... */
-	(void) strtol(str, &str, 10);
+	(void)strtol(str, &str, 10);
 	switch(*str) {
 	case ' ':
 	case '\0':
@@ -759,7 +748,7 @@ zparser_conv_loc(region_type *region, char *str)
 		if (!parse_int(str + 1, &str, &i, "altitude fraction", 0, 99)) {
 			return NULL;
 		}
-		if (!isspace((int)*str) && *str != '\0' && *str != 'm') {
+		if (!isspace(*str) && *str != '\0' && *str != 'm') {
 			zc_error_prev_line("altitude fraction must be a number");
 			return NULL;
 		}
@@ -768,7 +757,7 @@ zparser_conv_loc(region_type *region, char *str)
 		zc_error_prev_line("altitude must be expressed in meters");
 		return NULL;
 	}
-	if (!isspace((int)*str) && *str != '\0')
+	if (!isspace(*str) && *str != '\0')
 		++str;
 
 	if (sscanf(start, "%lf", &d) != 1) {
@@ -777,16 +766,16 @@ zparser_conv_loc(region_type *region, char *str)
 
 	alt = (uint32_t) (10000000.0 + d * 100 + 0.5);
 
-	if (!isspace((int)*str) && *str != '\0') {
+	if (!isspace(*str) && *str != '\0') {
 		zc_error_prev_line("unexpected character after altitude");
 		return NULL;
 	}
 
 	/* Now parse size, horizontal precision and vertical precision if any */
-	for(i = 1; isspace((int)*str) && i <= 3; i++) {
+	for(i = 1; isspace(*str) && i <= 3; i++) {
 		vszhpvp[i] = precsize_aton(str + 1, &str);
 
-		if (!isspace((int)*str) && *str != '\0') {
+		if (!isspace(*str) && *str != '\0') {
 			zc_error_prev_line("invalid size or precision");
 			return NULL;
 		}
@@ -906,21 +895,21 @@ zparser_conv_apl_rdata(region_type *region, char *str)
  * but to "normal" (int,long,char) types
  */
 
-uint32_t
-zparser_ttl2int(const char *ttlstr, int* error)
+int32_t
+zparser_ttl2int(const char *ttlstr)
 {
 	/* convert a ttl value to a integer
 	 * return the ttl in a int
 	 * -1 on error
 	 */
 
-	uint32_t ttl;
+	int32_t ttl;
 	const char *t;
 
 	ttl = strtottl(ttlstr, &t);
 	if (*t != 0) {
 		zc_error_prev_line("invalid TTL value: %s",ttlstr);
-		*error = 1;
+		ttl = -1;
 	}
 
 	return ttl;
@@ -930,7 +919,7 @@ zparser_ttl2int(const char *ttlstr, int* error)
 void
 zadd_rdata_wireformat(uint16_t *data)
 {
-	if (parser->current_rr.rdata_count >= MAXRDATALEN) {
+	if (parser->current_rr.rdata_count > MAXRDATALEN) {
 		zc_error_prev_line("too many rdata elements");
 	} else {
 		parser->current_rr.rdatas[parser->current_rr.rdata_count].data
@@ -939,69 +928,14 @@ zadd_rdata_wireformat(uint16_t *data)
 	}
 }
 
-/**
- * Used for TXT RR's to grow with undefined number of strings.
- */
-void
-zadd_rdata_txt_wireformat(uint16_t *data, int first)
-{
-	rdata_atom_type *rd;
-	
-	/* First STR in str_seq, allocate 65K in first unused rdata
-	 * else find last used rdata */
-	if (first) {
-		rd = &parser->current_rr.rdatas[parser->current_rr.rdata_count];
-		if ((rd->data = (uint16_t *) region_alloc(parser->rr_region,
-			sizeof(uint16_t) + 65535 * sizeof(uint8_t))) == NULL) {
-			zc_error_prev_line("Could not allocate memory for TXT RR");
-			return;
-		}
-		parser->current_rr.rdata_count++;
-		rd->data[0] = 0;
-	}
-	else
-		rd = &parser->current_rr.rdatas[parser->current_rr.rdata_count-1];
-	
-	if ((size_t)rd->data[0] + (size_t)data[0] > 65535) {
-		zc_error_prev_line("too large rdata element");
-		return;
-	}
-	
-	memcpy((uint8_t *)rd->data + 2 + rd->data[0], data + 1, data[0]);
-	rd->data[0] += data[0];
-}
-
-/**
- * Clean up after last call of zadd_rdata_txt_wireformat
- */
-void
-zadd_rdata_txt_clean_wireformat()
-{
-	uint16_t *tmp_data;
-	rdata_atom_type *rd = &parser->current_rr.rdatas[parser->current_rr.rdata_count-1];
-	if ((tmp_data = (uint16_t *) region_alloc(parser->region, 
-		rd->data[0] + 2)) != NULL) {
-		memcpy(tmp_data, rd->data, rd->data[0] + 2);
-		region_recycle(parser->region, rd->data,
-			sizeof(uint16_t) + 65535 * sizeof(uint8_t));
-		rd->data = tmp_data;
-	}
-	else {
-		/* We could not get memory in non-volatile region */
-		zc_error_prev_line("could not allocate memory for rdata");
-		return;
-	}
-}
-
 void
 zadd_rdata_domain(domain_type *domain)
 {
-	if (parser->current_rr.rdata_count >= MAXRDATALEN) {
+	if (parser->current_rr.rdata_count > MAXRDATALEN) {
 		zc_error_prev_line("too many rdata elements");
 	} else {
 		parser->current_rr.rdatas[parser->current_rr.rdata_count].domain
 			= domain;
-		domain->usage ++; /* new reference to domain */
 		++parser->current_rr.rdata_count;
 	}
 }
@@ -1113,6 +1047,10 @@ zone_open(const char *filename, uint32_t ttl, uint16_t klass,
 		return 0;
 	}
 
+	/* Open the network database */
+	setprotoent(1);
+	setservent(1);
+
 	zparser_init(filename, ttl, klass, origin);
 
 	return 1;
@@ -1134,15 +1072,13 @@ set_bitnsec(uint8_t bits[NSEC_WINDOW_COUNT][NSEC_WINDOW_BITS_SIZE],
 }
 
 
-static int
-has_soa(domain_type* domain)
+static void
+cleanup_rrset(void *r)
 {
-	rrset_type* p = NULL;
-	if(!domain) return 0;
-	for(p = domain->rrsets; p; p = p->next)
-		if(rrset_rrtype(p) == TYPE_SOA)
-			return 1;
-	return 0;
+	rrset_type *rrset = (rrset_type *) r;
+	if (rrset) {
+		free(rrset->rrs);
+	}
 }
 
 int
@@ -1158,10 +1094,7 @@ process_rr(void)
 
 	/* We only support IN class */
 	if (rr->klass != CLASS_IN) {
-		if(zone_is_slave(zone->opts))
-			zc_warning_prev_line("only class IN is supported");
-		else
-			zc_error_prev_line("only class IN is supported");
+		zc_error_prev_line("only class IN is supported");
 		return 0;
 	}
 
@@ -1173,30 +1106,46 @@ process_rr(void)
 		zc_error_prev_line("maximum rdata length exceeds %d octets", MAX_RDLENGTH);
 		return 0;
 	}
-	/* we have the zone already */
-	assert(zone);
+
 	if (rr->type == TYPE_SOA) {
-		if (rr->owner != zone->apex) {
-			zc_error_prev_line(
-				"SOA record with invalid domain name");
-			return 0;
+		/*
+		 * This is a SOA record, start a new zone or continue
+		 * an existing one.
+		 */
+		if (rr->owner->is_apex) {
+			/*
+			   should be error!
+			   every zone should be passed to zonec only once.
+			*/
+			zone = namedb_find_zone(parser->db, rr->owner);
+			assert(zone);
+		} else {
+			/* new zone part */
+			zone = (zone_type *) region_alloc(parser->region,
+							  sizeof(zone_type));
+			zone->apex = rr->owner;
+			zone->soa_rrset = NULL;
+			zone->soa_nx_rrset = NULL;
+			zone->ns_rrset = NULL;
+			zone->opts = NULL;
+			zone->is_secure = 0;
+			zone->updated = 1;
+
+			/* insert in front of zone list */
+			zone->next = parser->db->zones;
+			parser->db->zones = zone;
+
+			rr->owner->is_apex = 1;
 		}
-		if(has_soa(rr->owner)) {
-			if(zone_is_slave(zone->opts))
-				zc_warning_prev_line("this SOA record was already encountered");
-			else
-				zc_error_prev_line("this SOA record was already encountered");
-			return 0;
-		}
-		rr->owner->is_apex = 1;
+
+		/* parser part */
+		parser->current_zone = zone;
 	}
 
-	if (!domain_is_subdomain(rr->owner, zone->apex))
+	if (!dname_is_subdomain(domain_dname(rr->owner),
+				domain_dname(zone->apex)))
 	{
-		if(zone_is_slave(zone->opts))
-			zc_warning_prev_line("out of zone data");
-		else
-			zc_error_prev_line("out of zone data");
+		zc_error_prev_line("out of zone data");
 		return 0;
 	}
 
@@ -1207,14 +1156,14 @@ process_rr(void)
 						    sizeof(rrset_type));
 		rrset->zone = zone;
 		rrset->rr_count = 1;
-		rrset->rrs = (rr_type *) region_alloc(parser->region,
-						      sizeof(rr_type));
+		rrset->rrs = (rr_type *) xalloc(sizeof(rr_type));
 		rrset->rrs[0] = *rr;
+
+		region_add_cleanup(parser->region, cleanup_rrset, rrset);
 
 		/* Add it */
 		domain_add_rrset(rr->owner, rrset);
 	} else {
-		rr_type* o;
 		if (rr->type != TYPE_RRSIG && rrset->rrs[0].ttl != rr->ttl) {
 			zc_warning_prev_line(
 				"TTL does not match the TTL of the RRset");
@@ -1233,49 +1182,57 @@ process_rr(void)
 		}
 
 		/* Add it... */
-		o = rrset->rrs;
-		rrset->rrs = (rr_type *) region_alloc(parser->region,
+		rrset->rrs = (rr_type *) xrealloc(
+			rrset->rrs,
 			(rrset->rr_count + 1) * sizeof(rr_type));
-		memcpy(rrset->rrs, o, (rrset->rr_count) * sizeof(rr_type));
-		region_recycle(parser->region, o,
-			(rrset->rr_count) * sizeof(rr_type));
 		rrset->rrs[rrset->rr_count] = *rr;
 		++rrset->rr_count;
 	}
 
 	if(rr->type == TYPE_DNAME && rrset->rr_count > 1) {
-		if(zone_is_slave(zone->opts))
-			zc_warning_prev_line("multiple DNAMEs at the same name");
-		else
-			zc_error_prev_line("multiple DNAMEs at the same name");
+		zc_error_prev_line("multiple DNAMEs at the same name");
 	}
 	if(rr->type == TYPE_CNAME && rrset->rr_count > 1) {
-		if(zone_is_slave(zone->opts))
-			zc_warning_prev_line("multiple CNAMEs at the same name");
-		else
-			zc_error_prev_line("multiple CNAMEs at the same name");
+		zc_error_prev_line("multiple CNAMEs at the same name");
 	}
 	if((rr->type == TYPE_DNAME && domain_find_rrset(rr->owner, zone, TYPE_CNAME))
 	 ||(rr->type == TYPE_CNAME && domain_find_rrset(rr->owner, zone, TYPE_DNAME))) {
-		if(zone_is_slave(zone->opts))
-			zc_warning_prev_line("DNAME and CNAME at the same name");
-		else
-			zc_error_prev_line("DNAME and CNAME at the same name");
+		zc_error_prev_line("DNAME and CNAME at the same name");
 	}
 	if(domain_find_rrset(rr->owner, zone, TYPE_CNAME) &&
 		domain_find_non_cname_rrset(rr->owner, zone)) {
-		if(zone_is_slave(zone->opts))
-			zc_warning_prev_line("CNAME and other data at the same name");
-		else
-			zc_error_prev_line("CNAME and other data at the same name");
+		zc_error_prev_line("CNAME and other data at the same name");
 	}
 
-	/* Check we have SOA */
-	if(rr->owner == zone->apex)
-		apex_rrset_checks(parser->db, rrset, rr->owner);
+#ifdef DNSSEC
+	if (rr->type == TYPE_RRSIG && rr_rrsig_type_covered(rr) == TYPE_SOA) {
+		rrset->zone->is_secure = 1;
+	}
+#endif
 
+	/* Check we have SOA */
+	/* [XXX] this is dead code */
+	if (zone->soa_rrset == NULL) {
+		if (rr->type != TYPE_SOA) {
+			zc_error_prev_line(
+				"missing SOA record on top of the zone");
+		} else if (rr->owner != zone->apex) {
+			zc_error_prev_line(
+				"SOA record with invalid domain name");
+		} else {
+			zone->soa_rrset = rrset;
+		}
+	} else if (rr->type == TYPE_SOA) {
+		zc_error_prev_line("duplicate SOA record discarded");
+		--rrset->rr_count;
+	}
+
+	/* Is this a zone NS? */
+	if (rr->type == TYPE_NS && rr->owner == zone->apex) {
+		zone->ns_rrset = rrset;
+	}
 	if (vflag > 1 && totalrrs > 0 && (totalrrs % progress == 0)) {
-		log_msg(LOG_INFO, "%ld", totalrrs);
+		fprintf(stdout, "%ld\n", totalrrs);
 	}
 	++totalrrs;
 	return 1;
@@ -1291,21 +1248,20 @@ domain_find_rrset_any(domain_type *domain, uint16_t type)
 	while (result) {
 		if (rrset_rrtype(result) == type) {
 			return result;
-		}
+                }
 		result = result->next;
-	}
-	return NULL;
+        }
+        return NULL;
 }
 
 /*
  * Check for DNAME type. Nothing is allowed below it
  */
 static void
-check_dname(zone_type* zone)
+check_dname(namedb_type* db)
 {
 	domain_type* domain;
-	for(domain = zone->apex; domain && domain_is_subdomain(domain,
-		zone->apex); domain=domain_next(domain))
+	RBTREE_FOR(domain, domain_type*, db->domains->names_to_domains)
 	{
 		if(domain->is_existing) {
 			/* there may not be DNAMEs above it */
@@ -1317,11 +1273,11 @@ check_dname(zone_type* zone)
 			while(parent) {
 				if(domain_find_rrset_any(parent, TYPE_DNAME)) {
 					zc_error("While checking node %s,",
-						domain_to_string(domain));
+						dname_to_string(domain_dname(domain), NULL));
 					zc_error("DNAME at %s has data below it. "
 						"This is not allowed (rfc 2672).",
-						domain_to_string(parent));
-					return;
+						dname_to_string(domain_dname(parent), NULL));
+					exit(1);
 				}
 				parent = parent->parent;
 			}
@@ -1332,142 +1288,268 @@ check_dname(zone_type* zone)
 /*
  * Reads the specified zone into the memory
  * nsd_options can be NULL if no config file is passed.
+ *
  */
-unsigned int
-zonec_read(const char *name, const char *zonefile, zone_type* zone)
+static void
+zone_read(const char *name, const char *zonefile, nsd_options_t* nsd_options)
 {
 	const dname_type *dname;
-
-	totalrrs = 0;
-	parser->errors = 0;
 
 	dname = dname_parse(parser->region, name);
 	if (!dname) {
 		zc_error("incorrect zone name '%s'", name);
-		return 0;
+		return;
 	}
 
 #ifndef ROOT_SERVER
 	/* Is it a root zone? Are we a root server then? Idiot proof. */
 	if (dname->label_count == 1) {
 		zc_error("not configured as a root server");
-		return 0;
+		return;
 	}
 #endif
 
 	/* Open the zone file */
 	if (!zone_open(zonefile, 3600, CLASS_IN, dname)) {
+		if(nsd_options) {
+			/* check for secondary zone, they can start with no zone info */
+			zone_options_t* zopt = zone_options_find(nsd_options, dname);
+			if(zopt && zone_is_slave(zopt)) {
+				zc_warning("slave zone %s with no zonefile '%s'(%s) will "
+					"force zone transfer.",
+					name, zonefile, strerror(errno));
+				return;
+			}
+		}
+		/* cannot happen with stdin - so no fix needed for zonefile */
 		zc_error("cannot open '%s': %s", zonefile, strerror(errno));
-		return 0;
+		return;
 	}
-	parser->current_zone = zone;
 
 	/* Parse and process all RRs.  */
 	yyparse();
 
-	/* remove origin if it was unused */
-	domain_table_deldomain(parser->db->domains, parser->origin);
-
 	/* check if zone file contained a correct SOA record */
-	if (!parser->current_zone) {
-		zc_error("zone configured as '%s' has no content.", name);
-	} else if(!parser->current_zone->soa_rrset ||
-		parser->current_zone->soa_rrset->rr_count == 0) {
-		zc_error("zone configured as '%s' has no SOA record.", name);
-	} else if(dname_compare(domain_dname(
-		parser->current_zone->soa_rrset->rrs[0].owner), dname) != 0) {
-		zc_error("zone configured as '%s', but SOA has owner '%s'.",
-			name, domain_to_string(
-			parser->current_zone->soa_rrset->rrs[0].owner));
+	if (parser->current_zone && parser->current_zone->soa_rrset
+		&& parser->current_zone->soa_rrset->rr_count!=0)
+	{
+		if(dname_compare(domain_dname(
+			parser->current_zone->soa_rrset->rrs[0].owner),
+			dname) != 0) {
+			zc_error("zone configured as '%s', but SOA has owner '%s'.",
+				name, dname_to_string(
+				domain_dname(parser->current_zone->
+				soa_rrset->rrs[0].owner), NULL));
+		}
 	}
 
 	fclose(yyin);
-	if(!zone_is_slave(zone->opts))
-		check_dname(zone);
 
-	if(vflag > 1)
-		log_msg(LOG_INFO, "zonefile %s read %ld RRs",
-			parser->filename, totalrrs);
+	fflush(stdout);
+	totalerrors += parser->errors;
 	parser->filename = NULL;
-	return parser->errors;
 }
 
-
-/*
- * setup parse
- */
-void
-zonec_setup_parser(namedb_type* db)
+static void
+usage (void)
 {
-	region_type* global_region = region_create(xalloc, free);
-	region_type* rr_region = region_create(xalloc, free);
+#ifndef NDEBUG
+	fprintf(stderr, "usage: zonec [-v|-h|-C|-F|-L] [-c configfile] [-o origin] [-d directory] [-f database] [-z zonefile]\n\n");
+#else
+	fprintf(stderr, "usage: zonec [-v|-h|-C] [-c configfile] [-o origin] [-d directory] [-f database] [-z zonefile]\n\n");
+#endif
+	fprintf(stderr, "\tNSD zone compiler, creates database from zone files.\n");
+	fprintf(stderr, "\tVersion %s. Report bugs to <%s>.\n\n",
+		PACKAGE_VERSION, PACKAGE_BUGREPORT);
+	fprintf(stderr, "\t-v\tBe more verbose.\n");
+	fprintf(stderr, "\t-h\tPrint this help information.\n");
+	fprintf(stderr, "\t-c\tSpecify config file to read instead of default nsd.conf.\n");
+	fprintf(stderr, "\t-C\tNo config file is read.\n");
+	fprintf(stderr, "\t-d\tSet working directory to open files from.\n");
+	fprintf(stderr, "\t-o\tSpecify a zone's origin (only used with -z).\n");
+	fprintf(stderr, "\t-f\tSpecify database file to use.\n");
+	fprintf(stderr, "\t-z\tSpecify a zonefile to read (read from stdin with \'-\').\n");
+#ifndef NDEBUG
+	fprintf(stderr, "\t-F\tSet debug facilities.\n");
+	fprintf(stderr, "\t-L\tSet debug level.\n");
+#endif
+}
+
+extern char *optarg;
+extern int optind;
+
+int
+main (int argc, char **argv)
+{
+	struct namedb *db;
+	char *origin = NULL;
+	int c;
+	region_type *global_region;
+	region_type *rr_region;
+	const char* configfile= CONFIGFILE;
+	const char* zonesdir = NULL;
+	const char* singlefile = NULL;
+	nsd_options_t* nsd_options = NULL;
+
+	log_init("zonec");
+
+	global_region = region_create(xalloc, free);
+	rr_region = region_create(xalloc, free);
+	totalerrors = 0;
+
+	/* Parse the command line... */
+	while ((c = getopt(argc, argv, "d:f:vhCF:L:o:c:z:")) != -1) {
+		switch (c) {
+		case 'c':
+			configfile = optarg;
+			break;
+		case 'v':
+			++vflag;
+			break;
+		case 'f':
+			dbfile = optarg;
+			break;
+		case 'd':
+			zonesdir = optarg;
+			break;
+		case 'C':
+			configfile = 0;
+			break;
+#ifndef NDEBUG
+		case 'F':
+			sscanf(optarg, "%x", &nsd_debug_facilities);
+			break;
+		case 'L':
+			sscanf(optarg, "%d", &nsd_debug_level);
+			break;
+#endif /* NDEBUG */
+		case 'o':
+			origin = optarg;
+			break;
+		case 'z':
+			singlefile = optarg;
+			break;
+		case 'h':
+			usage();
+			exit(0);
+		case '?':
+		default:
+			usage();
+			exit(1);
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
+
+	if (argc != 0) {
+		usage();
+		exit(1);
+	}
+
+	/* Read options */
+	if(configfile != 0) {
+		nsd_options = nsd_options_create(global_region);
+		if(!parse_options_file(nsd_options, configfile))
+		{
+			fprintf(stderr, "zonec: could not read config: %s\n", configfile);
+			exit(1);
+		}
+	}
+	if(nsd_options && zonesdir == 0) zonesdir = nsd_options->zonesdir;
+	if(zonesdir && zonesdir[0]) {
+		if (chdir(zonesdir)) {
+			fprintf(stderr, "zonec: cannot chdir to %s: %s\n", zonesdir, strerror(errno));
+			exit(1);
+		}
+	}
+	if(dbfile == 0) {
+		if(nsd_options && nsd_options->database) dbfile = nsd_options->database;
+		else dbfile = DBFILE;
+	}
+
+	/* Create the database */
+	if ((db = namedb_new(dbfile)) == NULL) {
+		fprintf(stderr, "zonec: error creating the database (%s): %s\n",
+			dbfile, strerror(errno));
+		exit(1);
+	}
+
 	parser = zparser_create(global_region, rr_region, db);
-	assert(parser);
+	if (!parser) {
+		fprintf(stderr, "zonec: error creating the parser\n");
+		exit(1);
+	}
+
 	/* Unique pointers used to mark errors.	 */
 	error_dname = (dname_type *) region_alloc(global_region, 0);
 	error_domain = (domain_type *) region_alloc(global_region, 0);
-	/* Open the network database */
-	setprotoent(1);
-	setservent(1);
-}
 
-/** desetup parse */
-void zonec_desetup_parser(void)
-{
-	if(parser) {
-		endservent();
-		endprotoent();
-		region_destroy(parser->rr_region);
-		region_destroy(parser->region);
-		/* clear memory for exit, but this is not portable to
-		 * other versions of lex. yylex_destroy(); */
+	if (singlefile || origin) {
+		/*
+		 * Read a single zone file with the specified origin
+		 */
+		if(!singlefile) {
+			fprintf(stderr, "zonec: must have -z zonefile when reading single zone.\n");
+			exit(1);
+		}
+		if(!origin) {
+			fprintf(stderr, "zonec: must have -o origin when reading single zone.\n");
+			exit(1);
+		}
+		if (vflag > 0)
+			fprintf(stdout, "zonec: reading zone \"%s\".\n", origin);
+		zone_read(origin, singlefile, nsd_options);
+		if (vflag > 0)
+			fprintf(stdout, "zonec: processed %ld RRs in \"%s\".\n", totalrrs, origin);
+	} else {
+		zone_options_t* zone;
+		if(!nsd_options) {
+			fprintf(stderr, "zonec: no zones specified.\n");
+			exit(1);
+		}
+		/* read all zones */
+		RBTREE_FOR(zone, zone_options_t*, nsd_options->zone_options)
+		{
+			if (vflag > 0)
+				fprintf(stdout, "zonec: reading zone \"%s\".\n",
+					zone->name);
+			zone_read(zone->name, zone->zonefile, nsd_options);
+			if (vflag > 0)
+				fprintf(stdout,
+					"zonec: processed %ld RRs in \"%s\".\n",
+					totalrrs, zone->name);
+			totalrrs = 0;
+		}
 	}
-}
+	check_dname(db);
 
-static domain_table_type* orig_domains = NULL;
-static region_type* orig_region = NULL;
-static region_type* orig_dbregion = NULL;
+#ifndef NDEBUG
+	fprintf(stdout, "global_region: ");
+	region_dump_stats(global_region, stderr);
+	fprintf(stdout, "\n");
+	fprintf(stdout, "db->region: ");
+	region_dump_stats(db->region, stderr);
+	fprintf(stdout, "\n");
+#endif /* NDEBUG */
 
-/** setup for string parse */
-void zonec_setup_string_parser(region_type* region, domain_table_type* domains)
-{
-	assert(parser); /* global parser must be setup */
-	orig_domains = parser->db->domains;
-	orig_region = parser->region;
-	orig_dbregion = parser->db->region;
-	parser->region = region;
-	parser->db->region = region;
-	parser->db->domains = domains;
-	zparser_init("string", 3600, CLASS_IN, domain_dname(domains->root));
-}
+	/* Close the database */
+	if (namedb_save(db) != 0) {
+		fprintf(stderr, "zonec: error writing the database (%s): %s\n", db->filename, strerror(errno));
+		namedb_discard(db);
+		exit(1);
+	}
 
-/** desetup string parse */
-void zonec_desetup_string_parser(void)
-{
-	parser->region = orig_region;
-	parser->db->domains = orig_domains;
-	parser->db->region = orig_dbregion;
-}
+	/* Print the total number of errors */
+	if (vflag > 0 || totalerrors > 0) {
+		fprintf(stderr, "\nzonec: done with %ld errors.\n",
+			totalerrors);
+	}
 
-/** parse a string into temporary storage */
-int zonec_parse_string(region_type* region, domain_table_type* domains,
-	zone_type* zone, char* str, domain_type** parsed, int* num_rrs)
-{
-	int errors;
-	zonec_setup_string_parser(region, domains);
-	parser->current_zone = zone;
-	parser->errors = 0;
-	totalrrs = 0;
-	parser_push_stringbuf(str);
-	yyparse();
-	parser_pop_stringbuf();
-	errors = parser->errors;
-	*num_rrs = totalrrs;
-	if(*num_rrs == 0)
-		*parsed = NULL;
-	else	*parsed = parser->prev_dname;
-	/* remove origin if it was not used during the parse */
-	domain_table_deldomain(parser->db->domains, parser->origin);
-	zonec_desetup_string_parser();
-	return errors;
+	/* Disable this to save some time.  */
+#if 0
+	region_destroy(global_region);
+#endif
+
+	return totalerrors ? 1 : 0;
 }

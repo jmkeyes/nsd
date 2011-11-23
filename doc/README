@@ -14,7 +14,6 @@
 3.5 ... Diagnosing NSD log entries
 3.6 ... Interfaces
 4.0 Support and Feedback
-4.1 ... Your Support
 
 
 1.0 Introduction
@@ -49,7 +48,7 @@ database prepared by the zone compiler from standard zone files.
 For NSD operation this means that zones have to be compiled by zonec
 before NSD can use them.
 
-All this can be controlled via rc.d (sigTERM, HUP) or nsd-control,
+All this can be controlled by a simple control script called 'nsdc'
 and uses a simple configuration file 'nsd.conf'.
 
 
@@ -82,16 +81,16 @@ Step 6: Create and edit /etc/nsd/nsd.conf file possibly from
 Step 7: Copy necessary master zone files into appropriate directories
         under /etc/nsd/primary & /etc/nsd/secondary. 
 
-Step 8: Run nsd-control start
+Step 8: Run nsdc rebuild
 
-Step 9: Test the NSD with dig, drill or host.
+Step 9: Run nsdc start
 
-Step 10: If you're happy add a rc.d script to start into your OS boot up
-	 sequence. The format of the rc.d startup script depends on 
-	 the platform.  Also stop it in the shutdown sequence.
-	 You can use SIGTERM to stop, or nsd-control stop.
+Step 10: Test the NSD with dig, drill or host.
 
-Step 11: If desired add 'nsd-control write' to your superuser crontab to
+Step 11: If you're happy add nsdc start into your OS boot up sequence.
+	 nsdc stop can be used in the shutdown sequence.
+
+Step 12: If desired add nsdc patch to your superuser crontab to
          update the zone files with the content transferred from master
 	 servers periodically, such as once per day.
 
@@ -166,6 +165,14 @@ addition to standard configure options, one may use the following:
 	This will instruct NSD to be stricter when validating its input. 
 	This could lead to a reduced service level.
 
+  --disable-dnssec
+
+        Disable support for DNSSEC (RFC 4033, 4034, and 4035).
+
+  --disable-tsig
+
+        Disable TSIG support in NSD and the support tools.
+
   --enable-bind8-stats
 
         Enables BIND8-like statistics.
@@ -176,7 +183,7 @@ addition to standard configure options, one may use the following:
 
   --with-nsd_conf_file=path
 
-	Pathname to the NSD configuration file, default /etc/nsd/nsd.conf
+	Pathname to the NSD configuration file, default /ect/nsd/nsd.conf
 
   --with-pidfile=path
 
@@ -204,7 +211,8 @@ addition to standard configure options, one may use the following:
   --with-ssl=path
 
         Specify the location of the OpenSSL libraries.  OpenSSL 0.9.7
-        or higher is required for TSIG support.
+        or higher is required for TSIG support.  Use --disable-tsig if
+        you do not have OpenSSL installed.
 
   --with-start_priority=number
 
@@ -214,14 +222,14 @@ addition to standard configure options, one may use the following:
 
 	Shutdown priority for NSD. 
 
-  --with-tcp-timeout=number
-
-	Set the default TCP timeout (in seconds). Default 120 seconds.
-
   --disable-nsec3
 
   	Disable NSEC3 support. With NSEC3 support enabled, very large zones,
 	also non-nsec3 zones, use about 20% more memory.
+
+  --enable-nsid
+
+  	Enable (experimental) NSID support. 
 
   --disable-largefile
 
@@ -240,12 +248,16 @@ do a `gmake realclean` first, to remove stuff that the make call messed up.
 
 Become a superuser (if necessary) and type ``make install''
 
-This step should install four binaries
+This step should install seven binaries
 
 nsd             - the daemon itself
-nsd-control-setup - a shell script that creates keys for nsd-control.
-nsd-control	- program that connects over SSL to nsd and gives commands.
+nsdc            - a shell script to control the daemon
+zonec           - zone compiler
+nsd-notify      - a simple C program to send outbound notifies
+nsd-xfer        - a program to receive zones from a master server
+                  using AXFR from the command line.
 nsd-checkconf	- simple C program to check nsd.conf before use.
+nsd-patch	- simple program that cleans IXFR changes back to zone files.
 
 Plus the manual pages and a sample configuration file.
 
@@ -320,11 +332,6 @@ to satisfy access control lists at the other end:
 
 		outgoing-interface: 168.192.5.69
 
-By default, NSD will retry a notify up to 5 times. You can override that
-value with: 
-
-		notify-retry: 5
-
 Zone transfers can be secured with TSIG keys, replace NOKEY with
 the name of the tsig key to use. See section 3.3.
 
@@ -346,7 +353,6 @@ To prevent misconfiguration, NSD configure has the --enable-root-server
 switch, that is by default disabled.
 
 When you are done with the configuration file, check the syntax using
-
 	nsd-checkconf <name of configfile>
 
 To build the name database, use nsdc. Use -c configfile if your config
@@ -390,9 +396,8 @@ file issue a patch command
 
 This will see if a transfer journal exists, and if so, move it away,
 proceed with writing new contents to the zone files (listed as zonefile:
-for the zones). If any zone files have been changed (including master
-zones) the nsd database is rebuild with the updates zone contents and
-NSD is issued a reload command.
+for the zones). If any zone have been changed the nsd database is rebuild
+with the updates zone contents and NSD is issued a reload command.
 
 The patch process will break a zone transfer in progress, which will be
 reattempted later.  The patch process does this to avoid certain race
@@ -527,6 +532,36 @@ the key name on the access control line.
 
 If the TSIG key name is used in notify or request-xfr lines,
 the key is used to sign the request/notification messages.
+
+nsd-notify uses the -y keyname:secret format that dig uses too. For example
+  nsd-notify -y sec1_key:6KM6qiKfwfEpamEq72HQdA== -z example.com 127.0.0.1
+
+If you want to perform manual zone transfers you can use nsd-xfer.
+nsd-xfer(8) uses the same cryptic file format as named-xfer(8) (to
+be backward compatible).  This is a so called tsig-info file. 
+
+Lets say we have following:
+
+zone: nlnetlabs.nl
+server: 213.53.69.1
+key-name: nlnetlabs-axfr
+algorithm: hmac-md5
+secret: Y87923jksdXlsdv+LeXpUA==
+
+Then we need to create file nlnetlabs.nl.tsiginfo containing:
+213.53.69.1
+nlnetlabs-axfr
+157
+Y87923jksdXlsdv+LeXpUA==
+
+Cryptic? Yes. The first line tells this key is to be used for
+213.53.69.1 Second one is the name of the key. 157 stands for hmac-md5
+algorithm and the last line is the secret.
+
+Here's a list of algorithms with their corresponding algorithm numbers.
+hmac-md5:		157
+hmac-sha1:		158
+hmac-sha256:	159
 
 3.4 Zone expiry of secondary zones
 
@@ -675,31 +710,5 @@ We are interested in our users and in the environment you use NSD. Please
 drop us a mail when you use NSD. Indicate in what kind of operation you 
 deploy NSD and let us know what your positive and negative experiences are.
 http://www.nlnetlabs.nl/nsd  and  mailto:nsd-info@nlnetlabs.nl
-
-
-4.1 Your Support
-
-NLnet Labs offers all of its software products as open source, most are
-published under a BDS license. You can download them, not only from the
-NLnet Labs website but also through the various OS distributions for
-which NSD, ldns, and Unbound are packaged. We therefore have little idea
-who uses our software in production environments and have no direct ties
-with 'our customers'.
-
-Therefore, we ask you to contact us at users@NLnetLabs.nl and tell us
-whether you use one of our products in your production environment,
-what that environment looks like, and maybe even share some praise.
-We would like to refer to the fact that your organization is using our
-products. We will only do that if you explicitly allow us. In all other
-cases we will keep the information you share with us to ourselves.
-
-In addition to the moral support you can also support us
-financially. NLnet Labs is a recognized not-for-profit charity foundation
-that is chartered to develop open-source software and open-standards
-for the Internet. If you use our software to satisfaction please express
-that by giving us a donation. For small donations PayPal can be used. For
-larger and regular donations please contact us at users@NLnetLabs.nl. Also
-see http://www.nlnetlabs.nl/labs/contributors/.
-
 
 $Id$

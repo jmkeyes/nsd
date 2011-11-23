@@ -8,7 +8,7 @@
  *
  */
 
-#include "config.h"
+#include <config.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -28,7 +28,6 @@ int yywrap(void);
 
 /* this hold the nxt bits */
 static uint8_t nxtbits[16];
-static int dlv_warn = 1;
 
 /* 256 windows of 256 bits (32 bytes) */
 /* still need to reset the bastard somewhere */
@@ -65,7 +64,7 @@ nsec3_add_params(const char* hash_algo_str, const char* flag_str,
 %token <type> T_MINFO T_RP T_AFSDB T_X25 T_ISDN T_RT T_NSAP T_NSAP_PTR T_PX
 %token <type> T_GPOS T_EID T_NIMLOC T_ATMA T_NAPTR T_KX T_A6 T_DNAME T_SINK
 %token <type> T_OPT T_APL T_UINFO T_UID T_GID T_UNSPEC T_TKEY T_TSIG T_IXFR
-%token <type> T_AXFR T_MAILB T_MAILA T_DS T_DLV T_SSHFP T_RRSIG T_NSEC T_DNSKEY
+%token <type> T_AXFR T_MAILB T_MAILA T_DS T_SSHFP T_RRSIG T_NSEC T_DNSKEY
 %token <type> T_SPF T_NSEC3 T_IPSECKEY T_DHCID T_NSEC3PARAM
 
 /* other tokens */
@@ -95,16 +94,15 @@ line:	NL
     |	sp NL
     |	PREV NL		{}    /* Lines containing only whitespace.  */
     |	ttl_directive
-	{
-	    parser->error_occurred = 0;
-    }
     |	origin_directive
-	{
-	    parser->error_occurred = 0;
-    }
     |	rr
     {	/* rr should be fully parsed */
 	    if (!parser->error_occurred) {
+		    if (!parser->current_zone
+			&& parser->current_rr.type != TYPE_SOA)
+		    {
+			    zc_error("RR before SOA skipped");
+		    } else {
 			    parser->current_rr.rdatas
 				    = (rdata_atom_type *) region_alloc_init(
 					    parser->region,
@@ -113,6 +111,7 @@ line:	NL
 					     * sizeof(rdata_atom_type)));
 
 			    process_rr();
+		    }
 	    }
 
 	    region_free_all(parser->rr_region);
@@ -136,18 +135,15 @@ trail:	NL
 
 ttl_directive:	DOLLAR_TTL sp STR trail
     {
-	    parser->default_ttl = zparser_ttl2int($3.str, &(parser->error_occurred));
-	    if (parser->error_occurred == 1) {
+	    parser->default_ttl = zparser_ttl2int($3.str);
+	    if (parser->default_ttl == -1) {
 		    parser->default_ttl = DEFAULT_TTL;
-			parser->error_occurred = 0;
 	    }
     }
     ;
 
 origin_directive:	DOLLAR_ORIGIN sp abs_dname trail
     {
-	    /* if previous origin is unused, remove it, do not leak it */
-	    domain_table_deldomain(parser->db->domains, parser->origin);
 	    parser->origin = $3;
     }
     |	DOLLAR_ORIGIN sp rel_dname trail
@@ -336,11 +332,11 @@ wire_rel_dname:	wire_label
 
 str_seq:	STR
     {
-	    zadd_rdata_txt_wireformat(zparser_conv_text(parser->region, $1.str, $1.len), 1);
+	    zadd_rdata_wireformat(zparser_conv_text(parser->region, $1.str, $1.len));
     }
     |	str_seq sp STR
     {
-	    zadd_rdata_txt_wireformat(zparser_conv_text(parser->region, $3.str, $3.len), 0);
+	    zadd_rdata_wireformat(zparser_conv_text(parser->region, $3.str, $3.len));
     }
     ;
 
@@ -580,8 +576,6 @@ type_and_rdata:
     |	T_APL sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_DS sp rdata_ds
     |	T_DS sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
-    |	T_DLV sp rdata_dlv { if (dlv_warn) { dlv_warn = 0; zc_warning_prev_line("DLV is experimental"); } }
-    |	T_DLV sp rdata_unknown { if (dlv_warn) { dlv_warn = 0; zc_warning_prev_line("DLV is experimental"); } $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_SSHFP sp rdata_sshfp
     |	T_SSHFP sp rdata_unknown { $$ = $1; parse_unknown_rdata($1, $3); }
     |	T_RRSIG sp rdata_rrsig
@@ -625,11 +619,15 @@ rdata_soa:	dname sp dname sp STR sp STR sp STR sp STR sp STR trail
 	    /* convert the soa data */
 	    zadd_rdata_domain($1);	/* prim. ns */
 	    zadd_rdata_domain($3);	/* email */
-	    zadd_rdata_wireformat(zparser_conv_serial(parser->region, $5.str)); /* serial */
+	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $5.str)); /* serial */
 	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $7.str)); /* refresh */
 	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $9.str)); /* retry */
 	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $11.str)); /* expire */
 	    zadd_rdata_wireformat(zparser_conv_period(parser->region, $13.str)); /* minimum */
+
+	    /* [XXX] also store the minium in case of no TTL? */
+	    if ((parser->default_minimum = zparser_ttl2int($11.str)) == -1)
+		    parser->default_minimum = DEFAULT_TTL;
     }
     ;
 
@@ -663,9 +661,6 @@ rdata_mx:	STR sp dname trail
     ;
 
 rdata_txt:	str_seq trail
-    {
-	zadd_rdata_txt_clean_wireformat();
-    }
     ;
 
 /* RFC 1183 */
@@ -806,15 +801,6 @@ rdata_apl_seq:	dotted_str
     ;
 
 rdata_ds:	STR sp STR sp STR sp str_sp_seq trail
-    {
-	    zadd_rdata_wireformat(zparser_conv_short(parser->region, $1.str)); /* keytag */
-	    zadd_rdata_wireformat(zparser_conv_algorithm(parser->region, $3.str)); /* alg */
-	    zadd_rdata_wireformat(zparser_conv_byte(parser->region, $5.str)); /* type */
-	    zadd_rdata_wireformat(zparser_conv_hex(parser->region, $7.str, $7.len)); /* hash */
-    }
-    ;
-
-rdata_dlv:	STR sp STR sp STR sp str_sp_seq trail
     {
 	    zadd_rdata_wireformat(zparser_conv_short(parser->region, $1.str)); /* keytag */
 	    zadd_rdata_wireformat(zparser_conv_algorithm(parser->region, $3.str)); /* alg */
@@ -977,7 +963,6 @@ zparser_create(region_type *region, region_type *rr_region, namedb_type *db)
 	result->current_zone = NULL;
 	result->origin = NULL;
 	result->prev_dname = NULL;
-	result->default_apex = NULL;
 
 	result->temporary_rdatas = (rdata_atom_type *) region_alloc(
 		result->region, MAXRDATALEN * sizeof(rdata_atom_type));
@@ -997,11 +982,11 @@ zparser_init(const char *filename, uint32_t ttl, uint16_t klass,
         nsec_highest_rcode = 0;
 
 	parser->default_ttl = ttl;
+	parser->default_minimum = 0;
 	parser->default_class = klass;
 	parser->current_zone = NULL;
 	parser->origin = domain_table_insert(parser->db->domains, origin);
 	parser->prev_dname = parser->origin;
-	parser->default_apex = parser->origin;
 	parser->error_occurred = 0;
 	parser->errors = 0;
 	parser->line = 1;
@@ -1020,11 +1005,11 @@ static void
 error_va_list(unsigned line, const char *fmt, va_list args)
 {
 	if (parser->filename) {
-		char message[MAXSYSLOGMSGLEN];
-		vsnprintf(message, sizeof(message), fmt, args);
-		log_msg(LOG_ERR, "%s:%u: %s", parser->filename, line, message);
+		fprintf(stderr, "%s:%u: ", parser->filename, line);
 	}
-	else log_vmsg(LOG_ERR, fmt, args);
+	fprintf(stderr, "error: ");
+	vfprintf(stderr, fmt, args);
+	fprintf(stderr, "\n");
 
 	++parser->errors;
 	parser->error_occurred = 1;
@@ -1056,11 +1041,11 @@ static void
 warning_va_list(unsigned line, const char *fmt, va_list args)
 {
 	if (parser->filename) {
-		char m[MAXSYSLOGMSGLEN];
-		vsnprintf(m, sizeof(m), fmt, args);
-		log_msg(LOG_WARNING, "%s:%u: %s", parser->filename, line, m);
+		fprintf(stderr, "%s:%u: ", parser->filename, line);
 	}
-	else log_vmsg(LOG_WARNING, fmt, args);
+	fprintf(stderr, "warning: ");
+	vfprintf(stderr, fmt, args);
+	fprintf(stderr, "\n");
 }
 
 void
