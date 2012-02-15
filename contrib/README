@@ -8,9 +8,6 @@ USE AT YOUR OWN RISK.
   Put the source tarball in  /usr/src/redhat/SOURCES. Then 
   	rpmbuild -ba nsd.spec
 
-* nsd.init: a shell script that can start, stop, restart the NSD daemon.
-  It uses signals, and can be used in rc.d init scripts (depends on platform).
-
 * nsd.zones2nsd.conf: a python script to convert NSD 2 nsd.zones config files
   to NSD 3 nsd.conf config files. Do not forget to set nsd_zones_name and
   key_dir variables at the top of the script. 
@@ -21,9 +18,3 @@ USE AT YOUR OWN RISK.
   translation to an NSD server. The goal is to make it simple to run
   redundant BIND and NSD servers and keep them in sync, using only the
   BIND configuration files
-
-* nsd_munin_ : plugin for munin statistics report
-  You must have given --enable-bind8-stats (default is on) to configure.
-  Copy the file to /usr/share/munin/plugins (or you munin node dir).
-  You may also need to create a number of symbolic links under the names
-  of the graphs you want to create (documented at head of file).

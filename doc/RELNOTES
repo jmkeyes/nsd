@@ -2,21 +2,61 @@ NSD RELEASE NOTES
 
 3.2.10 (UPCOMING)
 ================
+
 BUG FIXES:
-        - Bugfix #421: Truncate pidfile on shutdown, before unlink.
+	- Bugfix #421: Truncate pidfile on shutdown, before unlink.
+	- Bugfix #423: Fix slow zone transfer processing due to
+	  'Fix is_existing flag for ENT' bugfix.
+	- Fix bug #430: segfault when MAX_INTERFACES set to more than 65K.
+	- Fix configure.ac strptime check for gcc 4.6.2, acx_nlnetlabs update.
+
 
 3.2.9
 ================
+
+FEATURES:
+	- Minimize responses to reduce truncation: NSD will only add optional
+	  records to the authority and additional sections when the response
+	  size does not exceed the minimal response size.
+
+	  The minimal response size is 512 (no-EDNS), 1480 (EDNS/IPv4),
+	  1220 (EDNS/IPv6), or the advertized EDNS buffer size if that is
+	  smaller than the EDNS default. 
+
+	  The feature is enabled by default. You can disable it by configuring 
+	  NSD with --disable-minimal-responses.
+
+	- Less NSEC3 prehashing. This will make NSD handle zone transfers
+	  faster, but will decrease the performance of NXDOMAIN and wildcard
+	  NODATA responses. Full prehashing is enabled by default. If you want
+	  less NSEC3 prehashing, configure NSD with --disable-full-prehash.
+	  Thanks Secure64 for the patch.
+
 BUG FIXES:
+	- Bugfix #302: nsd accepts XFR but refuses to re-read the slave zone.
 	- Bugfix #365: set patch style and zonec verbose for nsdc.
+	- First step of bug #369: RRSIG DNSKEY sets zone to be treated DNSSEC.
 	- Bugfix #375: typos in nsd.conf.5.
 	- Bugfix #381: Binary escaped and transfers.
-	- First step of bug #369: RRSIG DNSKEY sets zone to be treated DNSSEC.
-	- Bugfix #302: nsd accepts XFR but refuses to re-read the slave zone.
+	- Bugfix #397: Don't allow relative domain names as origin in $INCLUDE
+	  directives.
+	- Fix printout of IPSECKEY by nsd-patch.
+	- Fix is_existing flag for ENT when domain that has a shared ENT
+	  is deleted by IXFR. (ENT == Empty Non-Terminal)
+	- Fix bug if the zonefile is changed for a secondary but stored
+	  transfers are applied, and stop it from applying ixfr to empty zone.
+	  The zone is flagged with error and AXFR-ed.
 	- Fix to have no authority NS set processing for CNAMEs.
+	- Fix nsd-checkconf to check tsig algorithms properly.
 	- Set the AA bit on responses that have an authoritative CNAME.
 	- Fix denial of existence response for empty non-terminal that looks
 	  like a NSEC3-only domain (but has data below it).
+
+OPERATIONAL NOTES:
+	- nsd.db version number increased because NSD 3.2.7 and earlier
+	  zonec is not compatible due to the TXT strings change. Please
+	  run nsdc rebuild before running NSD 3.2.9 and later versions.
+
 
 3.2.8
 =============
@@ -29,14 +69,12 @@ BUG FIXES:
 	- Bugfix #348: Don't include header/library path if OpenSSL is in /usr
 	- Bugfix #350: Refused notifies should log client ip.
 	- Bugfix #352: Fix hard coded paths in man pages.
-	- Bugfix #354: The realclean target deletes a bit too much.
+	- Bugfix #354: The realclean target deletes a bit too much.	
 	- Bugfix #357, make xfrd quit with many zones.
 	- Bugfix #362: outgoing-interface and v4 vs. v6 leads to spurious
 	  warning messages.
 	- Bugfix #363: nsd-checkconf -v does not print outgoing-interface ok.
 	- Bugfix: nsd-checkconf -o outgoing-interface omits NOKEY.
-	- Undo bugfix #325: Don't skip dname compression, messes up packets
-	  that do need compression.
 
 OPERATIONAL NOTES:
 	- Use 'make clean' to clean up files that make created.

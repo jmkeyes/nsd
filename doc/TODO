@@ -28,6 +28,9 @@ SERVER
   preallocate 2 bytes in front of buffer to put them into.
 - Test TCP performance (do a lot of AXFRs, different zone sizes, and compare
   time averages).
+- From Aaron Hopkins: after you do select calls, do multiple read calls
+  per select. This polling improves performance in high-load situations.
+  Speed test to prove that it does so.
 - Turn off TC bit on all error replies.
 - Bug #133: print empty statistic blocks. Not sure if the feature is wanted.
 - XFRD should throttle the number of notifys going out for a zone to
@@ -100,7 +103,6 @@ OPTIMISATIONS
   The brief double answers are preferable to brief SERVFAIL.
 - nsd manual programs contain identical functions that are written down multiple 
   times. Do we need to introduce a util_programs.c or something?
-- speed up NSEC3 prehashing (Secure64 request).
 - reduce the memory leak on zone transfers (deleted domains are not removed from
   tree).
 - Options server: ip-address: and zone: outgoing-interface are pretty much the same.

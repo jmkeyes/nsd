@@ -1,14 +1,14 @@
 /*
  * edns.c -- EDNS definitions (RFC 2671).
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
  */
 
 
-#include "config.h"
+#include <config.h>
 
 #include <string.h>
 
