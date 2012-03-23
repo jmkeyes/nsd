@@ -1,3 +1,6 @@
+23 March 2012: Wouter
+	- Fix crash if no logfile is set (for people using snapshot).
+
 3 August 2011: Wouter
 	- silence 'Broken pipe' messages in log (visible with verbosity 2).
 	- fix makedist.sh for removal of patch, notify, xfer. new nsd-control.
