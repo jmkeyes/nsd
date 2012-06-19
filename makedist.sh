@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Build a NSD distribution tar from the SVN repository.
+# Build a credns distribution tar from the SVN repository.
 
 # Abort script on unexpected errors.
 set -e
@@ -12,14 +12,14 @@ cwd=`pwd`
 usage () {
     cat >&2 <<EOF
 Usage $0: [-h] [-s] [-d SVN_root]
-Generate a distribution tar file for NSD.
+Generate a distribution tar file for credns.
 
     -h           This usage information.
     -s           Build a snapshot distribution file.  The current date is
-                 automatically appended to the current NSD version number.
+                 automatically appended to the current credns version number.
     -rc <nr>     Build a release candidate, the given string will be added
-		 to the version number (nsd-<version>rc<number>).
-    -d SVN_root  Retrieve the NSD source from the specified repository.
+		 to the version number (credns-<version>rc<number>).
+    -d SVN_root  Retrieve the credns source from the specified repository.
 EOF
     exit 1
 }
@@ -122,7 +122,7 @@ cd $temp_dir
 info "Exporting source from SVN."
 svn export "$SVNROOT" nsd || error_cleanup "SVN command failed"
 
-cd nsd || error_cleanup "NSD not exported correctly from SVN"
+cd nsd || error_cleanup "Credns not exported correctly from SVN"
 
 info "Building configure script (autoconf)."
 autoconf || error_cleanup "Autoconf failed."
@@ -133,7 +133,7 @@ autoheader || error_cleanup "Autoheader failed."
 rm -r autom4te* || error_cleanup "Failed to remove autoconf cache directory."
 
 info "Building lexer and parser."
-echo '#include "config.h"' > zlexer.c || error_cleanup "Failed to create lexer."
+echo "#include <config.h>" > zlexer.c || error_cleanup "Failed to create lexer."
 flex -i -t zlexer.lex >> zlexer.c || error_cleanup "Failed to create lexer."
 bison -y -d -o zparser.c zparser.y || error_cleanup "Failed to create parser."
 echo "#include \"configyyrename.h\"" > configlexer.c || error_cleanup "Failed to create configlexer"
@@ -144,20 +144,22 @@ find . -name .c-mode-rc.el -exec rm {} \;
 find . -name .cvsignore -exec rm {} \;
 rm makedist.sh || error_cleanup "Failed to remove makedist.sh."
 
-info "Determining NSD version."
+info "Determining credns version."
 version=`./configure --version | head -1 | awk '{ print $3 }'` || \
     error_cleanup "Cannot determine version number."
+NAME=`./configure --version | head -1 | awk '{ print $1 }'`
+name=`./configure --version | head -1 | awk '{ print $1 }' | tr A-Z a-z`
 
-info "NSD version: $version"
+info "$NAME version: $version"
 
 if [ "$RC" != "no" ]; then
-    info "Building NSD release candidate."
+    info "Building $NAME release candidate."
     version="${version}rc$RC"
     info "Release candidate version number: $version"
 fi
 
 if [ "$SNAPSHOT" = "yes" ]; then
-    info "Building NSD snapshot."
+    info "Building $NAME snapshot."
     version="$version-`date +%Y%m%d`"
     info "Snapshot version number: $version"
 fi
@@ -166,42 +168,48 @@ fi
 
 replace_all doc/README
 replace_all nsd.8.in
-replace_all nsd-control.8.in
+replace_all nsdc.8.in
+replace_all nsd-notify.8.in
 replace_all nsd-checkconf.8.in
+replace_all nsd-patch.8.in
+replace_all nsd-xfer.8.in
 replace_all nsd.conf.5.in
 
-info "Renaming NSD directory to nsd-$version."
+info "Renaming $NAME directory to $name-$version."
 cd ..
-mv nsd nsd-$version || error_cleanup "Failed to rename NSD directory."
+mv nsd $name-$version || error_cleanup "Failed to rename $NAME directory."
 
-tarfile="../nsd-$version.tar.gz"
+tarfile="../$name-$version.tar.gz"
 
 if [ -f $tarfile ]; then
     (question "The file $tarfile already exists.  Overwrite?" \
         && rm -f $tarfile) || error_cleanup "User abort."
 fi
 
-info "Deleting the tpkg directory"
-rm -rf nsd-$version/tpkg/
+info "Moving credns-setup to contrib directory"
+mv $name-$version/tpkg/credns-setup $name-$version/contrib/credns-setup
 
-info "Creating tar nsd-$version.tar.gz"
-tar czf ../nsd-$version.tar.gz nsd-$version || error_cleanup "Failed to create tar file."
+info "Deleting the tpkg directory"
+rm -rf $name-$version/tpkg/
+
+info "Creating tar $name-$version.tar.gz"
+tar czf ../$name-$version.tar.gz $name-$version || error_cleanup "Failed to create tar file."
 
 cleanup
 
 case $OSTYPE in
         linux*)
-                sha=`sha1sum nsd-$version.tar.gz |  awk '{ print $1 }'`
+                sha=`sha1sum $name-$version.tar.gz |  awk '{ print $1 }'`
                 ;;
         FreeBSD*)
-                sha=`sha1  nsd-$version.tar.gz |  awk '{ print $5 }'`
+                sha=`sha1  $name-$version.tar.gz |  awk '{ print $5 }'`
                 ;;
 	*)
-                sha=`sha1sum nsd-$version.tar.gz |  awk '{ print $1 }'`
+                sha=`sha1sum $name-$version.tar.gz |  awk '{ print $1 }'`
                 ;;
 esac
-echo $sha > nsd-$version.tar.gz.sha1
+echo $sha > $name-$version.tar.gz.sha1
 
-info "NSD distribution created successfully."
+info "$NAME distribution created successfully."
 info "SHA1sum: $sha"
 

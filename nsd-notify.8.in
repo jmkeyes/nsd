@@ -1,0 +1,68 @@
+.TH "credns\-notify" "8" "@date@" "NLnet Labs" "credns @version@"
+.\" Copyright (c) 2001\-2011, NLnet Labs. All rights reserved.
+.\" See LICENSE for the license.
+.SH "NAME"
+.LP 
+.B credns\-notify 
+\- program to send NOTIFY's to remote nameservers.
+.SH "SYNOPSIS"
+.LP
+.B credns\-notify
+.RB [ \-4 ]
+.RB [ \-6 ]
+.RB [ \-h ]
+.RB [ \-a
+.IR address[@port] ]
+.RB [ \-p
+.IR port ]
+.RB [ \-y
+.IR key:secret[:algorithm] ]
+.B \-z
+.I zone servers
+.SH "DESCRIPTION"
+.LP 
+.B Credns\-notify 
+is simple program to send NOTIFY's to remote nameservers.
+.SH "OPTIONS"
+.TP
+.B \-4
+Only send to IPv4 addresses.
+.TP
+.B \-6
+Only send to IPv6 addresses.
+.TP
+.B \-h
+Print help information and exit.
+.TP 
+.B \-a\fI address[@port]
+Specify the source address (and port) to send from.
+.TP 
+.B \-p\fI port
+Specify the port to send to.
+.TP 
+.B \-y\fI key:secret[:algorithm]
+Specify a TSIG key and base64 encoded secret to sign the notification with. If 
+the TSIG algorithm is not defined, MD5 is used.
+.TP 
+.B z\fI zone
+Specify the zone to notify about.
+.TP 
+.I servers
+List of nameservers to send to.
+.SH "EXAMPLES"
+.LP 
+To run this program the standard way type:
+.LP 
+.B # credns\-notify \-z foobar.cz 1.2.3.4
+.SH "SEE ALSO"
+.LP 
+credns(8), crednsc(8), credns.conf(5), credns\-checkconf(8),
+credns\-patch(8), credns\-xfer(8)
+.SH "AUTHORS"
+.LP
+.B Credns
+was written by NLnet Labs.
+.LP
+.B NSD
+was written by NLnet Labs and RIPE NCC joint team. Please see CREDITS
+file in the distribution for further details.

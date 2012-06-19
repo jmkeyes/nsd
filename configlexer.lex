@@ -2,7 +2,7 @@
 /*
  * configlexer.lex - lexical analyzer for NSD config file
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved
  *
  * See LICENSE for the license.
  *
@@ -19,6 +19,8 @@
 #include "configyyrename.h"
 #include "configparser.h"
 void c_error(const char *message);
+
+#define YY_NO_UNPUT
 
 #if 0
 #define LEXOUT(s)  printf s /* used ONLY when debugging */
@@ -80,16 +82,6 @@ static void config_end_include(void)
 #endif
 
 %}
-%option noinput
-%option nounput
-%{
-#ifndef YY_NO_UNPUT
-#define YY_NO_UNPUT 1
-#endif
-#ifndef YY_NO_INPUT
-#define YY_NO_INPUT 1
-#endif
-%}
 
 SPACE   [ \t]
 LETTER  [a-zA-Z]
@@ -124,10 +116,10 @@ ipv6-edns-size{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_IPV6_EDNS_SIZE;}
 pidfile{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_PIDFILE;}
 port{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_PORT;}
 statistics{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_STATISTICS;}
+zone-stats-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_ZONESTATSFILE;}
 chroot{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_CHROOT;}
 username{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_USERNAME;}
 zonesdir{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_ZONESDIR;}
-zonelistfile{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_ZONELISTFILE;}
 difffile{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_DIFFFILE;}
 xfrdfile{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_XFRDFILE;}
 xfrd-reload-timeout{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_XFRD_RELOAD_TIMEOUT;}
@@ -144,18 +136,14 @@ allow-axfr-fallback{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_ALLOW_AXFR_F
 key{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_KEY;}
 algorithm{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_ALGORITHM;}
 secret{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_SECRET;}
-pattern{COLON}		{ LEXOUT(("v(%s) ", yytext)); return VAR_PATTERN;}
-include-pattern{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_INCLUDEPATTERN;}
-remote-control{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_REMOTE_CONTROL;}
-control-enable{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_ENABLE;}
-control-interface{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_INTERFACE;}
-control-port{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_PORT;}
-server-key-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_SERVER_KEY_FILE;}
-server-cert-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_SERVER_CERT_FILE;}
-control-key-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_KEY_FILE;}
-control-cert-file{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_CONTROL_CERT_FILE;}
 AXFR			{ LEXOUT(("v(%s) ", yytext)); return VAR_AXFR;}
 UDP			{ LEXOUT(("v(%s) ", yytext)); return VAR_UDP;}
+verify-ip-address{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_VERIFY_IP_ADDRESS;}
+verify-port{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_VERIFY_PORT;}
+verifier-count{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_VERIFIER_COUNT;}
+verifier{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_VERIFIER;}
+verifier-feed-zone{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_VERIFIER_FEED_ZONE;}
+verifier-timeout{COLON}	{ LEXOUT(("v(%s) ", yytext)); return VAR_VERIFIER_TIMEOUT;}
 {NEWLINE}		{ LEXOUT(("NL\n")); cfg_parser->line++;}
 
 	/* Quoted strings. Strip leading and ending quotes */

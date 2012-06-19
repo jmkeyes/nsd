@@ -1,7 +1,7 @@
 /*
  * nsd.c -- nsd(8)
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -41,9 +41,9 @@
 #include <unistd.h>
 
 #include "nsd.h"
+#include "namedb.h"
 #include "options.h"
 #include "tsig.h"
-#include "remote.h"
 
 /* The server handler... */
 static struct nsd nsd;
@@ -58,8 +58,8 @@ static void error(const char *format, ...) ATTR_FORMAT(printf, 1, 2);
 static void
 usage (void)
 {
-	fprintf(stderr, "Usage: nsd [OPTION]...\n");
-	fprintf(stderr, "Name Server Daemon.\n\n");
+	fprintf(stderr, "Usage: credns [OPTION]...\n");
+	fprintf(stderr, "DNS SEc proXY.\n\n");
 	fprintf(stderr,
 		"Supported options:\n"
 		"  -4                   Only listen to IPv4 connections.\n"
@@ -107,7 +107,7 @@ version(void)
 	fprintf(stderr, "%s version %s\n", PACKAGE_NAME, PACKAGE_VERSION);
 	fprintf(stderr, "Written by NLnet Labs.\n\n");
 	fprintf(stderr,
-		"Copyright (C) 2001-2006 NLnet Labs.  This is free software.\n"
+		"Copyright (C) 2001-2011 NLnet Labs.  This is free software.\n"
 		"There is NO warranty; not even for MERCHANTABILITY or FITNESS\n"
 		"FOR A PARTICULAR PURPOSE.\n");
 	exit(0);
@@ -158,6 +158,155 @@ get_ip_port_frm_str(const char* arg, const char** hostname,
         *hostname = arg;
 }
 
+/* Set up the address info structures with real interface/port data.
+ */
+void setup_address_info(const nsd_type* nsd, int n, const char** nodes,
+	struct addrinfo* hints, struct nsd_socket* udp,
+	const char* default_udp_service, struct nsd_socket* tcp,
+	const char* default_tcp_service)
+{
+	int r;
+	const char* node = NULL;
+	const char* service = NULL;
+
+	for(; n--; nodes++, hints++, udp++, tcp++) {
+
+		if(*nodes) {
+			hints->ai_flags |= AI_NUMERICHOST;
+		}
+		get_ip_port_frm_str(*nodes, &node, &service);
+
+		hints->ai_socktype = SOCK_DGRAM;
+
+		if((r = getaddrinfo(node,
+				     service ? service : default_udp_service,
+				     hints, &udp->addr)) != 0) {
+#ifdef INET6
+			if(nsd->grab_ip6_optional &&
+					hints->ai_family == AF_INET6) {
+
+				log_msg(LOG_WARNING,
+					"No IPv6, fallback to IPv4. "
+					"getaddrinfo: %s",
+					(r == EAI_SYSTEM) ? strerror(errno)
+							  : gai_strerror(r));
+
+				continue;
+			}
+#endif
+			error("cannot parse address '%s': getaddrinfo: %s %s",
+				(*nodes) ? *nodes : "(null)", gai_strerror(r),
+				(r == EAI_SYSTEM) ? strerror(errno) : "");
+		}
+
+		hints->ai_socktype = SOCK_STREAM;
+
+		if((r = getaddrinfo(node,
+					service ? service : default_tcp_service,
+					hints, &tcp->addr)) != 0) {
+
+			error("cannot parse address '%s': getaddrinfo: %s %s",
+				(*nodes) ? *nodes : "(null)", gai_strerror(r),
+				(r == EAI_SYSTEM) ? strerror(errno) : "");
+		}
+	}
+}
+
+
+void setup_verifier_environment(nsd_type* nsd, size_t bufsz)
+{
+	char* buf;
+	char* ptr;
+
+	char* ip6addr;
+	char* ip6port;
+	char* ip6end;
+
+	char* ip4addr;
+	char* ip4port;
+	char* ip4end;
+
+	char* ipaddr;
+	char* ipport;
+
+	char host[NI_MAXHOST];
+	char serv[NI_MAXSERV];
+	size_t i;
+	int r;
+	size_t hl, sl;
+
+	ip6addr = ip6port = ip6end = ip4addr = ip4port = ip4end = "";
+
+	if(bufsz == 0) {
+		bufsz = 46 * nsd->verify_ifs;
+	}
+
+	buf = region_alloc(nsd->region, bufsz);
+	*buf = 0;
+	ptr = buf;
+
+	for(i = 0; i < nsd->verify_ifs; i++) {
+		r = getnameinfo(nsd->verify_udp[i].addr->ai_addr,
+				nsd->verify_udp[i].addr->ai_addrlen,
+				host, NI_MAXHOST, serv, NI_MAXSERV,
+				NI_NUMERICHOST | NI_NUMERICSERV);
+		if(r != 0) {
+			log_msg(LOG_ERR, "error in getnameinfo: %s",
+					 gai_strerror(r));
+			continue;
+		}
+		hl = strlen(host);
+		sl = strlen(serv);
+		/* if space needed > space available */
+		if(hl + sl + 2 > bufsz - (ptr - buf)) {
+			/* we need a bigger bugger */
+			region_recycle(nsd->region, buf, bufsz);
+			setup_verifier_environment(nsd, bufsz * 2);
+			return;
+		}
+		if(ptr > buf) {
+			*ptr++ = ' ';
+		}
+		ipaddr = ptr;
+		strcpy(ptr, host);
+		ptr += hl;
+		*ptr++ = '@';
+		ipport = ptr;
+		strcpy(ptr, serv);
+		ptr += sl;
+
+		if(nsd->verify_udp[i].addr->ai_family == AF_INET6 && !*ip6addr){
+			ip6addr = ipaddr;
+			ip6port = ipport;
+			ip6end = ptr;
+		} else if(!*ip4addr) {
+			ip4addr = ipaddr;
+			ip4port = ipport;
+			ip4end = ptr;
+		}
+
+	}
+	setenv("VERIFY_IP_ADDRESSES", buf, 1);
+	if(*ip6addr) {
+		ip6port[-1] = 0;
+		*ip6end     = 0;
+		setenv("VERIFY_IPV6_ADDRESS", ip6addr, 1);
+		setenv("VERIFY_IPV6_PORT", ip6port, 1);
+		setenv("VERIFY_IP_ADDRESS", ip6addr, 1);
+		setenv("VERIFY_PORT", ip6port, 1);
+	}
+	if(*ip4addr) {
+		ip4port[-1] = 0;
+		*ip4end     = 0;
+		setenv("VERIFY_IPV4_ADDRESS", ip4addr, 1);
+		setenv("VERIFY_IPV4_PORT", ip4port, 1);
+		if(!*ip6addr) {
+			setenv("VERIFY_IP_ADDRESS", ip4addr, 1);
+			setenv("VERIFY_PORT", ip4port, 1);
+		}
+	}
+	region_recycle(nsd->region, buf, bufsz);
+}
 
 /*
  * Fetch the nsd parent process id from the nsd pidfile
@@ -287,7 +436,7 @@ sig_handler(int sig)
 		nsd.signal_hint_child = 1;
 		return;
 	case SIGHUP:
-		nsd.signal_hint_reload_hup = 1;
+		nsd.signal_hint_reload = 1;
 		return;
 	case SIGALRM:
 		nsd.signal_hint_stats = 1;
@@ -319,17 +468,73 @@ sig_handler(int sig)
  *
  */
 #ifdef BIND8_STATS
+
+#ifdef USE_ZONE_STATS
+static void
+fprintf_zone_stats(FILE* fd, zone_type* zone, time_t now)
+{
+	int i;
+
+	/* NSTATS */
+	fprintf(fd, "NSTATS %s %lu",
+		dname_to_string(domain_dname(zone->apex),0),
+		(unsigned long) now);
+
+	for (i = 0; i <= 255; i++) {
+		if (zone->st.qtype[i] != 0) {
+			fprintf(fd, " %s=%lu", rrtype_to_string(i),
+				zone->st.qtype[i]);
+		}
+	}
+	fprintf(fd, "\n");
+
+	/* XSTATS */
+	fprintf(fd, "XSTATS %s %lu"
+		" RR=%lu RNXD=%lu RFwdR=%lu RDupR=%lu RFail=%lu RFErr=%lu RErr=%lu RAXFR=%lu"
+		" RLame=%lu ROpts=%lu SSysQ=%lu SAns=%lu SFwdQ=%lu SDupQ=%lu SErr=%lu RQ=%lu"
+		" RIQ=%lu RFwdQ=%lu RDupQ=%lu RTCP=%lu SFwdR=%lu SFail=%lu SFErr=%lu SNaAns=%lu"
+		" SNXD=%lu RUQ=%lu RURQ=%lu RUXFR=%lu RUUpd=%lu\n",
+		dname_to_string(domain_dname(zone->apex),0),
+		(unsigned long) now,
+		zone->st.dropped,
+		(unsigned long)0, (unsigned long)0,
+		(unsigned long)0, (unsigned long)0,
+		(unsigned long)0, (unsigned long)0,
+		zone->st.raxfr,
+		(unsigned long)0, (unsigned long)0,
+		(unsigned long)0,
+		zone->st.qudp + zone->st.qudp6 - zone->st.dropped,
+		(unsigned long)0, (unsigned long)0,
+		zone->st.txerr,
+		zone->st.opcode[OPCODE_QUERY],
+		zone->st.opcode[OPCODE_IQUERY],
+		zone->st.wrongzone,
+		(unsigned long)0,
+		zone->st.ctcp + zone->st.ctcp6,
+		(unsigned long)0,
+		zone->st.rcode[RCODE_SERVFAIL],
+		zone->st.rcode[RCODE_FORMAT],
+		zone->st.nona,
+		zone->st.rcode[RCODE_NXDOMAIN],
+		(unsigned long)0, (unsigned long)0,
+		(unsigned long)0,
+		zone->st.opcode[OPCODE_UPDATE]);
+}
+#endif
+
 void
 bind8_stats (struct nsd *nsd)
 {
+#ifdef USE_ZONE_STATS
+	FILE* fd;
+	zone_type* zone;
+#endif
 	char buf[MAXSYSLOGMSGLEN];
 	char *msg, *t;
 	int i, len;
 
 	/* Current time... */
 	time_t now;
-	if(!nsd->st.period)
-		return;
 	time(&now);
 
 	/* NSTATS */
@@ -376,6 +581,23 @@ bind8_stats (struct nsd *nsd)
 			(unsigned long)0, (unsigned long)0, (unsigned long)0, nsd->st.opcode[OPCODE_UPDATE]);
 	}
 
+#ifdef USE_ZONE_STATS
+	/* ZSTATS */
+	log_msg(LOG_INFO, "ZSTATS %s", nsd->zonestatsfile);
+	if ((fd = fopen(nsd->zonestatsfile, "a")) ==  NULL ) {
+		log_msg(LOG_ERR, "cannot open zone statsfile %s: %s",
+			nsd->zonestatsfile, strerror(errno));
+		return;
+	}
+	/* Write stats per zone */
+	zone = nsd->db->zones;
+	while (zone) {
+		fprintf_zone_stats(fd, zone, now);
+		zone = zone->next;
+	}
+	fclose(fd);
+#endif
+
 }
 #endif /* BIND8_STATS */
 
@@ -390,8 +612,9 @@ main(int argc, char *argv[])
 	pid_t	oldpid;
 	size_t i;
 	struct sigaction action;
+	FILE* dbfd;
 #ifdef HAVE_GETPWNAM
-	struct passwd *pwd = NULL;
+	struct passwd *pwd;
 #endif /* HAVE_GETPWNAM */
 
 	/* For initialising the address info structures */
@@ -401,11 +624,18 @@ main(int argc, char *argv[])
 	const char *udp_port = 0;
 	const char *tcp_port = 0;
 
+	static struct addrinfo verify_hints[MAX_INTERFACES];
+	static const char *verify_nodes[MAX_INTERFACES];
+	const char *verify_port = 0;
+
 	const char *configfile = CONFIGFILE;
 
 	char* argv0 = (argv0 = strrchr(argv[0], '/')) ? argv0 + 1 : argv[0];
 
-	log_init("nsd");
+	/* Credns only. To create a new database file when needed */
+	struct namedb *db; 
+
+	log_init("credns");
 
 	/* Initialize the server handler... */
 	memset(&nsd, 0, sizeof(struct nsd));
@@ -413,12 +643,20 @@ main(int argc, char *argv[])
 	nsd.dbfile	= 0;
 	nsd.pidfile	= 0;
 	nsd.server_kind = NSD_SERVER_MAIN;
+#ifdef USE_ZONE_STATS
+	nsd.zonestatsfile = 0;
+#endif
 
 	for (i = 0; i < MAX_INTERFACES; i++) {
 		memset(&hints[i], 0, sizeof(hints[i]));
 		hints[i].ai_family = DEFAULT_AI_FAMILY;
 		hints[i].ai_flags = AI_PASSIVE;
 		nodes[i] = NULL;
+
+		memset(&verify_hints[i], 0, sizeof(verify_hints[i]));
+		verify_hints[i].ai_family = DEFAULT_AI_FAMILY;
+		verify_hints[i].ai_flags = AI_PASSIVE;
+		verify_nodes[i] = NULL;
 	}
 
 	nsd.identity	= 0;
@@ -455,12 +693,14 @@ main(int argc, char *argv[])
 		case '4':
 			for (i = 0; i < MAX_INTERFACES; ++i) {
 				hints[i].ai_family = AF_INET;
+				verify_hints[i].ai_family = AF_INET;
 			}
 			break;
 		case '6':
 #ifdef INET6
 			for (i = 0; i < MAX_INTERFACES; ++i) {
 				hints[i].ai_family = AF_INET6;
+				verify_hints[i].ai_family = AF_INET6;
 			}
 #else /* !INET6 */
 			error("IPv6 support not enabled.");
@@ -582,29 +822,23 @@ main(int argc, char *argv[])
 		error("server identity too long (%u characters)",
 		      (unsigned) strlen(nsd.identity));
 	}
-	if(!tsig_init(nsd.region))
-		error("init tsig failed");
 
 	/* Read options */
-	nsd.options = nsd_options_create(region_create_custom(xalloc, free,
-		DEFAULT_CHUNK_SIZE, DEFAULT_LARGE_OBJECT_SIZE,
-		DEFAULT_INITIAL_CLEANUP_SIZE, 1));
-	if(!parse_options_file(nsd.options, configfile, NULL, NULL)) {
+	nsd.options = nsd_options_create(region_create(xalloc, free));
+	if(!parse_options_file(nsd.options, configfile)) {
 		error("could not read config: %s\n", configfile);
-	}
-	if(!parse_zone_list_file(nsd.options, nsd.options->zonelistfile)) {
-		error("could not read zonelist file %s\n",
-			nsd.options->zonelistfile);
 	}
 	if(nsd.options->ip4_only) {
 		for (i = 0; i < MAX_INTERFACES; ++i) {
 			hints[i].ai_family = AF_INET;
+			verify_hints[i].ai_family = AF_INET;
 		}
 	}
 #ifdef INET6
 	if(nsd.options->ip6_only) {
 		for (i = 0; i < MAX_INTERFACES; ++i) {
 			hints[i].ai_family = AF_INET6;
+			verify_hints[i].ai_family = AF_INET6;
 		}
 	}
 #endif /* INET6 */
@@ -673,10 +907,43 @@ main(int argc, char *argv[])
 			tcp_port = TCP_PORT;
 		}
 	}
+	if(verify_port == 0) { /* anticipate commandline option */
+		if(nsd.options->verify_port && *nsd.options->verify_port)  {
+			verify_port = nsd.options->verify_port;
+		} else {
+			verify_port = VERIFY_PORT;
+		}
+	}
+	if(nsd.options->verify_ip_addresses)
+	{
+		ip_address_option_t* ip = nsd.options->verify_ip_addresses;
+		while(ip) {
+			if(*verify_port || strchr(ip->address, '@')) {
+				if(nsd.ifs+nsd.verify_ifs < MAX_INTERFACES) {
+					verify_nodes[nsd.verify_ifs] =
+						ip->address;
+					++nsd.verify_ifs;
+				} else {
+					error("too many interfaces "
+					      "('verify_ip_address:') "
+					      " specified."
+					     );
+					break;
+				}
+			}
+			ip = ip->next;
+		}
+	}
+
 #ifdef BIND8_STATS
 	if(nsd.st.period == 0) {
 		nsd.st.period = nsd.options->statistics;
 	}
+#ifdef USE_ZONE_STATS
+	if (nsd.zonestatsfile == 0) {
+		nsd.zonestatsfile = nsd.options->zonestatsfile;
+	}
+#endif /* USE_ZONE_STATS */
 #endif /* BIND8_STATS */
 #ifdef HAVE_CHROOT
 	if(nsd.chrootdir == 0) nsd.chrootdir = nsd.options->chroot;
@@ -739,6 +1006,8 @@ main(int argc, char *argv[])
 		nsd.children[i].need_to_send_QUIT = 0;
 		nsd.children[i].need_to_exit = 0;
 		nsd.children[i].has_exited = 0;
+		nsd.children[i].dirty_zones = stack_create(nsd.region,
+			nsd_options_num_zones(nsd.options));
 	}
 
 	nsd.this_child = NULL;
@@ -773,39 +1042,15 @@ main(int argc, char *argv[])
 #endif /* INET6 */
 	}
 
-	/* Set up the address info structures with real interface/port data */
-	for (i = 0; i < nsd.ifs; ++i) {
-		int r;
-		const char* node = NULL;
-		const char* service = NULL;
+	setup_address_info(&nsd, nsd.ifs, nodes, hints,
+			nsd.udp, udp_port, nsd.tcp, tcp_port);
 
-		/* We don't perform name-lookups */
-		if (nodes[i] != NULL)
-			hints[i].ai_flags |= AI_NUMERICHOST;
-		get_ip_port_frm_str(nodes[i], &node, &service);
+	setup_address_info(&nsd, nsd.verify_ifs, verify_nodes, verify_hints,
+			nsd.verify_udp, verify_port,
+			nsd.verify_tcp, verify_port);
 
-		hints[i].ai_socktype = SOCK_DGRAM;
-		if ((r=getaddrinfo(node, (service?service:udp_port), &hints[i], &nsd.udp[i].addr)) != 0) {
-#ifdef INET6
-			if(nsd.grab_ip6_optional && hints[0].ai_family == AF_INET6) {
-				log_msg(LOG_WARNING, "No IPv6, fallback to IPv4. getaddrinfo: %s",
-				r==EAI_SYSTEM?strerror(errno):gai_strerror(r));
-				continue;
-			}
-#endif
-			error("cannot parse address '%s': getaddrinfo: %s %s",
-				nodes[i]?nodes[i]:"(null)",
-				gai_strerror(r),
-				r==EAI_SYSTEM?strerror(errno):"");
-		}
-
-		hints[i].ai_socktype = SOCK_STREAM;
-		if ((r=getaddrinfo(node, (service?service:tcp_port), &hints[i], &nsd.tcp[i].addr)) != 0) {
-			error("cannot parse address '%s': getaddrinfo: %s %s",
-				nodes[i]?nodes[i]:"(null)",
-				gai_strerror(r),
-				r==EAI_SYSTEM?strerror(errno):"");
-		}
+	if(nsd.verify_ifs) {
+		setup_verifier_environment(&nsd, 0);
 	}
 
 	/* Parse the username into uid and gid */
@@ -843,6 +1088,8 @@ main(int argc, char *argv[])
 	/* endpwent(); */
 #endif /* HAVE_GETPWNAM */
 
+	if(!tsig_init(nsd.region))
+		error("init tsig failed");
 #if defined(HAVE_SSL)
 	key_options_tsig_add(nsd.options);
 #endif
@@ -869,9 +1116,6 @@ main(int argc, char *argv[])
 		} else if (strncmp(nsd.chrootdir, nsd.options->xfrdfile, l) != 0) {
 			error("%s is not relative to %s: chroot not possible",
 				nsd.options->xfrdfile, nsd.chrootdir);
-		} else if (strncmp(nsd.chrootdir, nsd.options->zonelistfile, l) != 0) {
-			error("%s is not relative to %s: chroot not possible",
-				nsd.options->zonelistfile, nsd.chrootdir);
 		} else if (strncmp(nsd.chrootdir, nsd.options->difffile, l) != 0) {
 			error("%s is not relative to %s: chroot not possible",
 				nsd.options->difffile, nsd.chrootdir);
@@ -916,7 +1160,8 @@ main(int argc, char *argv[])
 			/* Child */
 			break;
 		case -1:
-			error("fork() failed: %s", strerror(errno));
+			log_msg(LOG_ERR, "fork() failed: %s", strerror(errno));
+			exit(1);
 		default:
 			/* Parent is done */
 			exit(0);
@@ -924,7 +1169,8 @@ main(int argc, char *argv[])
 
 		/* Detach ourselves... */
 		if (setsid() == -1) {
-			error("setsid() failed: %s", strerror(errno));
+			log_msg(LOG_ERR, "setsid() failed: %s", strerror(errno));
+			exit(1);
 		}
 
 		if ((fd = open("/dev/null", O_RDWR, 0)) != -1) {
@@ -957,7 +1203,6 @@ main(int argc, char *argv[])
 	nsd.mode = NSD_RUN;
 	nsd.signal_hint_child = 0;
 	nsd.signal_hint_reload = 0;
-	nsd.signal_hint_reload_hup = 0;
 	nsd.signal_hint_quit = 0;
 	nsd.signal_hint_shutdown = 0;
 	nsd.signal_hint_stats = 0;
@@ -965,17 +1210,11 @@ main(int argc, char *argv[])
 	nsd.quit_sync_done = 0;
 
 	/* Initialize the server... */
-	if (server_init(&nsd) != 0) {
-		error("server initialization failed, %s could "
+	if(!server_init(&nsd)) {
+		log_msg(LOG_ERR, "server initialization failed, %s could "
 			"not be started", argv0);
+		exit(1);
 	}
-#if defined(HAVE_SSL)
-	if(nsd.options->control_enable) {
-		/* read ssl keys while superuser and outside chroot */
-		if(!(nsd.rc = daemon_remote_create(nsd.options)))
-			error("could not perform remote control setup");
-	}
-#endif /* HAVE_SSL */
 
 	/* Set user context */
 #ifdef HAVE_GETPWNAM
@@ -1011,11 +1250,11 @@ main(int argc, char *argv[])
 		nsd.dbfile += l;
 		nsd.pidfile += l;
 		nsd.options->xfrdfile += l;
-		nsd.options->zonelistfile += l;
 		nsd.options->difffile += l;
 
 		if (chroot(nsd.chrootdir)) {
-			error("unable to chroot: %s", strerror(errno));
+			log_msg(LOG_ERR, "unable to chroot: %s", strerror(errno));
+			exit(1);
 		}
 		DEBUG(DEBUG_IPC,1, (LOG_INFO, "changed root directory to %s",
 			nsd.chrootdir));
@@ -1026,6 +1265,23 @@ main(int argc, char *argv[])
 
 	DEBUG(DEBUG_IPC,1, (LOG_INFO, "file rotation on %s %sabled",
 		nsd.log_filename, nsd.file_rotation_ok?"en":"dis"));
+
+	/* Check if nsd.db exists  */
+	if ((dbfd = fopen(nsd.dbfile, "r")) == NULL) {
+		/* With credns it will not be created with zonec, so... */
+		if ((db = namedb_new(nsd.dbfile)) == NULL) {
+			log_msg(LOG_ERR, "error creating the database (%s): %s\n", nsd.dbfile, strerror(errno));
+			exit(1);
+		} else if (namedb_save(db) != 0) {
+			log_msg(LOG_ERR, "error writing the database (%s): %s\n", db->filename, strerror(errno));
+			namedb_discard(db);
+			exit(1);
+		} else {
+			log_msg(LOG_NOTICE, "new database created (%s)\n", db->filename);
+		}
+	} else {
+		fclose(dbfd);
+	}
 
 	/* Write pidfile */
 	if (writepid(&nsd) == -1) {
@@ -1068,19 +1324,11 @@ main(int argc, char *argv[])
 	}
 #endif /* HAVE_GETPWNAM */
 
-	if(nsd.server_kind == NSD_SERVER_MAIN) {
-		server_prepare_xfrd(&nsd);
-		/* fork xfrd before reading database, so it does not get
-		 * the memory size of the database */
-		server_start_xfrd(&nsd, 0, 0);
-	}
 	if (server_prepare(&nsd) != 0) {
-		unlinkpid(nsd.pidfile);
-		error("server preparation failed, %s could "
+		log_msg(LOG_ERR, "server preparation failed, %s could "
 			"not be started", argv0);
-	}
-	if(nsd.server_kind == NSD_SERVER_MAIN) {
-		server_send_soa_xfrd(&nsd, 0);
+		unlinkpid(nsd.pidfile);
+		exit(1);
 	}
 
 	/* Really take off */

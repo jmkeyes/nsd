@@ -2,7 +2,7 @@
 # BSD licensed (see LICENSE file).
 #
 # Version 4
-# 2011-04-06: tpk wait_logfile to wait (with timeout) for a logfile line to appear
+# 2011-04-06: wait_logfile to wait (with timeout) for a logfile line to appear
 # 2011-02-23: get_pcat for PCAT, PCAT_DIFF and PCAT_PRINT defines.
 # 2011-02-18: ports check on BSD,Solaris. wait_nsd_up.
 # 2011-02-11: first version.
@@ -217,7 +217,7 @@ wait_petal_up () {
 # string nsd start in log.
 # $1 : logfilename that is watched.
 wait_nsd_up () {
-	wait_server_up "$1" " started (NSD "
+	wait_server_up "$1" " started (credns "
 }
 
 # wait for server to go up, pass <logfilename> <string to watch> <badstr>
@@ -280,5 +280,35 @@ set_doxygen_path () {
 	if test -x '/home/wouter/bin/doxygen'; then
 	        export PATH="/home/wouter/bin:$PATH"
 	fi
+}
+
+# wait for a zone serial number to get a certain number within a certain time
+# $1: zone
+# $2: serial to be expected
+# $3: server to query
+# $4: port
+# $5: # times to try (# seconds dig is ran)
+wait_for_soa_serial () {
+	TS_START=`date +%s`
+	for i in `eval echo {1..$5}`
+	do
+		SERIAL=`dig -p $4 @$3 $1 SOA +short | awk '{ print $3 }'`
+		if test "$?" != "0"
+		then
+			echo "** \"dig -p $4 @$3 $1 SOA +short\" failed!"
+			return 1
+		fi
+		if test "$SERIAL" = "$2"
+		then
+			TS_END=`date +%s`
+			echo "*** Serial $2 for zone $1 was seen in $i tries" \
+				"(`expr $TS_END - $TS_START` seconds)."
+			return 0
+		fi
+		sleep 1
+	done
+	echo "** Serial $2 for zone $1 was not seen in $5 tries"\
+		"(did see: $SERIAL)"
+	return 1
 }
 

@@ -1,7 +1,7 @@
 /*
  * server.c -- nsd(8) network input/output
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -41,10 +41,7 @@
 #include "difffile.h"
 #include "nsec3.h"
 #include "ipc.h"
-#include "udb.h"
-#include "remote.h"
-
-#define RELOAD_SYNC_TIMEOUT 25 /* seconds */
+#include "verify.h"
 
 /*
  * Data for the UDP handlers.
@@ -90,32 +87,32 @@ struct tcp_handler_data
 	 * data, including this structure.  This region is destroyed
 	 * when the connection is closed.
 	 */
-	region_type*		region;
+	region_type     *region;
 
 	/*
 	 * The global nsd structure.
 	 */
-	struct nsd*			nsd;
+	struct nsd      *nsd;
 
 	/*
 	 * The current query data for this TCP connection.
 	 */
-	query_type*			query;
+	query_type      *query;
 
 	/*
 	 * These fields are used to enable the TCP accept handlers
 	 * when the number of TCP connection drops below the maximum
 	 * number of TCP connections.
 	 */
-	size_t				tcp_accept_handler_count;
-	netio_handler_type*	tcp_accept_handlers;
+	size_t              tcp_accept_handler_count;
+	netio_handler_type *tcp_accept_handlers;
 
 	/*
 	 * The query_state is used to remember if we are performing an
 	 * AXFR, if we're done processing, or if we should discard the
 	 * query and connection.
 	 */
-	query_state_type	query_state;
+	query_state_type query_state;
 
 	/*
 	 * The bytes_transmitted field is used to remember the number
@@ -123,7 +120,7 @@ struct tcp_handler_data
 	 * packet.  The count includes the two additional bytes used
 	 * to specify the packet length on a TCP connection.
 	 */
-	size_t				bytes_transmitted;
+	size_t           bytes_transmitted;
 
 	/*
 	 * The number of queries handled by this specific TCP connection.
@@ -186,6 +183,12 @@ static void set_children_stats(struct nsd* nsd);
 static void configure_handler_event_types(size_t count,
 					  netio_handler_type *handlers,
 					  netio_event_types_type event_types);
+
+/*
+ * start xfrdaemon (again).
+ */
+static pid_t
+server_start_xfrd(struct nsd *nsd, netio_handler_type* handler);
 
 static uint16_t *compressed_dname_offsets = 0;
 static uint32_t compression_table_capacity = 0;
@@ -256,6 +259,8 @@ restart_child_servers(struct nsd *nsd, region_type* region, netio_type* netio,
 					ipc_data->got_bytes = 0;
 					ipc_data->total_bytes = 0;
 					ipc_data->acl_num = 0;
+					ipc_data->busy_writing_zone_state = 0;
+					ipc_data->write_conn = xfrd_tcp_create(region);
 					nsd->children[i].handler = (struct netio_handler*) region_alloc(
 						region, sizeof(struct netio_handler));
 					nsd->children[i].handler->fd = nsd->children[i].child_fd;
@@ -269,20 +274,17 @@ restart_child_servers(struct nsd *nsd, region_type* region, netio_type* netio,
 				ipc_data = (struct main_ipc_handler_data*)
 					nsd->children[i].handler->user_data;
 				ipc_data->forward_mode = 0;
+				ipc_data->busy_writing_zone_state = 0;
 				/* restart - update fd */
 				nsd->children[i].handler->fd = nsd->children[i].child_fd;
 				break;
 			case 0: /* CHILD */
-				/* the child need not be able to access the
-				 * nsd.db file */
-				namedb_close_udb(nsd->db);
 				nsd->pid = 0;
 				nsd->child_count = 0;
 				nsd->server_kind = nsd->children[i].kind;
 				nsd->this_child = &nsd->children[i];
 				/* remove signal flags inherited from parent
 				   the parent will handle them. */
-				nsd->signal_hint_reload_hup = 0;
 				nsd->signal_hint_reload = 0;
 				nsd->signal_hint_child = 0;
 				nsd->signal_hint_quit = 0;
@@ -345,47 +347,55 @@ initialize_dname_compression_tables(struct nsd *nsd)
 }
 
 /*
- * Initialize the server, create and bind the sockets.
- *
+ * Creating and binding the udp sockets.
+ * Used to initialize the server's ordinary and verify sockets.
  */
 int
-server_init(struct nsd *nsd)
+init_make_udp_sockets(struct nsd* nsd, struct nsd_socket* udp_socket, size_t n)
 {
-	size_t i;
-#if defined(SO_REUSEADDR) || (defined(INET6) && (defined(IPV6_V6ONLY) || defined(IPV6_USE_MIN_MTU) || defined(IPV6_MTU)))
+#if defined(SO_REUSEADDR) || (defined(INET6) && (defined(IPV6_V6ONLY) || \
+						 defined(IPV6_USE_MIN_MTU) || \
+						 defined(IPV6_MTU)))
 	int on = 1;
 #endif
+	for(; n--; udp_socket++) {
 
-	/* UDP */
-
-	/* Make a socket... */
-	for (i = 0; i < nsd->ifs; i++) {
-		if (!nsd->udp[i].addr) {
-			nsd->udp[i].s = -1;
+		if(!udp_socket->addr) {
+			udp_socket->s = -1;
 			continue;
 		}
-		if ((nsd->udp[i].s = socket(nsd->udp[i].addr->ai_family, nsd->udp[i].addr->ai_socktype, 0)) == -1) {
+		if((udp_socket->s = socket(udp_socket->addr->ai_family,
+					   udp_socket->addr->ai_socktype,
+					   0)) == -1) {
 #if defined(INET6)
-			if (nsd->udp[i].addr->ai_family == AF_INET6 &&
-				errno == EAFNOSUPPORT && nsd->grab_ip6_optional) {
-				log_msg(LOG_WARNING, "fallback to UDP4, no IPv6: not supported");
+			if(udp_socket->addr->ai_family == AF_INET6 &&
+					errno == EAFNOSUPPORT &&
+					nsd -> grab_ip6_optional) { 
+
+				log_msg(LOG_WARNING,
+					"fallback to UDP4, no IPv6: "
+					"not supported");
 				continue;
 			}
 #endif /* INET6 */
-			log_msg(LOG_ERR, "can't create a socket: %s", strerror(errno));
-			return -1;
+			log_msg(LOG_ERR, "can't create a socket: %s",
+					strerror(errno));
+			return 0;
 		}
 
 #if defined(INET6)
-		if (nsd->udp[i].addr->ai_family == AF_INET6) {
+
+		if(udp_socket->addr->ai_family == AF_INET6) {
+
 # if defined(IPV6_V6ONLY)
-			if (setsockopt(nsd->udp[i].s,
-				       IPPROTO_IPV6, IPV6_V6ONLY,
-				       &on, sizeof(on)) < 0)
-			{
-				log_msg(LOG_ERR, "setsockopt(..., IPV6_V6ONLY, ...) failed: %s",
-					strerror(errno));
-				return -1;
+
+			if(setsockopt(udp_socket->s, IPPROTO_IPV6, IPV6_V6ONLY,
+					&on, sizeof(on)) < 0) {
+
+				log_msg(LOG_ERR,
+					"setsockopt(..., IPV6_V6ONLY, ...) "
+					"failed: %s", strerror(errno));
+				return 0;
 			}
 # endif
 # if defined(IPV6_USE_MIN_MTU)
@@ -397,13 +407,12 @@ server_init(struct nsd *nsd)
 			 * EDNS0 message length can be larger if the
 			 * network stack supports IPV6_USE_MIN_MTU.
 			 */
-			if (setsockopt(nsd->udp[i].s,
-				       IPPROTO_IPV6, IPV6_USE_MIN_MTU,
-				       &on, sizeof(on)) < 0)
-			{
-				log_msg(LOG_ERR, "setsockopt(..., IPV6_USE_MIN_MTU, ...) failed: %s",
-					strerror(errno));
-				return -1;
+			if(setsockopt(udp_socket->s, IPPROTO_IPV6,
+					IPV6_USE_MIN_MTU, &on, sizeof(on)) < 0){ 
+				log_msg(LOG_ERR,
+					"setsockopt(..., IPV6_USE_MIN_MTU, "
+					"...) failed: %s", strerror(errno));
+				return 0;
 			}
 # elif defined(IPV6_MTU)
 			/*
@@ -411,36 +420,43 @@ server_init(struct nsd *nsd)
 			 * so set the MTU equal to the MIN MTU to get the same.
 			 */
 			on = IPV6_MIN_MTU;
-			if (setsockopt(nsd->udp[i].s, IPPROTO_IPV6, IPV6_MTU, 
-				&on, sizeof(on)) < 0)
-			{
-				log_msg(LOG_ERR, "setsockopt(..., IPV6_MTU, ...) failed: %s",
-					strerror(errno));
-				return -1;
+			if(setsockopt(udp_socket->s, IPPROTO_IPV6, IPV6_MTU,
+					&on, sizeof(on)) < 0) {
+
+				log_msg(LOG_ERR,
+					"setsockopt(..., IPV6_MTU, ...) "
+					"failed: %s", strerror(errno));
+				return 0;
 			}
 			on = 1;
 # endif
 		}
 #endif
 #if defined(AF_INET)
-		if (nsd->udp[i].addr->ai_family == AF_INET) {
+
+		if(udp_socket->addr->ai_family == AF_INET) {
+
 #  if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DONT)
 			int action = IP_PMTUDISC_DONT;
-			if (setsockopt(nsd->udp[i].s, IPPROTO_IP, 
-				IP_MTU_DISCOVER, &action, sizeof(action)) < 0)
-			{
-				log_msg(LOG_ERR, "setsockopt(..., IP_MTU_DISCOVER, IP_PMTUDISC_DONT...) failed: %s",
+			if(setsockopt(udp_socket->s, IPPROTO_IP,
+					IP_MTU_DISCOVER, &action,
+					sizeof(action)) < 0) {
+
+				log_msg(LOG_ERR,
+					"setsockopt(..., IP_MTU_DISCOVER, "
+					"IP_PMTUDISC_DONT...) failed: %s",
 					strerror(errno));
-				return -1;
+				return 0;
 			}
 #  elif defined(IP_DONTFRAG)
 			int off = 0;
-			if (setsockopt(nsd->udp[i].s, IPPROTO_IP, IP_DONTFRAG,
-				&off, sizeof(off)) < 0)
-			{
-				log_msg(LOG_ERR, "setsockopt(..., IP_DONTFRAG, ...) failed: %s",
-					strerror(errno));
-				return -1;
+			if(setsockopt(udp_socket->s, IPPROTO_IP, IP_DONTFRAG,
+					&off, sizeof(off)) < 0) {
+
+				log_msg(LOG_ERR,
+					"setsockopt(..., IP_DONTFRAG, ...) "
+					"failed: %s", strerror(errno));
+				return 0;
 			}
 #  endif
 		}
@@ -448,72 +464,121 @@ server_init(struct nsd *nsd)
 		/* set it nonblocking */
 		/* otherwise, on OSes with thundering herd problems, the
 		   UDP recv could block NSD after select returns readable. */
-		if (fcntl(nsd->udp[i].s, F_SETFL, O_NONBLOCK) == -1) {
-			log_msg(LOG_ERR, "cannot fcntl udp: %s", strerror(errno));
+
+		if(fcntl(udp_socket->s, F_SETFL, O_NONBLOCK) == -1) {
+
+			log_msg(LOG_ERR, "cannot fcntl udp: %s",
+					 strerror(errno));
 		}
 
 		/* Bind it... */
-		if (bind(nsd->udp[i].s, (struct sockaddr *) nsd->udp[i].addr->ai_addr, nsd->udp[i].addr->ai_addrlen) != 0) {
-			log_msg(LOG_ERR, "can't bind udp socket: %s", strerror(errno));
-			return -1;
+		if(bind(udp_socket->s,
+				(struct sockaddr *) udp_socket->addr->ai_addr,
+				udp_socket->addr->ai_addrlen) != 0) {
+
+			log_msg(LOG_ERR, "can't bind udp socket: %s",
+					 strerror(errno));
+			return 0;
 		}
 	}
+	return 1;
+}
 
-	/* TCP */
+/*
+ * Creating and binding the tcp sockets.
+ * Used to initialize the server's ordinary and verify sockets.
+ */
+int
+init_make_tcp_sockets(struct nsd* nsd, struct nsd_socket* tcp_socket, size_t n)
+{
+	int on = 1;
 
-	/* Make a socket... */
-	for (i = 0; i < nsd->ifs; i++) {
-		if (!nsd->tcp[i].addr) {
-			nsd->tcp[i].s = -1;
+	for(; n--; tcp_socket++) {
+		if(!tcp_socket->addr) {
+			tcp_socket->s = -1;
 			continue;
 		}
-		if ((nsd->tcp[i].s = socket(nsd->tcp[i].addr->ai_family, nsd->tcp[i].addr->ai_socktype, 0)) == -1) {
+		if((tcp_socket->s = socket(tcp_socket->addr->ai_family,
+						tcp_socket->addr->ai_socktype,
+						0)) == -1) {
 #if defined(INET6)
-			if (nsd->tcp[i].addr->ai_family == AF_INET6 &&
-				errno == EAFNOSUPPORT && nsd->grab_ip6_optional) {
-				log_msg(LOG_WARNING, "fallback to TCP4, no IPv6: not supported");
+			if(tcp_socket->addr->ai_family == AF_INET6 &&
+					errno == EAFNOSUPPORT &&
+					nsd -> grab_ip6_optional) {
+
+				log_msg(LOG_WARNING,
+					"fallback to TCP4, no IPv6: "
+					"not supported");
 				continue;
 			}
 #endif /* INET6 */
-			log_msg(LOG_ERR, "can't create a socket: %s", strerror(errno));
-			return -1;
+			log_msg(LOG_ERR, "can't create a socket: %s",
+					 strerror(errno));
+			return 0;
 		}
 
 #ifdef	SO_REUSEADDR
-		if (setsockopt(nsd->tcp[i].s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0) {
-			log_msg(LOG_ERR, "setsockopt(..., SO_REUSEADDR, ...) failed: %s", strerror(errno));
+
+		if(setsockopt(tcp_socket->s, SOL_SOCKET, SO_REUSEADDR, &on,
+				sizeof(on)) < 0) {
+
+			log_msg(LOG_ERR, "setsockopt(..., SO_REUSEADDR, ...) "
+					 "failed: %s", strerror(errno));
 		}
 #endif /* SO_REUSEADDR */
 
 #if defined(INET6) && defined(IPV6_V6ONLY)
-		if (nsd->tcp[i].addr->ai_family == AF_INET6 &&
-		    setsockopt(nsd->tcp[i].s, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on)) < 0)
-		{
-			log_msg(LOG_ERR, "setsockopt(..., IPV6_V6ONLY, ...) failed: %s", strerror(errno));
-			return -1;
+
+		if(tcp_socket->addr->ai_family == AF_INET6 &&
+				setsockopt(tcp_socket->s, IPPROTO_IPV6,
+					IPV6_V6ONLY, &on, sizeof(on)) < 0) {
+
+			log_msg(LOG_ERR, "setsockopt(..., IPV6_V6ONLY, ...) "
+					 "failed: %s", strerror(errno));
+			return 0;
 		}
 #endif
 		/* set it nonblocking */
 		/* (StevensUNP p463), if tcp listening socket is blocking, then
 		   it may block in accept, even if select() says readable. */
-		if (fcntl(nsd->tcp[i].s, F_SETFL, O_NONBLOCK) == -1) {
-			log_msg(LOG_ERR, "cannot fcntl tcp: %s", strerror(errno));
+		if(fcntl(tcp_socket->s, F_SETFL, O_NONBLOCK) == -1) {
+
+			log_msg(LOG_ERR, "cannot fcntl tcp: %s",
+					strerror(errno));
 		}
 
 		/* Bind it... */
-		if (bind(nsd->tcp[i].s, (struct sockaddr *) nsd->tcp[i].addr->ai_addr, nsd->tcp[i].addr->ai_addrlen) != 0) {
-			log_msg(LOG_ERR, "can't bind tcp socket: %s", strerror(errno));
-			return -1;
+		if(bind(tcp_socket->s,
+				(struct sockaddr *)tcp_socket->addr->ai_addr,
+				tcp_socket->addr->ai_addrlen) != 0) {
+
+			log_msg(LOG_ERR, "can't bind tcp socket: %s",
+					 strerror(errno));
+			return 0;
 		}
 
 		/* Listen to it... */
-		if (listen(nsd->tcp[i].s, TCP_BACKLOG) == -1) {
+		if(listen(tcp_socket->s, TCP_BACKLOG) == -1) {
+
 			log_msg(LOG_ERR, "can't listen: %s", strerror(errno));
-			return -1;
+
+			return 0;
 		}
 	}
+	return 1;
+}
 
-	return 0;
+/*
+ * Initialize the server, create and bind the sockets.
+ *
+ */
+int
+server_init(struct nsd *nsd)
+{
+	return init_make_udp_sockets(nsd, nsd->udp       , nsd->ifs)
+	    && init_make_tcp_sockets(nsd, nsd->tcp       , nsd->ifs)
+	    && init_make_udp_sockets(nsd, nsd->verify_udp, nsd->verify_ifs)
+	    && init_make_tcp_sockets(nsd, nsd->verify_tcp, nsd->verify_ifs);
 }
 
 /*
@@ -523,22 +588,34 @@ server_init(struct nsd *nsd)
 int
 server_prepare(struct nsd *nsd)
 {
+	int to_be_verified_zones = 0;
+
 	/* Open the database... */
-	if ((nsd->db = namedb_open(nsd->dbfile, nsd->options)) == NULL) {
+	if ((nsd->db = namedb_open(nsd->dbfile, nsd->options, nsd->child_count)) == NULL) {
 		log_msg(LOG_ERR, "unable to open the database %s: %s",
 			nsd->dbfile, strerror(errno));
 		return -1;
 	}
-	/* check if zone files have been modified */
-	/* NULL for taskudb because we send soainfo in a moment, batched up,
-	 * for all zones */
-	namedb_check_zonefiles(nsd->db, nsd->options, NULL, NULL);
 
-	/* Read diff file */
-	if(!diff_read_file(nsd->db, nsd->options, NULL, NULL, NULL)) {
-		log_msg(LOG_ERR, "The diff file contains errors. Will continue "
-						 "without it");
+	/* Read diff file. But not the parts to be verified. It is nicer
+	 * to start at least with the zones that don't need to be verified
+	 * and initiate a reload so that the zones to be verified will be
+	 * served immediately after verification.
+	 * diff_read_file counts those zones with to_be_verified_zones.
+	 */
+	if(!diff_read_file(nsd->db, nsd->options, NULL, nsd->child_count,
+				&to_be_verified_zones)) {
+
+		log_msg(LOG_ERR, "The diff file contains errors. "
+				 "Will continue without it.");
 	}
+	if(to_be_verified_zones) {
+		nsd->mode = NSD_RELOAD;
+	}
+
+#ifdef NSEC3
+	prehash(nsd->db, 0);
+#endif
 
 	compression_table_capacity = 0;
 	initialize_dname_compression_tables(nsd);
@@ -569,7 +646,7 @@ server_start_children(struct nsd *nsd, region_type* region, netio_type* netio,
 	return restart_child_servers(nsd, region, netio, xfrd_sock_p);
 }
 
-static void
+void
 close_all_sockets(struct nsd_socket sockets[], size_t n)
 {
 	size_t i;
@@ -596,6 +673,9 @@ server_shutdown(struct nsd *nsd)
 
 	close_all_sockets(nsd->udp, nsd->ifs);
 	close_all_sockets(nsd->tcp, nsd->ifs);
+	close_all_sockets(nsd->verify_udp, nsd->verify_ifs);
+	close_all_sockets(nsd->verify_tcp, nsd->verify_ifs);
+
 	/* CHILD: close command channel to parent */
 	if(nsd->this_child && nsd->this_child->parent_fd != -1)
 	{
@@ -612,79 +692,33 @@ server_shutdown(struct nsd *nsd)
 				nsd->children[i].child_fd = -1;
 			}
 	}
-#ifdef HAVE_SSL
-	daemon_remote_close(nsd->rc); /* close sockets of rc */
-#endif
 
 	log_finalize();
 	tsig_finalize();
-#ifdef HAVE_SSL
-	daemon_remote_delete(nsd->rc); /* ssl-delete secret keys */
-#endif
 
-#if 0 /* OS collects memory pages */
 	nsd_options_destroy(nsd->options);
 	region_destroy(nsd->region);
-#endif
+
 	exit(0);
 }
 
-void
-server_prepare_xfrd(struct nsd* nsd)
-{
-	char tmpfile[256];
-	/* create task mmaps */
-	nsd->mytask = 0;
-	snprintf(tmpfile, sizeof(tmpfile), "/tmp/nsd.%u.task.0",
-		(unsigned)getpid());
-	nsd->task[0] = task_file_create(tmpfile);
-	snprintf(tmpfile, sizeof(tmpfile), "/tmp/nsd.%u.task.1",
-		(unsigned)getpid());
-	nsd->task[1] = task_file_create(tmpfile);
-	assert(udb_base_get_userdata(nsd->task[0])->data == 0);
-	assert(udb_base_get_userdata(nsd->task[1])->data == 0);
-	/* create xfrd listener structure */
-	nsd->xfrd_pid = -1;
-	nsd->xfrd_listener = region_alloc(nsd->region,
-		sizeof(netio_handler_type));
-	nsd->xfrd_listener->user_data = (struct ipc_handler_conn_data*)
-		region_alloc(nsd->region, sizeof(struct ipc_handler_conn_data));
-	nsd->xfrd_listener->fd = -1;
-	((struct ipc_handler_conn_data*)nsd->xfrd_listener->user_data)->nsd =
-		nsd;
-	((struct ipc_handler_conn_data*)nsd->xfrd_listener->user_data)->conn =
-		xfrd_tcp_create(nsd->region);
-}
-
-
-void
-server_start_xfrd(struct nsd *nsd, int del_db, int reload_active)
+static pid_t
+server_start_xfrd(struct nsd *nsd, netio_handler_type* handler)
 {
 	pid_t pid;
 	int sockets[2] = {0,0};
+	zone_type* zone;
 	struct ipc_handler_conn_data *data;
-
-	if(nsd->xfrd_listener->fd != -1)
-		close(nsd->xfrd_listener->fd);
-	if(del_db) {
-		/* recreate taskdb that xfrd was using, it may be corrupt */
-		/* we (or reload) use nsd->mytask, and xfrd uses the other */
-		char* tmpfile = nsd->task[1-nsd->mytask]->fname;
-		nsd->task[1-nsd->mytask]->fname = NULL;
-		/* free alloc already, so udb does not shrink itself */
-		udb_alloc_delete(nsd->task[1-nsd->mytask]->alloc);
-		nsd->task[1-nsd->mytask]->alloc = NULL;
-		udb_base_free(nsd->task[1-nsd->mytask]);
-		/* create new file, overwrite the old one */
-		nsd->task[1-nsd->mytask] = task_file_create(tmpfile);
-		free(tmpfile);
+	/* no need to send updates for zones, because xfrd will read from fork-memory */
+	for(zone = nsd->db->zones; zone; zone=zone->next) {
+		zone->updated = 0;
 	}
-	/* old xfrd may have crashed, snip off garbage off the diff file */
-	diff_snip_garbage(nsd->db, nsd->options);
+
+	if(handler->fd != -1)
+		close(handler->fd);
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == -1) {
 		log_msg(LOG_ERR, "startxfrd failed on socketpair: %s", strerror(errno));
-		nsd->xfrd_pid = -1;
-		return;
+		return -1;
 	}
 	pid = fork();
 	switch (pid) {
@@ -692,106 +726,32 @@ server_start_xfrd(struct nsd *nsd, int del_db, int reload_active)
 		log_msg(LOG_ERR, "fork xfrd failed: %s", strerror(errno));
 		break;
 	case 0:
+		/* xfrd will not use the verify sockets */
+		close_all_sockets(nsd->verify_udp, nsd->verify_ifs);
+		close_all_sockets(nsd->verify_tcp, nsd->verify_ifs);
 		/* CHILD: close first socket, use second one */
 		close(sockets[0]);
-		if(del_db) xfrd_free_namedb(nsd);
-		/* use other task than I am using, since if xfrd died and is
-		 * restarted, the reload is using nsd->mytask */
-		nsd->mytask = 1 - nsd->mytask;
-		xfrd_init(sockets[1], nsd, del_db, reload_active);
+		xfrd_init(sockets[1], nsd);
 		/* ENOTREACH */
 		break;
 	default:
 		/* PARENT: close second socket, use first one */
 		close(sockets[1]);
-		nsd->xfrd_listener->fd = sockets[0];
+		handler->fd = sockets[0];
 		break;
 	}
 	/* PARENT only */
-	nsd->xfrd_listener->timeout = NULL;
-	nsd->xfrd_listener->event_types = NETIO_EVENT_READ;
-	nsd->xfrd_listener->event_handler = parent_handle_xfrd_command;
+	handler->timeout = NULL;
+	handler->event_types = NETIO_EVENT_READ;
+	handler->event_handler = parent_handle_xfrd_command;
 	/* clear ongoing ipc reads */
-	data = (struct ipc_handler_conn_data *) nsd->xfrd_listener->user_data;
+	data = (struct ipc_handler_conn_data *) handler->user_data;
 	data->conn->is_reading = 0;
-	nsd->xfrd_pid = pid;
-}
-
-/** add all soainfo to taskdb */
-static void
-add_all_soa_to_task(struct nsd* nsd, struct udb_base* taskudb)
-{
-	struct radnode* n;
-	udb_ptr task_last; /* last task, mytask is empty so NULL */
-	/* add all SOA INFO to mytask */
-	udb_ptr_init(&task_last, taskudb);
-	for(n=radix_first(nsd->db->zonetree); n; n=radix_next(n)) {
-		task_new_soainfo(taskudb, &task_last, (zone_type*)n->elem);
-	}
-	udb_ptr_unlink(&task_last, taskudb);
-}
-
-void
-server_send_soa_xfrd(struct nsd* nsd, int shortsoa)
-{
-	/* normally this exchanges the SOA from nsd->xfrd and the expire back.
-	 *   parent fills one taskdb with soas, xfrd fills other with expires.
-	 *   then they exchange and process.
-	 * shortsoa: xfrd crashes and needs to be restarted and one taskdb
-	 *   may be in use by reload.  Fill SOA in taskdb and give to xfrd.
-	 *   expire notifications can be sent back via a normal reload later
-	 *   (xfrd will wait for current running reload to finish if any).
-	 */
-	sig_atomic_t cmd = 0;
-	int xfrd_sock = nsd->xfrd_listener->fd;
-	struct udb_base* taskudb = nsd->task[nsd->mytask];
-	udb_ptr t;
-	if(shortsoa) {
-		/* put SOA in xfrd task because mytask may be in use */
-		taskudb = nsd->task[1-nsd->mytask];
-	}
-
-	add_all_soa_to_task(nsd, taskudb);
-	if(!shortsoa) {
-		/* wait for xfrd to signal task is ready, RELOAD signal */
-		if(block_read(nsd, xfrd_sock, &cmd, sizeof(cmd), -1) != sizeof(cmd) ||
-			cmd != NSD_RELOAD) {
-			log_msg(LOG_ERR, "did not get start signal from xfrd");
-			exit(1);
-		} 
-	}
-	/* give xfrd our task, signal it with RELOAD_DONE */
-	task_process_sync(taskudb);
-	cmd = NSD_RELOAD_DONE;
-	if(!write_socket(xfrd_sock, &cmd,  sizeof(cmd))) {
-		log_msg(LOG_ERR, "problems sending soa end from reload %d to xfrd: %s",
-			(int)nsd->pid, strerror(errno));
-	}
-
-	if(!shortsoa) {
-		/* process the xfrd task works (expiry data) */
-		nsd->mytask = 1 - nsd->mytask;
-		taskudb = nsd->task[nsd->mytask];
-		task_remap(taskudb);
-		udb_ptr_new(&t, taskudb, udb_base_get_userdata(taskudb));
-		while(!udb_ptr_is_null(&t)) {
-			task_process_expire(nsd->db, TASKLIST(&t));
-			udb_ptr_set_rptr(&t, taskudb, &TASKLIST(&t)->next);
-		}
-		udb_ptr_unlink(&t, taskudb);
-		task_clear(taskudb);
-
-		/* tell xfrd that the task is emptied, signal with RELOAD_DONE */
-		cmd = NSD_RELOAD_DONE;
-		if(!write_socket(xfrd_sock, &cmd,  sizeof(cmd))) {
-			log_msg(LOG_ERR, "problems sending soa end from reload %d to xfrd: %s",
-				(int)nsd->pid, strerror(errno));
-		}
-	}
+	return pid;
 }
 
 /* pass timeout=-1 for blocking. Returns size, 0, -1(err), or -2(timeout) */
-ssize_t
+static ssize_t
 block_read(struct nsd* nsd, int s, void* p, ssize_t sz, int timeout)
 {
 	uint8_t* buf = (uint8_t*) p;
@@ -846,69 +806,210 @@ block_read(struct nsd* nsd, int s, void* p, ssize_t sz, int timeout)
 	return total;
 }
 
-static void
-reload_process_tasks(struct nsd* nsd, udb_ptr* last_task)
+
+void
+netio_add_udp_handlers(netio_type* netio, struct nsd* nsd, region_type* region,
+		struct nsd_socket* udp_socket, size_t n)
 {
-	udb_ptr t, next;
-	udb_base* u = nsd->task[nsd->mytask];
-	udb_ptr_init(&next, u);
-	udb_ptr_new(&t, u, udb_base_get_userdata(u));
-	udb_base_set_userdata(u, 0);
-	while(!udb_ptr_is_null(&t)) {
-		/* store next in list so this one can be deleted or reused */
-		udb_ptr_set_rptr(&next, u, &TASKLIST(&t)->next);
-		udb_rptr_zero(&TASKLIST(&t)->next, u);
+	query_type *udp_query = query_create(region, compressed_dname_offsets,
+						compression_table_size);
 
-		/* process task t */
-		/* append results for task t and update last_task */
-		task_process_in_reload(nsd, u, last_task, &t);
+	log_msg(LOG_INFO, "adding %d udp handlers to netio.", (int)n);
 
-		/* go to next */
-		udb_ptr_set_ptr(&t, u, &next);
-	}
-	udb_ptr_unlink(&t, u);
-	udb_ptr_unlink(&next, u);
-}
+	for(; n--; udp_socket++) {
+		
+		struct udp_handler_data* data =
+			REGION_MALLOC(region, struct udp_handler_data);
 
-#ifdef BIND8_STATS
-static void
-parent_send_stats(struct nsd* nsd, int cmdfd)
-{
-	size_t i;
-	if(!write_socket(cmdfd, &nsd->st, sizeof(nsd->st))) {
-		log_msg(LOG_ERR, "could not write stats to reload");
-		return;
-	}
-	for(i=0; i<nsd->child_count; i++)
-		if(!write_socket(cmdfd, &nsd->children[i].query_count,
-			sizeof(stc_t))) {
-			log_msg(LOG_ERR, "could not write stats to reload");
-			return;
+		netio_handler_type* handler =
+			REGION_MALLOC(region, netio_handler_type);
+
+		char host[NI_MAXHOST];
+		char serv[NI_MAXSERV];
+
+		int r = getnameinfo(udp_socket->addr->ai_addr,
+				    udp_socket->addr->ai_addrlen,
+				    host, NI_MAXHOST, serv, NI_MAXSERV,
+				    NI_NUMERICHOST);
+		if(r == 0) {
+			log_msg(LOG_INFO, "udp socket %s:%s added to netio",
+					  host, serv);
+		} else {
+			log_msg(LOG_ERR, "error in getnameinfo: %s",
+					  gai_strerror(r));
 		}
+
+		data->nsd = nsd;
+		data->query = udp_query;
+		data->socket = udp_socket;
+
+		handler->fd = udp_socket->s;
+		handler->timeout = NULL;
+		handler->user_data = data;
+		handler->event_types = NETIO_EVENT_READ;
+		handler->event_handler = handle_udp;
+
+		netio_add_handler(netio, handler);
+	}
+}
+
+void
+netio_add_tcp_handlers(netio_type* netio, struct nsd* nsd, region_type* region,
+		struct nsd_socket* tcp_socket, size_t n)
+{
+	/*
+	 * Keep track of all the TCP accept handlers so we can enable
+	 * and disable them based on the current number of active TCP
+	 * connections.
+	 */
+	netio_handler_type* tcp_accept_handlers = 
+		(netio_handler_type*)region_alloc(region,
+				n * sizeof(netio_handler_type));
+
+	size_t handler_count = n;
+
+	log_msg(LOG_INFO, "adding %d tcp handlers to netio.", (int)n);
+
+	for(; n--; tcp_socket++) {
+
+		struct tcp_accept_handler_data* data =
+			REGION_MALLOC(region , struct tcp_accept_handler_data);
+
+		char host[NI_MAXHOST];
+		char serv[NI_MAXSERV];
+
+		int r = getnameinfo(tcp_socket->addr->ai_addr,
+				    tcp_socket->addr->ai_addrlen,
+				    host, NI_MAXHOST, serv, NI_MAXSERV,
+				    NI_NUMERICHOST);
+		if(r == 0) {
+			log_msg(LOG_INFO, "tcp socket %s:%s added to netio",
+					  host, serv);
+		} else {
+			log_msg(LOG_ERR, "error in getnameinfo: %s",
+					 gai_strerror(r));
+		}
+
+		netio_handler_type *handler = &tcp_accept_handlers[n];
+
+		data->nsd = nsd;
+		data->socket = tcp_socket;
+		data->tcp_accept_handlers = tcp_accept_handlers;
+		data->tcp_accept_handler_count = handler_count;
+
+		handler->fd = tcp_socket->s;
+		handler->timeout = NULL;
+		handler->user_data = data;
+		handler->event_types = NETIO_EVENT_READ;
+		handler->event_handler = handle_tcp_accept;
+
+		netio_add_handler(netio, handler);
+	}
 }
 
 static void
-reload_do_stats(int cmdfd, struct nsd* nsd, udb_ptr* last)
+inform_xfrd_new_soas(nsd_type* nsd, int xfrd_sock, size_t bad_zones)
 {
-	struct nsdst s;
-	stc_t* p;
-	size_t i;
-	if(block_read(nsd, cmdfd, &s, sizeof(s),
-		RELOAD_SYNC_TIMEOUT) != sizeof(s)) {
-		log_msg(LOG_ERR, "could not read stats from oldpar");
-		return;
+	uint16_t sz;
+	uint32_t ttl;
+	zone_type* zone;
+	const dname_type* dname_ns = 0;
+	const dname_type* dname_em=0;
+	sig_atomic_t cmd = bad_zones ? NSD_BAD_SOA_BEGIN : NSD_SOA_BEGIN;
+
+	if(!write_socket(xfrd_sock, &cmd,  sizeof(cmd))) {
+		log_msg(LOG_ERR, "problems sending soa begin "
+				 "from reload %d to xfrd: %s",
+				 (int)nsd->pid, strerror(errno));
 	}
-	s.db_disk = nsd->db->udb->base_size;
-	s.db_mem = region_get_mem(nsd->db->region);
-	p = (stc_t*)task_new_stat_info(nsd->task[nsd->mytask], last, &s,
-		nsd->child_count);
-	if(!p) return;
-	for(i=0; i<nsd->child_count; i++) {
-		if(block_read(nsd, cmdfd, p++, sizeof(stc_t), 1)!=sizeof(stc_t))
-			return;
+	for(zone = nsd->db->zones; zone; zone = zone->next) {
+
+		if(zone->updated == 0 || (bad_zones && zone->is_bad == 0))
+			continue;
+
+		DEBUG(DEBUG_IPC, 1, (LOG_INFO,
+				"nsd: sending soa info for zone %s",
+				dname_to_string(domain_dname(zone->apex), 0)));
+
+		sz = dname_total_size(domain_dname(zone->apex));
+
+		if(zone->soa_rrset) {
+
+			dname_ns = domain_dname(rdata_atom_domain(
+					zone->soa_rrset->rrs[0].rdatas[0]));
+			dname_em = domain_dname(rdata_atom_domain(
+					zone->soa_rrset->rrs[0].rdatas[1]));
+
+			sz += sizeof(uint32_t)*6  + sizeof(uint8_t)*2 +
+				dname_ns->name_size + dname_em->name_size;
+		}
+		sz = htons(sz);
+
+		/* use blocking writes */
+		cmd = NSD_SOA_INFO;
+		if(!write_socket( xfrd_sock, &cmd, sizeof(cmd)) ||
+		   !write_socket(xfrd_sock, &sz , sizeof(sz)) ||
+		   !write_socket(xfrd_sock,
+				domain_dname(zone->apex),
+				dname_total_size(domain_dname(zone->apex)))) {
+
+			log_msg(LOG_ERR, "problems sending soa info "
+					 "from reload %d to xfrd: %s",
+					 (int)nsd->pid, strerror(errno));
+		}
+		if(!zone->soa_rrset) {
+			zone->updated = 0;
+			continue;
+		}
+		ttl = htonl(zone->soa_rrset->rrs[0].ttl);
+
+		assert(dname_ns && dname_em);
+		assert(zone->soa_rrset->rr_count > 0);
+		assert(rrset_rrtype(zone->soa_rrset) == TYPE_SOA);
+		assert(zone->soa_rrset->rrs[0].rdata_count == 7);
+
+		if(!write_socket(xfrd_sock, &ttl, sizeof(uint32_t)) ||
+		   !write_socket(xfrd_sock, &dname_ns->name_size,
+				sizeof(uint8_t)) ||
+		   !write_socket(xfrd_sock, dname_name(dname_ns),
+				dname_ns->name_size) ||
+		   !write_socket(xfrd_sock, &dname_em->name_size,
+				sizeof(uint8_t)) ||
+		   !write_socket(xfrd_sock, dname_name(dname_em),
+				dname_em->name_size) ||
+		   !write_socket(xfrd_sock, rdata_atom_data(
+					zone->soa_rrset->rrs[0].rdatas[2]),
+				sizeof(uint32_t)) ||
+		   !write_socket(xfrd_sock, rdata_atom_data(
+					zone->soa_rrset->rrs[0].rdatas[3]),
+				sizeof(uint32_t)) ||
+		   !write_socket(xfrd_sock, rdata_atom_data(
+					zone->soa_rrset->rrs[0].rdatas[4]),
+				sizeof(uint32_t)) ||
+		   !write_socket(xfrd_sock, rdata_atom_data(
+					zone->soa_rrset->rrs[0].rdatas[5]),
+				sizeof(uint32_t)) ||
+		   !write_socket(xfrd_sock, rdata_atom_data(
+					zone->soa_rrset->rrs[0].rdatas[6]),
+				sizeof(uint32_t))) {
+
+			log_msg(LOG_ERR, "problems sending soa info "
+					 "from reload %d to xfrd: %s",
+					 (int)nsd->pid, strerror(errno));
+		} else {
+			zone->updated = 0;
+		}
+	}
+	/* With bad zones the parent will send the NSD_SOA_END */
+	if(!bad_zones) {
+		cmd = NSD_SOA_END;
+		if(!write_socket(xfrd_sock, &cmd,  sizeof(cmd))) {
+			log_msg(LOG_ERR, "problems sending soa end "
+					 "from reload %d to xfrd: %s",
+					 (int)nsd->pid, strerror(errno));
+		}
 	}
 }
-#endif /* BIND8_STATS */
 
 /*
  * Reload the database, stop parent, re-fork children and continue.
@@ -916,31 +1017,81 @@ reload_do_stats(int cmdfd, struct nsd* nsd, udb_ptr* last)
  */
 static void
 server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio,
-	int cmdsocket)
+	int cmdsocket, int* xfrd_sock_p)
 {
 	pid_t old_pid;
 	sig_atomic_t cmd = NSD_QUIT_SYNC;
+	int xfrd_sock = *xfrd_sock_p;
 	int ret;
-	udb_ptr last_task;
 
-	/* see what tasks we got from xfrd */
-	task_remap(nsd->task[nsd->mytask]);
-	udb_ptr_init(&last_task, nsd->task[nsd->mytask]);
-	reload_process_tasks(nsd, &last_task);
+	size_t good_zones, bad_zones;
 
-	if(!diff_read_file(nsd->db, nsd->options, NULL, 
-		nsd->task[nsd->mytask], &last_task)) {
+	if(db_crc_different(nsd->db) == 0) {
+		DEBUG(DEBUG_XFRD,1, (LOG_INFO,
+			"CRC the same. skipping %s.", nsd->db->filename));
+	} else {
+		DEBUG(DEBUG_XFRD,1, (LOG_INFO,
+			"CRC different. reread of %s.", nsd->db->filename));
+		namedb_close(nsd->db);
+		if ((nsd->db = namedb_open(nsd->dbfile, nsd->options,
+			nsd->child_count)) == NULL) {
+			log_msg(LOG_ERR, "unable to reload the database: %s", strerror(errno));
+			exit(1);
+		}
+	}
+	if(!diff_read_file(nsd->db, nsd->options, NULL, nsd->child_count, 0)) {
 		log_msg(LOG_ERR, "unable to load the diff file: %s", nsd->options->difffile);
 		exit(1);
 	}
+	log_msg(LOG_INFO, "memory recyclebin holds %lu bytes", (unsigned long)
+		region_get_recycle_size(nsd->db->region));
 #ifndef NDEBUG
 	if(nsd_debug_level >= 1)
 		region_log_stats(nsd->db->region);
 #endif /* NDEBUG */
-	/* sync to disk (if needed) */
-	udb_base_sync(nsd->db->udb, 0);
+#ifdef NSEC3
+#ifdef FULL_PREHASH
+	prehash(nsd->db, 1);
+#endif /* FULL_PREHASH */
+#endif /* NSEC3 */
 
 	initialize_dname_compression_tables(nsd);
+
+	verify_zones(nsd, cmdsocket, &good_zones, &bad_zones);
+
+	log_msg(LOG_NOTICE, "Zone verifying done... Good: %d, Bad: %d.",
+			(int)good_zones, (int)bad_zones);
+
+	if(bad_zones) {
+		/* Ask xfrd to not try to retransfer those bad zones.
+		 */
+		inform_xfrd_new_soas(nsd, xfrd_sock, bad_zones);
+
+		if(good_zones) {
+			/* Some zones were good, others were bad.
+			 * If all is well, the bad zones will be skipped
+			 * when we initiate a reload at our parent.
+			 */
+			exit(NSD_RELOAD_AGAIN);
+		}
+		/* All zones bad. Gracefully terminate reload process.
+		 */
+		cmd = NSD_SKIP_DIFF;
+		if(nsd->db->diff_skip &&
+		   (write_socket(cmdsocket, &cmd, sizeof(cmd)) == -1 ||
+		    write_socket(cmdsocket, &nsd->db->diff_pos,
+				 sizeof(nsd->db->diff_pos)) == -1)) {
+
+			log_msg(LOG_ERR, "Unable to send a new diff_pos "
+					 "to our parent %d: %s",
+					 (int)nsd->pid, strerror(errno));
+			exit(1);
+		}
+		exit(0);
+	}
+	/* All zones were good and we will become the new server.
+	 * Or... no zones were updated. We need to reload then too.
+	 */
 
 	/* Get our new process id */
 	old_pid = nsd->pid;
@@ -953,15 +1104,14 @@ server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio,
 #endif
 
 	/* Start new child processes */
-	if (server_start_children(nsd, server_region, netio, &nsd->
-		xfrd_listener->fd) != 0) {
+	if (server_start_children(nsd, server_region, netio, xfrd_sock_p) != 0) {
 		send_children_quit(nsd);
 		exit(1);
 	}
 
 	/* if the parent has quit, we must quit too, poll the fd for cmds */
 	if(block_read(nsd, cmdsocket, &cmd, sizeof(cmd), 0) == sizeof(cmd)) {
-		DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: ipc command from main %d", (int)cmd));
+		DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: ipc command from main %d", cmd));
 		if(cmd == NSD_QUIT) {
 			DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: quit to follow nsd"));
 			send_children_quit(nsd);
@@ -978,6 +1128,7 @@ server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio,
 		log_msg(LOG_ERR, "cannot overwrite the pidfile %s: %s", nsd->pidfile, strerror(errno));
 	}
 
+#define RELOAD_SYNC_TIMEOUT 25 /* seconds */
 	/* Send quit command to parent: blocking, wait for receipt. */
 	do {
 		DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: ipc send quit to main"));
@@ -998,7 +1149,7 @@ server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio,
 		log_msg(LOG_ERR, "reload: could not wait for parent to quit: %s",
 			strerror(errno));
 	}
-	DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: ipc reply main %d %d", ret, (int)cmd));
+	DEBUG(DEBUG_IPC,1, (LOG_INFO, "reload: ipc reply main %d %d", ret, cmd));
 	if(cmd == NSD_QUIT) {
 		/* small race condition possible here, parent got quit cmd. */
 		send_children_quit(nsd);
@@ -1006,19 +1157,9 @@ server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio,
 		exit(1);
 	}
 	assert(ret==-1 || ret == 0 || cmd == NSD_RELOAD);
-#ifdef BIND8_STATS
-	reload_do_stats(cmdsocket, nsd, &last_task);
-#endif
-	udb_ptr_unlink(&last_task, nsd->task[nsd->mytask]);
-	task_process_sync(nsd->task[nsd->mytask]);
 
-	/* send soainfo to the xfrd process, signal it that reload is done,
-	 * it picks up the taskudb */
-	cmd = NSD_RELOAD_DONE;
-	if(!write_socket(nsd->xfrd_listener->fd, &cmd,  sizeof(cmd))) {
-		log_msg(LOG_ERR, "problems sending reload_done xfrd: %s",
-			strerror(errno));
-	}
+	/* inform xfrd of new SOAs */
+	inform_xfrd_new_soas(nsd, xfrd_sock, bad_zones);
 
 	/* try to reopen file */
 	if (nsd->file_rotation_ok)
@@ -1049,10 +1190,6 @@ server_signal_mode(struct nsd *nsd)
 		nsd->signal_hint_reload = 0;
 		return NSD_RELOAD;
 	}
-	else if(nsd->signal_hint_reload_hup) {
-		nsd->signal_hint_reload_hup = 0;
-		return NSD_RELOAD_REQ;
-	}
 	else if(nsd->signal_hint_stats) {
 		nsd->signal_hint_stats = 0;
 #ifdef BIND8_STATS
@@ -1077,23 +1214,32 @@ server_main(struct nsd *nsd)
 	region_type *server_region = region_create(xalloc, free);
 	netio_type *netio = netio_create(server_region);
 	netio_handler_type reload_listener;
+	netio_handler_type xfrd_listener;
 	int reload_sockets[2] = {-1, -1};
 	struct timespec timeout_spec;
 	int fd;
 	int status;
 	pid_t child_pid;
 	pid_t reload_pid = -1;
+	pid_t xfrd_pid = -1;
 	sig_atomic_t mode;
 
 	/* Ensure we are the main process */
 	assert(nsd->server_kind == NSD_SERVER_MAIN);
 
-	/* Add listener for the XFRD process */
-	netio_add_handler(netio, nsd->xfrd_listener);
+	xfrd_listener.user_data = (struct ipc_handler_conn_data*)region_alloc(
+		server_region, sizeof(struct ipc_handler_conn_data));
+	xfrd_listener.fd = -1;
+	((struct ipc_handler_conn_data*)xfrd_listener.user_data)->nsd = nsd;
+	((struct ipc_handler_conn_data*)xfrd_listener.user_data)->conn =
+		xfrd_tcp_create(server_region);
+
+	/* Start the XFRD process */
+	xfrd_pid = server_start_xfrd(nsd, &xfrd_listener);
+	netio_add_handler(netio, &xfrd_listener);
 
 	/* Start the child processes that handle incoming queries */
-	if (server_start_children(nsd, server_region, netio,
-		&nsd->xfrd_listener->fd) != 0) {
+	if (server_start_children(nsd, server_region, netio, &xfrd_listener.fd) != 0) {
 		send_children_quit(nsd);
 		exit(1);
 	}
@@ -1123,31 +1269,62 @@ server_main(struct nsd *nsd)
 					       "server %d died unexpectedly with status %d, restarting",
 					       (int) child_pid, status);
 					restart_child_servers(nsd, server_region, netio,
-						&nsd->xfrd_listener->fd);
+						&xfrd_listener.fd);
 				} else if (child_pid == reload_pid) {
-					sig_atomic_t cmd = NSD_RELOAD_DONE;
-					log_msg(LOG_WARNING,
-					       "Reload process %d failed with status %d, continuing with old database",
-					       (int) child_pid, status);
+					sig_atomic_t cmd;
+
+					if(WEXITSTATUS(status) ==
+							NSD_RELOAD_AGAIN) {
+
+					        cmd = NSD_RELOAD_AGAIN;
+
+						nsd->mode = NSD_RELOAD;
+
+						log_msg(LOG_INFO,
+							"Reload process %d "
+							"asked us to reload "
+							"again and reread "
+							"the (now modified) "
+							"difffile.",
+							(int) child_pid);
+
+					} else if(WEXITSTATUS(status) == 0) {
+
+						cmd = NSD_SOA_END;
+
+						log_msg(LOG_INFO,
+							"No updates in "
+							"reload process %d. "
+							"Continuing with "
+							"old database.",
+							(int) child_pid);
+					} else {
+						cmd = NSD_SOA_END;
+
+						log_msg(LOG_ERR,
+							"Reload process %d "
+							"failed with status "
+							"%d, continuing with "
+							"old database",
+							(int) child_pid,
+							WEXITSTATUS(status));
+					}
 					reload_pid = -1;
 					if(reload_listener.fd != -1) close(reload_listener.fd);
 					reload_listener.fd = -1;
 					reload_listener.event_types = NETIO_EVENT_NONE;
-					task_process_sync(nsd->task[nsd->mytask]);
 					/* inform xfrd reload attempt ended */
-					if(!write_socket(nsd->xfrd_listener->fd,
+					if(!write_socket(xfrd_listener.fd,
 						&cmd, sizeof(cmd)) == -1) {
 						log_msg(LOG_ERR, "problems "
 						  "sending SOAEND to xfrd: %s",
 						  strerror(errno));
 					}
-				} else if (child_pid == nsd->xfrd_pid) {
+				} else if (child_pid == xfrd_pid) {
 					log_msg(LOG_WARNING,
 					       "xfrd process %d failed with status %d, restarting ",
 					       (int) child_pid, status);
-					server_start_xfrd(nsd, 1,
-						(reload_listener.fd!=-1));
-					server_send_soa_xfrd(nsd, 1);
+					xfrd_pid = server_start_xfrd(nsd, &xfrd_listener);
 				} else {
 					log_msg(LOG_WARNING,
 					       "Unknown child %d terminated with status %d",
@@ -1175,30 +1352,18 @@ server_main(struct nsd *nsd)
 			}
 
 			break;
-		case NSD_RELOAD_REQ: {
-			sig_atomic_t cmd = NSD_RELOAD_REQ;
-			log_msg(LOG_WARNING, "SIGHUP received, reloading...");
-			DEBUG(DEBUG_IPC,1, (LOG_INFO,
-				"main: ipc send reload_req to xfrd"));
-			if(!write_socket(nsd->xfrd_listener->fd,
-				&cmd, sizeof(cmd))) {
-				log_msg(LOG_ERR, "server_main: could not send "
-				"reload_req to xfrd: %s", strerror(errno));
-			}
-			nsd->mode = NSD_RUN;
-			} break;
 		case NSD_RELOAD:
 			/* Continue to run nsd after reload */
 			nsd->mode = NSD_RUN;
-			DEBUG(DEBUG_IPC,1, (LOG_INFO, "reloading..."));
+
 			if (reload_pid != -1) {
 				log_msg(LOG_WARNING, "Reload already in progress (pid = %d)",
 				       (int) reload_pid);
 				break;
 			}
 
-			/* switch the mytask to keep track of who owns task*/
-			nsd->mytask = 1 - nsd->mytask;
+			log_msg(LOG_WARNING, "signal received, reloading...");
+
 			if (socketpair(AF_UNIX, SOCK_STREAM, 0, reload_sockets) == -1) {
 				log_msg(LOG_ERR, "reload failed on socketpair: %s", strerror(errno));
 				reload_pid = -1;
@@ -1215,13 +1380,12 @@ server_main(struct nsd *nsd)
 				/* CHILD */
 				close(reload_sockets[0]);
 				server_reload(nsd, server_region, netio,
-					reload_sockets[1]);
+					reload_sockets[1], &xfrd_listener.fd);
 				DEBUG(DEBUG_IPC,2, (LOG_INFO, "Reload exited to become new main"));
 				close(reload_sockets[1]);
 				DEBUG(DEBUG_IPC,2, (LOG_INFO, "Reload closed"));
 				/* drop stale xfrd ipc data */
-				((struct ipc_handler_conn_data*)nsd->
-					xfrd_listener->user_data)
+				((struct ipc_handler_conn_data*)xfrd_listener.user_data)
 					->conn->is_reading = 0;
 				reload_pid = -1;
 				reload_listener.fd = -1;
@@ -1249,8 +1413,7 @@ server_main(struct nsd *nsd)
 				/* stop xfrd ipc writes in progress */
 				DEBUG(DEBUG_IPC,1, (LOG_INFO,
 					"main: ipc send indication reload"));
-				if(!write_socket(nsd->xfrd_listener->fd,
-					&cmd, sizeof(cmd))) {
+				if(!write_socket(xfrd_listener.fd, &cmd, sizeof(cmd))) {
 					log_msg(LOG_ERR, "server_main: could not send reload "
 					"indication to xfrd: %s", strerror(errno));
 				}
@@ -1270,17 +1433,13 @@ server_main(struct nsd *nsd)
 					log_msg(LOG_ERR, "server_main: "
 						"could not ack quit: %s", strerror(errno));
 				}
-#ifdef BIND8_STATS
-				parent_send_stats(nsd, reload_listener.fd);
-#endif /* BIND8_STATS */
 				close(reload_listener.fd);
 			}
 			/* only quit children after xfrd has acked */
 			send_children_quit(nsd);
 
-#if 0 /* OS collects memory pages */
+			namedb_fd_close(nsd->db);
 			region_destroy(server_region);
-#endif
 			server_shutdown(nsd);
 
 			/* ENOTREACH */
@@ -1300,7 +1459,7 @@ server_main(struct nsd *nsd)
 			nsd->mode = NSD_RUN;
 			break;
 		default:
-			log_msg(LOG_WARNING, "NSD main server mode invalid: %d", (int)nsd->mode);
+			log_msg(LOG_WARNING, "NSD main server mode invalid: %d", nsd->mode);
 			nsd->mode = NSD_RUN;
 			break;
 		}
@@ -1314,8 +1473,6 @@ server_main(struct nsd *nsd)
 
 	/* Unlink it if possible... */
 	unlinkpid(nsd->pidfile);
-	unlink(nsd->task[0]->fname);
-	unlink(nsd->task[1]->fname);
 
 	if(reload_listener.fd != -1) {
 		sig_atomic_t cmd = NSD_QUIT;
@@ -1328,23 +1485,22 @@ server_main(struct nsd *nsd)
 		fsync(reload_listener.fd);
 		close(reload_listener.fd);
 	}
-	if(nsd->xfrd_listener->fd != -1) {
+	if(xfrd_listener.fd != -1) {
 		/* complete quit, stop xfrd */
 		sig_atomic_t cmd = NSD_QUIT;
 		DEBUG(DEBUG_IPC,1, (LOG_INFO,
 			"main: ipc send quit to xfrd"));
-		if(!write_socket(nsd->xfrd_listener->fd, &cmd, sizeof(cmd))) {
+		if(!write_socket(xfrd_listener.fd, &cmd, sizeof(cmd))) {
 			log_msg(LOG_ERR, "server_main: could not send quit to xfrd: %s",
 				strerror(errno));
 		}
-		fsync(nsd->xfrd_listener->fd);
-		close(nsd->xfrd_listener->fd);
-		(void)kill(nsd->xfrd_pid, SIGTERM);
+		fsync(xfrd_listener.fd);
+		close(xfrd_listener.fd);
+		(void)kill(xfrd_pid, SIGTERM);
 	}
 
-#if 0 /* OS collects memory pages */
+	namedb_fd_close(nsd->db);
 	region_destroy(server_region);
-#endif
 	server_shutdown(nsd);
 }
 
@@ -1361,11 +1517,8 @@ server_process_query(struct nsd *nsd, struct query *query)
 void
 server_child(struct nsd *nsd)
 {
-	size_t i;
 	region_type *server_region = region_create(xalloc, free);
 	netio_type *netio = netio_create(server_region);
-	netio_handler_type *tcp_accept_handlers;
-	query_type *udp_query;
 	sig_atomic_t mode;
 
 	assert(nsd->server_kind != NSD_SERVER_MAIN);
@@ -1376,6 +1529,10 @@ server_child(struct nsd *nsd)
 	}
 	if (!(nsd->server_kind & NSD_SERVER_UDP)) {
 		close_all_sockets(nsd->udp, nsd->ifs);
+	}
+	if(nsd->verify_ifs) {
+		close_all_sockets(nsd->verify_udp, nsd->verify_ifs);
+		close_all_sockets(nsd->verify_tcp, nsd->verify_ifs);
 	}
 
 	if (nsd->this_child && nsd->this_child->parent_fd != -1) {
@@ -1395,60 +1552,16 @@ server_child(struct nsd *nsd)
 		netio_add_handler(netio, handler);
 	}
 
-	if (nsd->server_kind & NSD_SERVER_UDP) {
-		udp_query = query_create(server_region,
-			compressed_dname_offsets, compression_table_size);
+	if(nsd->server_kind & NSD_SERVER_UDP) {
 
-		for (i = 0; i < nsd->ifs; ++i) {
-			struct udp_handler_data *data;
-			netio_handler_type *handler;
-
-			data = (struct udp_handler_data *) region_alloc(
-				server_region,
-				sizeof(struct udp_handler_data));
-			data->query = udp_query;
-			data->nsd = nsd;
-			data->socket = &nsd->udp[i];
-
-			handler = (netio_handler_type *) region_alloc(
-				server_region, sizeof(netio_handler_type));
-			handler->fd = nsd->udp[i].s;
-			handler->timeout = NULL;
-			handler->user_data = data;
-			handler->event_types = NETIO_EVENT_READ;
-			handler->event_handler = handle_udp;
-			netio_add_handler(netio, handler);
-		}
+		netio_add_udp_handlers(netio, nsd, server_region,
+					nsd->udp, nsd->ifs);
 	}
 
-	/*
-	 * Keep track of all the TCP accept handlers so we can enable
-	 * and disable them based on the current number of active TCP
-	 * connections.
-	 */
-	tcp_accept_handlers = (netio_handler_type *) region_alloc(
-		server_region, nsd->ifs * sizeof(netio_handler_type));
-	if (nsd->server_kind & NSD_SERVER_TCP) {
-		for (i = 0; i < nsd->ifs; ++i) {
-			struct tcp_accept_handler_data *data;
-			netio_handler_type *handler;
+	if(nsd->server_kind & NSD_SERVER_TCP) {
 
-			data = (struct tcp_accept_handler_data *) region_alloc(
-				server_region,
-				sizeof(struct tcp_accept_handler_data));
-			data->nsd = nsd;
-			data->socket = &nsd->tcp[i];
-			data->tcp_accept_handler_count = nsd->ifs;
-			data->tcp_accept_handlers = tcp_accept_handlers;
-
-			handler = &tcp_accept_handlers[i];
-			handler->fd = nsd->tcp[i].s;
-			handler->timeout = NULL;
-			handler->user_data = data;
-			handler->event_types = NETIO_EVENT_READ | NETIO_EVENT_ACCEPT;
-			handler->event_handler = handle_tcp_accept;
-			netio_add_handler(netio, handler);
-		}
+		netio_add_tcp_handlers(netio, nsd, server_region,
+					nsd->tcp, nsd->ifs);
 	}
 
 	/* The main loop... */
@@ -1458,11 +1571,8 @@ server_child(struct nsd *nsd)
 		/* Do we need to do the statistics... */
 		if (mode == NSD_STATS) {
 #ifdef BIND8_STATS
-			int p = nsd->st.period;
-			nsd->st.period = 1; /* force stats printout */
 			/* Dump the statistics */
 			bind8_stats(nsd);
-			nsd->st.period = p;
 #else /* !BIND8_STATS */
 			log_msg(LOG_NOTICE, "Statistics support not enabled at compile time.");
 #endif /* BIND8_STATS */
@@ -1496,7 +1606,7 @@ server_child(struct nsd *nsd)
 			/* ignore here, quit */
 		} else {
 			log_msg(LOG_ERR, "mode bad value %d, back to service.",
-				(int)mode);
+				mode);
 			nsd->mode = NSD_RUN;
 		}
 	}
@@ -1505,15 +1615,11 @@ server_child(struct nsd *nsd)
 	bind8_stats(nsd);
 #endif /* BIND8_STATS */
 
-#if 0 /* OS collects memory pages */
+	namedb_fd_close(nsd->db);
 	region_destroy(server_region);
-#endif
 	server_shutdown(nsd);
 }
 
-#ifndef NONBLOCKING_IS_BROKEN
-#  define NUM_RECV_PER_SELECT 100
-#endif
 
 static void
 handle_udp(netio_type *ATTR_UNUSED(netio),
@@ -1523,42 +1629,37 @@ handle_udp(netio_type *ATTR_UNUSED(netio),
 	struct udp_handler_data *data
 		= (struct udp_handler_data *) handler->user_data;
 	int received, sent;
-#ifndef NONBLOCKING_IS_BROKEN
-	int i;
-#endif
 	struct query *q = data->query;
 
 	if (!(event_types & NETIO_EVENT_READ)) {
 		return;
 	}
 
-#ifndef NONBLOCKING_IS_BROKEN
-	for(i=0; i<NUM_RECV_PER_SELECT; i++) {
+	/* Account... */
+#ifdef BIND8_STATS
+	if (data->socket->addr->ai_family == AF_INET) {
+		STATUP(data->nsd, qudp);
+	} else if (data->socket->addr->ai_family == AF_INET6) {
+		STATUP(data->nsd, qudp6);
+	}
 #endif
-		/* Initialize the query... */
-		query_reset(q, UDP_MAX_MESSAGE_LEN, 0);
 
-		received = recvfrom(handler->fd,
-				    buffer_begin(q->packet),
-				    buffer_remaining(q->packet),
-				    0,
-				    (struct sockaddr *)&q->addr,
-				    &q->addrlen);
-		if (received == -1) {
-			if (errno != EAGAIN && errno != EINTR) {
-				log_msg(LOG_ERR, "recvfrom failed: %s", strerror(errno));
-				STATUP(data->nsd, rxerr);
-			}
-			return;
+	/* Initialize the query... */
+	query_reset(q, UDP_MAX_MESSAGE_LEN, 0);
+
+	received = recvfrom(handler->fd,
+			    buffer_begin(q->packet),
+			    buffer_remaining(q->packet),
+			    0,
+			    (struct sockaddr *)&q->addr,
+			    &q->addrlen);
+	if (received == -1) {
+		if (errno != EAGAIN && errno != EINTR) {
+			log_msg(LOG_ERR, "recvfrom failed: %s", strerror(errno));
+			STATUP(data->nsd, rxerr);
+			/* No zone statup */
 		}
-
-		/* Account... */
-		if (data->socket->addr->ai_family == AF_INET) {
-			STATUP(data->nsd, qudp);
-		} else if (data->socket->addr->ai_family == AF_INET6) {
-			STATUP(data->nsd, qudp6);
-		}
-
+	} else {
 		buffer_skip(q->packet, received);
 		buffer_flip(q->packet);
 
@@ -1566,7 +1667,16 @@ handle_udp(netio_type *ATTR_UNUSED(netio),
 		if (server_process_query(data->nsd, q) != QUERY_DISCARDED) {
 			if (RCODE(q->packet) == RCODE_OK && !AA(q->packet)) {
 				STATUP(data->nsd, nona);
+				ZTATUP(q->zone, nona);
 			}
+
+#if defined(BIND8_STATS) && defined(USE_ZONE_STATS)
+			if (data->socket->addr->ai_family == AF_INET) {
+				ZTATUP(q->zone, qudp);
+			} else if (data->socket->addr->ai_family == AF_INET6) {
+				ZTATUP(q->zone, qudp6);
+			}
+#endif
 
 			/* Add EDNS0 and TSIG info if necessary.  */
 			query_add_optional(q, data->nsd);
@@ -1582,22 +1692,29 @@ handle_udp(netio_type *ATTR_UNUSED(netio),
 			if (sent == -1) {
 				log_msg(LOG_ERR, "sendto failed: %s", strerror(errno));
 				STATUP(data->nsd, txerr);
+				ZTATUP(q->zone, txerr);
 			} else if ((size_t) sent != buffer_remaining(q->packet)) {
 				log_msg(LOG_ERR, "sent %d in place of %d bytes", sent, (int) buffer_remaining(q->packet));
 			} else {
 #ifdef BIND8_STATS
 				/* Account the rcode & TC... */
 				STATUP2(data->nsd, rcode, RCODE(q->packet));
-				if (TC(q->packet))
+				ZTATUP2(q->zone, rcode, RCODE(q->packet));
+				if (TC(q->packet)) {
 					STATUP(data->nsd, truncated);
+					ZTATUP(q->zone, truncated);
+				}
 #endif /* BIND8_STATS */
 			}
 		} else {
 			STATUP(data->nsd, dropped);
-		}
-#ifndef NONBLOCKING_IS_BROKEN
-	}
+#if defined(BIND8_STATS) && defined(USE_ZONE_STATS)
+			if (q->zone) {
+				ZTATUP(q->zone, dropped);
+			}
 #endif
+		}
+	}
 }
 
 
@@ -1759,8 +1876,9 @@ handle_tcp_reading(netio_type *netio,
 	assert(buffer_position(data->query->packet) == data->query->tcplen);
 
 	/* Account... */
+#ifdef BIND8_STATS
 #ifndef INET6
-        STATUP(data->nsd, ctcp);
+	STATUP(data->nsd, ctcp);
 #else
 	if (data->query->addr.ss_family == AF_INET) {
 		STATUP(data->nsd, ctcp);
@@ -1768,6 +1886,7 @@ handle_tcp_reading(netio_type *netio,
 		STATUP(data->nsd, ctcp6);
 	}
 #endif
+#endif /* BIND8_STATS */
 
 	/* We have a complete query, process it.  */
 
@@ -1779,15 +1898,36 @@ handle_tcp_reading(netio_type *netio,
 	if (data->query_state == QUERY_DISCARDED) {
 		/* Drop the packet and the entire connection... */
 		STATUP(data->nsd, dropped);
+#if defined(BIND8_STATS) && defined(USE_ZONE_STATS)
+		if (data->query->zone) {
+			ZTATUP(data->query->zone, dropped);
+		}
+#endif
 		cleanup_tcp_handler(netio, handler);
 		return;
 	}
 
+#ifdef BIND8_STATS
 	if (RCODE(data->query->packet) == RCODE_OK
 	    && !AA(data->query->packet))
 	{
 		STATUP(data->nsd, nona);
+		ZTATUP(data->query->zone, nona);
 	}
+
+#ifdef USE_ZONE_STATS
+#ifndef INET6
+	ZTATUP(data->query->zone, ctcp);
+#else
+	if (data->query->addr.ss_family == AF_INET) {
+		ZTATUP(data->query->zone, ctcp);
+	} else if (data->query->addr.ss_family == AF_INET6) {
+		ZTATUP(data->query->zone, ctcp6);
+	}
+#endif
+#endif /* USE_ZONE_STATS */
+
+#endif /* BIND8_STATS */
 
 	query_add_optional(data->query, data->nsd);
 
@@ -1840,9 +1980,9 @@ handle_tcp_writing(netio_type *netio,
 				if(verbosity >= 2 || errno != ECONNRESET)
 #endif /* ECONNRESET */
 #ifdef EPIPE
-				  if(verbosity >= 2 || errno != EPIPE)
+					if(verbosity >= 2 || errno != EPIPE)
 #endif /* EPIPE 'broken pipe' */
-				    log_msg(LOG_ERR, "failed writing to tcp: %s", strerror(errno));
+				log_msg(LOG_ERR, "failed writing to tcp: %s", strerror(errno));
 				cleanup_tcp_handler(netio, handler);
 				return;
 			}
@@ -1877,7 +2017,7 @@ handle_tcp_writing(netio_type *netio,
 			if(verbosity >= 2 || errno != ECONNRESET)
 #endif /* ECONNRESET */
 #ifdef EPIPE
-				  if(verbosity >= 2 || errno != EPIPE)
+					if(verbosity >= 2 || errno != EPIPE)
 #endif /* EPIPE 'broken pipe' */
 			log_msg(LOG_ERR, "failed writing to tcp: %s", strerror(errno));
 			cleanup_tcp_handler(netio, handler);

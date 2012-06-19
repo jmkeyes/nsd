@@ -1,7 +1,7 @@
 /*
  * rdata.c -- RDATA conversion functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -46,11 +46,11 @@ lookup_table_type dns_certificate_types[] = {
 
 /* Taken from RFC 2535, section 7.  */
 lookup_table_type dns_algorithms[] = {
-	{ 1, "RSAMD5" },	/* RFC 2537 */
-	{ 2, "DH" },		/* RFC 2539 */
-	{ 3, "DSA" },		/* RFC 2536 */
+	{ 1, "RSAMD5" },		/* RFC 2537 */
+	{ 2, "DH" },			/* RFC 2539 */
+	{ 3, "DSA" },			/* RFC 2536 */
 	{ 4, "ECC" },
-	{ 5, "RSASHA1" },	/* RFC 3110 */
+	{ 5, "RSASHA1" },		/* RFC 3110 */
 	{ 6, "DSA-NSEC3-SHA1" },	/* RFC 5155 */
 	{ 7, "RSASHA1-NSEC3-SHA1" },	/* RFC 5155 */
 	{ 8, "RSASHA256" },		/* RFC 5702 */
@@ -708,11 +708,9 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 				temp_rdatas[i].data[0] = dname->name_size;
 				memcpy(temp_rdatas[i].data+1, dname_name(dname),
 					dname->name_size);
-			} else {
+			} else
 				temp_rdatas[i].domain
 					= domain_table_insert(owners, dname);
-				temp_rdatas[i].domain->usage ++;
-			}
 		} else {
 			if (buffer_position(packet) + length > end) {
 				if (required) {
