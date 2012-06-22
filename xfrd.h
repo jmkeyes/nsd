@@ -1,7 +1,7 @@
 /*
  * xfrd.h - XFR (transfer) Daemon header file. Coordinates SOA updates.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -10,6 +10,7 @@
 #ifndef XFRD_H
 #define XFRD_H
 
+#include "config.h"
 #include "netio.h"
 #include "rbtree.h"
 #include "namedb.h"
@@ -23,7 +24,6 @@ struct buffer;
 struct xfrd_tcp;
 struct xfrd_tcp_set;
 struct notify_zone_t;
-struct udb_ptr;
 typedef struct xfrd_state xfrd_state_t;
 typedef struct xfrd_zone xfrd_zone_t;
 typedef struct xfrd_soa xfrd_soa_t;
@@ -41,12 +41,10 @@ struct xfrd_state {
 	struct xfrd_tcp_set* tcp_set;
 	/* packet buffer for udp packets */
 	struct buffer* packet;
-	/* udp waiting list, double linked list */
+	/* udp waiting list */
 	struct xfrd_zone *udp_waiting_first, *udp_waiting_last;
 	/* number of udp sockets (for sending queries) in use */
 	size_t udp_use_num;
-	/* activated waiting list, double linked list */
-	struct xfrd_zone *activated_first;
 
 	/* current time is cached */
 	uint8_t got_time;
@@ -61,14 +59,18 @@ struct xfrd_state {
 
 	/* communication channel with server_main */
 	netio_handler_type ipc_handler;
+	uint8_t ipc_is_soa;
+	uint8_t parent_soa_info_pass;
+	uint8_t parent_bad_soa_infos;
 	struct xfrd_tcp *ipc_conn;
 	struct buffer* ipc_pass;
 	/* sending ipc to server_main */
-	uint8_t need_to_send_shutdown;
+	struct xfrd_tcp *ipc_conn_write;
 	uint8_t need_to_send_reload;
 	uint8_t need_to_send_quit;
+	uint8_t sending_zone_state;
 	uint8_t	ipc_send_blocked;
-	struct udb_ptr* last_task;
+	stack_type* dirty_zones; /* stack of xfrd_zone* */
 
 	/* xfrd shutdown flag */
 	uint8_t shutdown;
@@ -117,10 +119,11 @@ struct xfrd_zone {
 	const dname_type* apex;
 	const char* apex_str;
 
-	/* Three types of soas:
+	/* Four types of soas:
 	 * NSD: in use by running server
 	 * disk: stored on disk in db/diff file
 	 * notified: from notification, could be available on a master.
+	 * bad: received via xfr but did not verify
 	 * And the time the soa was acquired (start time for timeouts).
 	 * If the time==0, no SOA is available.
 	 */
@@ -130,12 +133,18 @@ struct xfrd_zone {
 	time_t soa_disk_acquired;
 	xfrd_soa_t soa_notified;
 	time_t soa_notified_acquired;
+	xfrd_soa_t soa_bad;
+	time_t soa_bad_acquired;
 
 	enum xfrd_zone_state {
 		xfrd_zone_ok,
 		xfrd_zone_refreshing,
 		xfrd_zone_expired
 	} state;
+
+	/* if state is dirty it needs to be sent to server_main.
+	 * it is also on the dirty_stack. Not saved on disk. */
+	uint8_t dirty;
 
 	/* master to try to transfer from, number for persistence */
 	acl_options_t* master;
@@ -156,17 +165,10 @@ struct xfrd_zone {
 	uint8_t tcp_waiting;
 	/* next zone in waiting list */
 	xfrd_zone_t* tcp_waiting_next;
-	xfrd_zone_t* tcp_waiting_prev;
 	/* zone is waiting for a udp connection (tcp is preferred) */
 	uint8_t udp_waiting;
 	/* next zone in waiting list for UDP */
 	xfrd_zone_t* udp_waiting_next;
-	xfrd_zone_t* udp_waiting_prev;
-	/* zone has been activated to run now (after the other events
-	 * but before blocking in select again) */
-	uint8_t is_activated;
-	xfrd_zone_t* activated_next;
-	xfrd_zone_t* activated_prev;
 
 	/* xfr message handling data */
 	/* query id */
@@ -203,17 +205,10 @@ enum xfrd_packet_result {
 extern xfrd_state_t* xfrd;
 
 /* start xfrd, new start. Pass socket to server_main. */
-void xfrd_init(int socket, struct nsd* nsd, int shortsoa, int reload_active);
-
-/* add new slave zone, dname(in xfrd-region) and given options */
-void xfrd_init_slave_zone(xfrd_state_t* xfrd, const dname_type* dname,
-	zone_options_t* zone_opt);
-
-/* delete slave zone */
-void xfrd_del_slave_zone(xfrd_state_t* xfrd, const dname_type* dname);
+void xfrd_init(int socket, struct nsd* nsd);
 
 /* get the current time epoch. Cached for speed. */
-time_t xfrd_time(void);
+time_t xfrd_time();
 
 /*
  * Handle final received packet from network.
@@ -257,7 +252,7 @@ void xfrd_udp_release(xfrd_zone_t* zone);
 /*
  * Get a static buffer for temporary use (to build a packet).
  */
-struct buffer* xfrd_get_temp_buffer(void);
+struct buffer* xfrd_get_temp_buffer();
 
 /*
  * TSIG sign outgoing request. Call if acl has a key.
@@ -274,38 +269,27 @@ void xfrd_handle_incoming_soa(xfrd_zone_t* zone, xfrd_soa_t* soa,
    the packet. The packet is the network blob received. */
 void xfrd_handle_passed_packet(buffer_type* packet, int acl_num);
 
-/* try to reopen the logfile. */
-void xfrd_reopen_logfile(void);
+/* send expiry notify for all zones to nsd (sets all dirty). */
+void xfrd_send_expy_all_zones();
 
-/* free namedb for xfrd usage */
-void xfrd_free_namedb(struct nsd* nsd);
+/* try to reopen the logfile. */
+void xfrd_reopen_logfile();
 
 /* copy SOA info from rr to soa struct. */
 void xfrd_copy_soa(xfrd_soa_t* soa, rr_type* rr);
 
 /* check for failed updates - it is assumed that now the reload has
    finished, and all zone SOAs have been sent. */
-void xfrd_check_failed_updates(void);
+void xfrd_check_failed_updates();
 
 /*
  * Prepare zones for a reload, this sets the times on the zones to be
  * before the current time, so the reload happens after.
  */
-void xfrd_prepare_zones_for_reload(void);
+void xfrd_prepare_zones_for_reload();
 
 /* Bind a local interface to a socket descriptor, return 1 on success */
 int xfrd_bind_local_interface(int sockd, acl_options_t* ifc,
 	acl_options_t* acl, int tcp);
-
-/* process results and soa info from reload */
-void xfrd_process_task_result(xfrd_state_t* xfrd, struct udb_base* taskudb);
-
-/* set to reload right away (for user controlled reload events) */
-void xfrd_set_reload_now(xfrd_state_t* xfrd);
-
-/* handle incoming notify (soa or NULL) and start zone xfr if necessary */
-void xfrd_handle_notify_and_start_xfr(xfrd_zone_t* zone, xfrd_soa_t* soa);
-
-const char* xfrd_pretty_time(time_t v);
 
 #endif /* XFRD_H */

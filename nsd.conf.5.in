@@ -1,30 +1,30 @@
-.TH "nsd.conf" "5" "@date@" "NLnet Labs" "nsd @version@"
-.\" Copyright (c) 2001\-2008, NLnet Labs. All rights reserved.
+.TH "credns.conf" "5" "@date@" "NLnet Labs" "credns @version@"
+.\" Copyright (c) 2001\-2011, NLnet Labs. All rights reserved.
 .\" See LICENSE for the license.
 .SH "NAME"
 .LP
-.B nsd.conf
-\- NSD configuration file
+.B credns.conf
+\- Credns configuration file
 .SH "SYNOPSIS"
 .LP
-.B nsd.conf
+.B credns.conf
 .SH "DESCRIPTION"
-.B Nsd.conf
-is used to configure nsd(8). The file format has attributes and 
+.B Credns.conf
+is used to configure credns(8). The file format has attributes and 
 values. Some attributes have attributes inside them. The notation 
 is: attribute: value. 
 .PP
 Comments start with # and last to the end of line. Empty lines are
 ignored as is whitespace at the beginning of a line.
 .PP
-.B Nsd.conf
-specifies options for the nsd server, zone files, primaries and 
+.B Credns.conf
+specifies options for the credns server, zone files, primaries and 
 secondaries.
 .SH "EXAMPLE"
 .LP
-An example of a short nsd.conf file is below.
+An example of a short credns.conf file is below.
 .LP
-# Example.com nsd.conf file
+# Example.com credns.conf file
 .RS 0
 # This is a comment.
 .RE
@@ -32,9 +32,6 @@ An example of a short nsd.conf file is below.
 server:
 .RS 5
 database: "@dbfile@"
-.RE
-.RS 5
-zonelistfile: "@zonelistfile@"
 .RE
 .RS 5
 username: @user@
@@ -51,16 +48,37 @@ difffile: "@difffile@"
 .RS 5
 xfrdfile: "@xfrdfile@"
 .RE
-.TP
+.RS 5
+ip-address: 10.10.0.1
+.RE
+.sp
 zone:
 .RS 5
 name: example.com
 .RE
+.sp
 .RS 5
-# note that quotes are optional on the value
+# Accept notifies and xfr from the hidden master
 .RE
 .RS 5
-zonefile: @configdir@/example.com.zone 
+allow-notify: 10.0.0.1 NOKEY
+.RE
+.RS 5
+request-xfr: 10.0.0.1 NOKEY
+.RE
+.sp
+.RS 5
+verifier: ldns-verify-zone -V2
+.RE
+.sp
+.RS 5
+# Notify and xfr to the public slave
+.RE
+.RS 5
+notify: 10.20.0.1 NOKEY
+.RE
+.RS 5
+provide-xfr: 10.20.0.1 NOKEY
 .RE
 .SH "FILE FORMAT"
 There must be whitespace between keywords. Attribute keywords end 
@@ -69,32 +87,26 @@ attributes, or a value.
 .P
 At the top level only 
 .B server:
-and
-.B key: 
-and 
-.B pattern:
-and
+or
 .B zone: 
+or 
+.B key: 
 are allowed. These are followed by their attributes or the start of 
 a new 
 .B server:
-or 
-.B key: 
-or
-.B pattern:
 or
 .B zone: 
+or 
+.B key: 
 clause. The 
 .B zone:
 attribute is followed by zone options. The 
 .B server: 
 attribute is followed by global options for the 
-.B NSD 
+.B credns
 server. A 
 .B key: 
-attribute is used to define keys for authentication. The
-.B pattern:
-attribute is followed by the zone options for zones that use the pattern.
+attribute is used to define keys for authentication.
 .P
 Files can be included using the 
 .B include:
@@ -103,7 +115,7 @@ an argument. Processing continues as if the text from the included
 file was copied into the config file at that point.
 .SS "Server Options"
 .LP
-The global options (if not overridden from the NSD commandline) are 
+The global options (if not overridden from the credns commandline) are 
 taken from the 
 .B server: 
 clause. There may only be one 
@@ -111,23 +123,23 @@ clause. There may only be one
 clause.
 .TP
 .B ip\-address:\fR <ip4 or ip6>[@port]
-NSD will bind to the listed ip\-address. Can be give multiple times 
+Credns will bind to the listed ip\-address. Can be give multiple times 
 to bind multiple ip\-addresses. Optionally, a port number can be given.
-If none are given NSD listens to the wildcard interface. Same as commandline option 
+If none are given dnssext listens to the wildcard interface. Same as commandline option 
 .BR \-a.
 .TP
 .B debug\-mode:\fR <yes or no>
-Turns on debugging mode for nsd, does not fork a daemon process. 
+Turns on debugging mode for credns, does not fork a daemon process. 
 Default is no. Same as commandline option 
 .BR \-d.
 .TP
 .B ip4\-only:\fR <yes or no>
-If yes, NSD only listens to IPv4 connections. Same as commandline 
+If yes, credns only listens to IPv4 connections. Same as commandline 
 option 
 .BR \-4.
 .TP
 .B ip6\-only:\fR <yes or no>
-If yes, NSD only listens to IPv6 connections. Same as commandline 
+If yes, credns only listens to IPv6 connections. Same as commandline 
 option 
 .BR \-6.
 .TP
@@ -137,13 +149,6 @@ By default
 is used. The specified file is used to store the compiled 
 zone information. Same as commandline option 
 .BR \-f.
-.TP
-.B zonelistfile:\fR <filename>
-By default 
-.I @zonelistfile@
-is used. The specified file is used to store the dynamically added
-list of zones.  The list is written to by NSD to add and delete zones.
-It is a text file with a zone\-name and pattern\-name on each line.
 .TP
 .B identity:\fR <string>
 Returns the specified identity when asked for CH TXT ID.SERVER. 
@@ -162,7 +167,7 @@ syslog (with facility LOG_DAEMON). Same as commandline option
 .BR \-l .
 .TP
 .B server\-count:\fR <number>
-Start this many NSD servers. Default is 1. Same as commandline 
+Start this many credns servers. Default is 1. Same as commandline 
 option 
 .BR \-N .
 .TP
@@ -201,8 +206,11 @@ If not present no statistics are dumped. Statistics are produced
 every number seconds. Same as commandline option 
 .BR \-s .
 .TP
+.B zone-stats-file:\fR <filename>
+If per zone statistics is enabled, file to dump the statistics.
+.TP
 .B chroot:\fR <directory>
-NSD will chroot on startup to the specified directory. Same as 
+Credns will chroot on startup to the specified directory. Same as 
 commandline option 
 .BR \-t .
 .TP
@@ -212,23 +220,25 @@ username. Can be username, id or id.gid. Same as commandline option
 .BR \-u .
 .TP
 .B zonesdir:\fR <directory>
-Change the working directory to the specified directory before accessing
-zone files. Also nsd(8) will access files (pid file, database file, log
-file) relative to this directory. Set the value to "" (the empty string)
-to disable the change of working directory.
+Change the working directory to the specified directory before 
+accessing zone files. Same as commandline option 
+.B \-d 
+for zonec(8). Also credns(8) will access files (pid file, database 
+file, log file) relative to this directory. Set the value to "" 
+(the empty string) to disable the change of working directory.
 .TP
 .B difffile:\fR <filename>
-When NSD receives IXFR updates it will store them in this file. 
+When credns receives IXFR updates it will store them in this file. 
 This file contains the differences between the database file and the 
 latest zone version. Default is 
 .IR @difffile@ .
 .TP
 .B xfrdfile:\fR <filename>
-The soa timeout and zone transfer daemon in NSD will save its state 
+The soa timeout and zone transfer daemon in credns will save its state 
 to this file. State is read back after a restart. The state file can 
 be deleted without too much harm, but timestamps of zones will be 
 gone. For more details see the section on zone expiry behavior of 
-NSD. Default is
+credns. Default is
 .IR @xfrdfile@ .
 .TP
 .B xfrd\-reload\-timeout:\fR <number>
@@ -236,7 +246,7 @@ If this value is \-1, xfrd will not trigger a reload after a zone
 transfer. If positive xfrd will trigger a reload after a zone 
 transfer, then it will wait for the number of seconds before it will 
 trigger a new reload. Setting this value throttles the reloads to 
-once per the number of seconds. The default is 1 second.
+once per the number of seconds. The default is 10 seconds.
 .TP
 .B verbosity:\fR <level>
 This value specifies the verbosity level for (non\-debug) logging. 
@@ -244,79 +254,48 @@ Default is 0. 1 gives more information about incoming notifies and
 zone transfers. 2 lists soft warnings that are encountered.
 .TP
 .B hide\-version:\fR <yes or no>
-Prevent NSD from replying with the version string on CHAOS class 
+Prevent credns from replying with the version string on CHAOS class 
 queries.
-.SS "Remote Control"
-The
-.B remote\-control:
-clause is used to set options for using the \fInsd\-control\fR(8)
-tool to give commands to the running NSD server.  It is disabled by
-default, and listens for localhost by default.  It uses TLS over TCP
-where the server and client authenticate to each other with self\-signed
-certificates.  The self\-signed certificates can be generated with the
-\fInsd\-control\-setup\fR tool.  The key files are read by NSD before
-the chroot and before dropping user permissions, so they can be outside
-the chroot and readable by the superuser only.
 .TP
-.B control\-enable:\fR <yes or no>
-Enable remote control, default is no.
+.B verifier\-count:\fR <number>
+Number of verifiers that may run simultaneously.
+0 means that no verifiers should be run at all, which will prevent all zones
+\- with a 
+.B verifier: 
+attribute in their 
+.B zone:
+clause \- from being updated by IXFR
+or AXFR.
+The default is 1.
 .TP
-.B control\-interface:\fR <ip4 or ip6>
-NSD will bind to the listed addresses to service control requests
-(on TCP).  Can be given multiple times to bind multiple ip-addresses.
-Use 0.0.0.0 and ::0 to service the wildcard interface.  If none are given
-NSD listens to the localhost 127.0.0.1 and ::1 interfaces for control,
-if control is enabled with control-enable.
+.B verifier\-feed-zone:\fR <yes or no>
+Feed a by IXFR or AXFR updated zone to the standard input (stdin) 
+of a verifier.
+The default is "yes".
+This attribute may be overloaded per zone.
 .TP
-.B control\-port:\fR <number>
-The port number for remote control service. 8952 by default.
+.B verify\-ip\-address:\fR <ip4 or ip6>[@port]
+Serve the zone to the verifier on the listed ip-address.
+Can be given multiple times to bind multiple ip-addresses.
+Optionally, a port number can be given.
+The default is to have no 
+.B \%verify\-ip\-address:
+and to not serve the zone to a verifier.
 .TP
-.B server\-key\-file:\fR <filename>
-Path to the server private key, by default nsd_server.key.
-This file is generated by the \fInsd\-control\-setup\fR utility.
-This file is used by the nsd server, but not by \fInsd\-control\fR.
+.B verify-port:\fR <number>
+Serve the zone to the verifier on this port. 
+Note that the zone will not be served to a verifier when no
+.B \%verify\-ip\-address:
+attribute is given.
+The default is port 5347.
 .TP
-.B server\-cert\-file:\fR <filename>
-Path to the server self signed certificate, by default nsd_server.pem.
-This file is generated by the \fInsd\-control\-setup\fR utility.
-This file is used by the nsd server, and also by \fInsd\-control\fR.
-.TP
-.B control\-key\-file:\fR <filename>
-Path to the control client private key, by default nsd_control.key.
-This file is generated by the \fInsd\-control\-setup\fR utility.
-This file is used by \fInsd\-control\fR.
-.TP
-.B control\-cert\-file:\fR <filename>
-Path to the control client certificate, by default nsd_control.pem.
-This certificate has to be signed with the server certificate.
-This file is generated by the \fInsd\-control\-setup\fR utility.
-This file is used by \fInsd\-control\fR.
-.SS "Pattern Options"
-The
-.B pattern:
-clause is used to denote a set of options to apply to some zones.
-The same zone options as for a zone are allowed.
-.TP
-.B name:\fR <string>
-The name of the pattern.  This is a (case sensitive) string.
-.TP
-.B include-pattern:\fR <pattern-name>
-The options from the given pattern are included at this point in
-this pattern.  The referenced pattern must be defined above this one.
-.TP
-.B <zone option>:\fR <value>
-The zone options such as
-.BR zonefile ,
-.BR allow-notify ,
-.BR request-xfr ,
-.BR allow-axfr-fallback ,
-.BR notify ,
-.BR notify-retry ,
-.BR provide-xfr ,
-and
-.B outgoing-interface 
-can be given.  They are applied to the patterns and zones that include
-this pattern.
+.B verifier\-timeout:\fR <number>
+The maximum number of seconds a verifier should take for assessing one zone.
+If the verifier takes longer, it will be terminated and the update to the
+zone will be discarded.
+The default is 0 seconds which means the verifier may take as long as it
+needs.
+This attribute may be overloaded per zone.
 .SS "Zone Options"
 .LP 
 For every zone the options need to be specified in one 
@@ -324,10 +303,6 @@ For every zone the options need to be specified in one
 clause. The access control list elements can be given multiple 
 times to add multiple servers. These elements need to be added
 explicitly.
-.LP
-For zones that are configured in the \fInsd.conf\fR config file their
-settings are hardcoded (in an implicit pattern for themselves only)
-and they cannot be dynamically deleted.
 .TP
 .B name:\fR <string>
 The name of the zone. This is the domain name of the apex of the 
@@ -336,8 +311,8 @@ zone. May end with a '.' (in FQDN notation). For example
 each zone.
 .TP
 .B zonefile:\fR <filename>
-The file containing the zone information. This attribute must be present
-in each zone.
+The file containing the zone information. This file is used by 
+zonec(8). This attribute must be present in each zone.
 .TP
 .B allow\-notify:\fR <ip\-spec> <key\-name | NOKEY | BLOCKED>
 Access control list. The listed (primary) address is allowed to 
@@ -363,26 +338,26 @@ for example 1.2.3.4@5300. The specified key is used during AXFR/IXFR.
 .RS
 If the AXFR option is given, the server will not be contacted with 
 IXFR queries but only AXFR requests will be made to the server. This 
-allows an NSD secondary to have a master server that runs NSD. If 
+allows an credns secondary to have a master server that runs NSD. If 
 the AXFR option is left out then both IXFR and AXFR requests are 
 made to the master server.
 .P
 If the UDP option is given, the secondary will use UDP to transmit the IXFR 
 requests. You should deploy TSIG when allowing UDP transport, to authenticate
-notifies and zone transfers. Otherwise, NSD is more vulnerable for 
+notifies and zone transfers. Otherwise, credns is more vulnerable for 
 Kaminsky-style attacks. If the UDP option is left out then IXFR will be 
 transmitted using TCP.
 .RE
 .TP
 .B allow\-axfr\-fallback:\fR <yes or no>
-This option should be accompanied by request-xfr. It (dis)allows NSD (as secondary) 
+This option should be accompanied by request-xfr. It (dis)allows credns (as secondary) 
 to fallback to AXFR if the primary name server does not support IXFR. Default is yes.
 .TP
 .B notify:\fR <ip\-address> <key\-name | NOKEY>
 Access control list. The listed address (a secondary) is notified 
 of updates to this zone. A port number can be added using a suffix of @number,
 for example 1.2.3.4@5300. The specified key is used to sign the 
-notify. Only on secondary configurations will NSD be able to detect 
+notify. Only on secondary configurations will credns be able to detect 
 zone updates (as it gets notified itself, or refreshes after a 
 time).
 .TP
@@ -415,9 +390,81 @@ A port number can be added using a suffix of @number, for example
 1.2.3.4@5300.
 .RE
 .TP
-.B include-pattern:\fR <pattern-name>
-The options from the given pattern are included at this point.
-The referenced pattern must be defined above this zone.
+.B verifier: <program with arguments>
+When an update is received for the zone (by IXFR or AXFR) this program will
+be run to asses the zone with the update.
+When the program exits with a status code of 0, the zone is considered good
+and will be served.
+Any other status code will designate the zone bad and the received update
+will be discarded.
+Credns will then continue to serve the zone but without the update.
+.P
+.RS
+The following environment variables are available for verifiers:
+.P
+.RS
+.B VERIFY_ZONE
+.RS
+The domain name of the zone to be verified.
+.RE
+.B VERIFY_ZONE_ON_STDIN
+.RS
+When the zone can be read from the standard input, this variable will be set to
+"yes", otherwise it will be empty.
+.RE
+.B VERIFY_IP_ADDRESSES
+.RS
+A list of <ip-address>@<port> combinations on which the zones to be assessed
+will be served.
+.RE
+.B VERIFY_IP_ADDRESS
+.RS
+The first address on which the zones to be assessed will be served.
+If IPv6 is available an IPv6 address will be prefered over IPv4.
+.RE
+.B VERIFY_PORT
+.RS
+the port number for 
+.B VERIFY_IP_ADDRESS
+.RE
+.B VERIFY_IPV6_ADDRESS
+.RS
+The first IPv6 address on which the zones to be assessed will be served.
+.RE
+.B VERIFY_IPV6_PORT
+.RS
+The port number for 
+.B VERIFY_IPV6_ADDRESS.
+.RE
+.B VERIFY_IPV4_ADDRESS
+.RS
+The first IPv4 address on which the zones to be assessed will be served.
+.RE
+.B VERIFY_IPV4_PORT
+.RS
+The port number for 
+.B VERIFY_IPV4_ADDRESS.
+.RE
+.RE
+.RE
+.TP
+.B verifier\-feed-zone:\fR <yes, no or inherit>
+Feed the updated zone on the standard input (stdin) of the verifier.
+The default is "inherit", which means that the value of the 
+.B \%verifier\-feed\-zone:
+attribute from the 
+.B \%server:
+clause will be used.
+.TP
+.B verifier\-timeout:\fR <number or inherit>
+The maximum number of seconds a verifier should take for assessing one zone.
+If the verifier takes longer, it will be terminated and the update to the
+zone will be discarded.
+The default is "inherit", which means that the value of the 
+.B \%verifier\-timeout:
+attribute from the 
+.B \%server:
+clause will be used.
 .SS "Key Declarations"
 The 
 .B key: 
@@ -437,19 +484,19 @@ declaration (and base64 blob) into a different file, and then to
 .B include:
 that file. In this way the key secret and the rest of the configuration
 file, which may have different security policies, can be split apart.
-.SH "NSD CONFIGURATION FOR BIND9 HACKERS"
+.SH "CREDNS CONFIGURATION FOR BIND9 HACKERS"
 BIND9 is a name server implementation with its own configuration 
 file format, named.conf(5). BIND9 types zones as 'Master' or 'Slave'. 
 .SS "Slave zones"
 For a slave zone, the master servers are listed. The master servers are 
 queried for zone data, and are listened to for update notifications. 
-In NSD these two properties need to be configured separately, by listing 
+In credns these two properties need to be configured separately, by listing 
 the master address in allow\-notify and request\-xfr statements. 
 .P
 In BIND9 you only need to provide allow\-notify elements for
-any extra sources of notifications (i.e. the operators), NSD needs to have
+any extra sources of notifications (i.e. the operators), credns needs to have
 allow\-notify for both masters and operators. BIND9 allows 
-additional transfer sources, in NSD you list those as request\-xfr.
+additional transfer sources, in credns you list those as request\-xfr.
 .P
 Here is an example of a slave zone in BIND9 syntax.
 .P
@@ -489,11 +536,11 @@ masters { 162.0.4.49; };
 .RE
 };
 .P
-For NSD, DNSSEC is enabled automatically for zones that are signed. The 
-dnssec\-enable statement in the options clause is not needed. In NSD 
+For credns, DNSSEC is enabled automatically for zones that are signed. The 
+dnssec\-enable statement in the options clause is not needed. In credns
 keys are associated with an IP address in the access control list 
 statement, therefore the server{} statement is not needed. Below is 
-the same example in an NSD config file.
+the same example in an credns config file.
 .LP
 # Config file for example.org
 .RS 0
@@ -533,10 +580,10 @@ added to specify more masters.
 .P
 It is possible to specify extra allow\-notify lines for addresses 
 that are also allowed to send notifications to this slave server.
-.SS "Master zones"
+.SS "Providing transfer"
 For a master zone in BIND9, the slave servers are listed. These slave
 servers are sent notifications of updated and are allowed to request
-transfer of the zone data. In NSD these two properties need to be 
+transfer of the zone data. In credns these two properties need to be 
 configured separately.
 .P
 Here is an example of a master zone in BIND9 syntax.
@@ -550,7 +597,7 @@ file "example.nl";
 .RE
 };
 .LP
-In NSD syntax this becomes:
+In credns syntax this becomes:
 .LP
 zone:
 .RS 5
@@ -579,34 +626,37 @@ provide\-xfr: ::0/0 NOKEY
 # notify: 1.2.3.4 NOKEY
 .RE
 .SS "Other"
-NSD is an authoritative only DNS server. This means that it is 
-meant as a primary or secondary server for zones, providing DNS 
-data to DNS resolvers and caches. BIND9 can function as an 
-authoritative DNS server, the configuration options for that are 
-compared with those for NSD in this section. However, BIND9 can 
-also function as a resolver or cache. The configuration options that
-BIND9 has for the resolver or caching thus have no equivalents for NSD.
+Credns is an authoritative transfer only DNS. This means that it is meant to
+request and provide transfer and notifies to other authoritative nameservers.
+BIND9 can function as an authoritative DNS server, the configuration options
+for that are compared with those for credns in this section. However, BIND9
+can also function as a resolver or cache. The configuration options that BIND9
+has for the resolver or caching thus have no equivalents for credns.
 .SH "FILES"
 .TP
 @dbfile@
 default
-.B NSD
+.B credns
 database
 .TP
 @nsdconfigfile@
 default
-.B NSD
+.B credns
 configuration file
 .SH "SEE ALSO" 
 .LP
-nsd(8), nsd\-checkconf(8), nsd\-control(8)
+credns(8), crednsc(8), credns\-checkconf(8), credns-notify(8), 
+credns-patch(8), credns-xfer(8)
 .SH "AUTHORS"
+.LP
+.B Credns
+was written by NLnet Labs.
 .LP
 .B NSD
 was written by NLnet Labs and RIPE NCC joint team. Please see 
 CREDITS file in the distribution for further details.
 .SH "BUGS"
 .LP
-.B nsd.conf
+.B credns.conf
 is parsed by a primitive parser, error messages may not be to the 
 point.
