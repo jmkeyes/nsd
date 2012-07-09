@@ -82,52 +82,41 @@ static int testcompare(const void *lhs, const void *rhs)
 /* our test tree displayed for test comparison */
 /* sink is assumed to be big enough to contain the tree */
 /* int is the size of the added text */
-static int tree_print_sub(struct testnode* tree, int depth, char* sink,
-	size_t* sinklen, char* prefix, size_t* prefixlen)
+static int tree_print_sub(struct testnode* tree, int depth, char* sink, char* prefix)
 {
 	char *oldsink = sink;
 	int preflen = strlen(prefix);
 	int len;
-	len=snprintf(sink, *sinklen, "%s", prefix);
+	sprintf(sink, "%s%n", prefix, &len);
 	sink += len;
-	*sinklen -= len;
 	if(depth > 0) {
-		len=snprintf(sink, *sinklen, "-");
+		sprintf(sink, "-%n", &len);
 		sink += len;
-		*sinklen -= len;
 	}
 	if((rbnode_t*)tree == RBTREE_NULL) {
-		len=snprintf(sink, *sinklen, "**\n");
+		sprintf(sink, "**\n%n", &len);
 		sink += len;
-		*sinklen -= len;
 		return sink-oldsink;
 	}
 	/* print this node */
-	len=snprintf(sink, *sinklen, "%d", tree->x);
+	sprintf(sink, "%d%n", tree->x, &len);
 	sink += len;
-	*sinklen -= len;
 	if(tree->node.color) {
-		len=snprintf(sink, *sinklen, "R\n");
+		sprintf(sink, "R\n%n", &len);
 		sink += len;
-		*sinklen -= len;
 	} else {
-		len=snprintf(sink, *sinklen, "B\n");
+		sprintf(sink, "B\n%n", &len);
 		sink += len;
-		*sinklen -= len;
 	}
 
 	if(tree->node.left != RBTREE_NULL || tree->node.right != RBTREE_NULL)
 	{
-		if(depth > 0) strlcat(prefix, " ", *prefixlen);
-		strlcat(prefix, "|", *prefixlen);
+		if(depth > 0) strcat(prefix, " ");
+		strcat(prefix, "|");
 		/* recurse. */
-		len = tree_print_sub((struct testnode*)tree->node.left, depth+1, sink, sinklen, prefix, prefixlen);
-		sink += len;
-		*sinklen -= len;
+		sink += tree_print_sub((struct testnode*)tree->node.left, depth+1, sink, prefix);
 		prefix[strlen(prefix)-1] = ' ';
-		len = tree_print_sub((struct testnode*)tree->node.right, depth+1, sink, sinklen, prefix, prefixlen);
-		sink += len;
-		*sinklen -= len;
+		sink += tree_print_sub((struct testnode*)tree->node.right, depth+1, sink, prefix);
 		prefix[preflen] = 0;
 	}
 	return sink - oldsink;
@@ -137,15 +126,12 @@ void tree_print(CuTest *tc, rbtree_t* tree)
 {
 	char buf[1024000];
 	char prefixbuf[10240];
-	size_t prefixlen = sizeof(prefixbuf);
 	char *sink = buf;
-	size_t sinklen = sizeof(buf);
 	int len;
-	len=snprintf(sink, sinklen, "Rbtree count=%d\n", (int)tree->count);
+	sprintf(sink, "Rbtree count=%d\n%n", (int)tree->count, &len);
 	sink += len;
-	sinklen -= len;
 	prefixbuf[0]=0;
-	sink += tree_print_sub((struct testnode*)tree->root, 0, sink, &sinklen, prefixbuf, &prefixlen);
+	sink += tree_print_sub((struct testnode*)tree->root, 0, sink, prefixbuf);
 	
 	CuAssert(tc, "sink - buf  < sizeof(buf)", (size_t)(sink - buf) < sizeof(buf));
 	printf("%s\n", buf);
@@ -418,6 +404,7 @@ static void rbtree_2(CuTest *tc)
 static void rbtree_3(CuTest *tc)
 {
 	/* check RBTREE_NULL contents */
+	CuAssert(tc, "RBTREE_NULL != 0", (RBTREE_NULL != 0));
 	CuAssert(tc, "RBTREE_NULL)->parent == RBTREE_NULL", ((RBTREE_NULL)->parent == RBTREE_NULL));
 	CuAssert(tc, "RBTREE_NULL)->left == RBTREE_NULL", ((RBTREE_NULL)->left == RBTREE_NULL));
 	CuAssert(tc, "RBTREE_NULL)->right == RBTREE_NULL", ((RBTREE_NULL)->right == RBTREE_NULL));
@@ -740,7 +727,4 @@ static void rbtree_10(CuTest *tc)
 	      }
 	      test_tree_integrity(tc, tree);
 	}
-
-	/* last test remove region */
-	region_destroy(reg);
 }
