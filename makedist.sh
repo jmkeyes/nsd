@@ -133,7 +133,7 @@ autoheader || error_cleanup "Autoheader failed."
 rm -r autom4te* || error_cleanup "Failed to remove autoconf cache directory."
 
 info "Building lexer and parser."
-echo '#include "config.h"' > zlexer.c || error_cleanup "Failed to create lexer."
+echo "#include <config.h>" > zlexer.c || error_cleanup "Failed to create lexer."
 flex -i -t zlexer.lex >> zlexer.c || error_cleanup "Failed to create lexer."
 bison -y -d -o zparser.c zparser.y || error_cleanup "Failed to create parser."
 echo "#include \"configyyrename.h\"" > configlexer.c || error_cleanup "Failed to create configlexer"
@@ -166,8 +166,12 @@ fi
 
 replace_all doc/README
 replace_all nsd.8.in
-replace_all nsd-control.8.in
+replace_all nsdc.8.in
+replace_all nsd-notify.8.in
 replace_all nsd-checkconf.8.in
+replace_all nsd-patch.8.in
+replace_all nsd-xfer.8.in
+replace_all zonec.8.in
 replace_all nsd.conf.5.in
 
 info "Renaming NSD directory to nsd-$version."

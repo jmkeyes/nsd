@@ -1,5 +1,5 @@
 .TH "NSD" "8" "@date@" "NLnet Labs" "NSD @version@"
-.\" Copyright (c) 2001\-2008, NLnet Labs. All rights reserved.
+.\" Copyright (c) 2001\-2011, NLnet Labs. All rights reserved.
 .\" See LICENSE for the license.
 .SH "NAME"
 .LP
@@ -56,7 +56,7 @@ argument and put itself into background and answers queries on port
 .I port
 option. The
 .I database
-is created if it does not exist. By default,
+must be generated beforehand with zonec(8). By default, 
 .B NSD 
 will bind to all local interfaces available. Use the 
 .B \-a
@@ -246,9 +246,19 @@ facility, unless the
 option is specified.
 .SH "SEE ALSO"
 .LP
-nsd.conf(5), nsd\-checkconf(8), nsd\-control(8)
+nsdc(8), nsd.conf(5), nsd\-checkconf(8), nsd\-notify(8), 
+nsd\-patch(8), nsd\-xfer(8), zonec(8)
 .SH "AUTHORS"
 .LP
 .B NSD
 was written by NLnet Labs and RIPE NCC joint team. Please see
 CREDITS file in the distribution for further details.
+.SH "BUGS"
+.LP
+.B NSD
+will answer the queries erroneously if the
+.I database
+was not properly compiled with zonec(8). Therefore problems with 
+misconfigured master zone files or zonec(8) bugs may not be visible 
+until the queries are actually answered with
+.BR NSD .
