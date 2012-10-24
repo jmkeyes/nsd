@@ -1,7 +1,7 @@
 /*
  * region-allocator.c -- region based memory allocator.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -19,11 +19,7 @@
 #undef ALIGNMENT
 #endif
 #define ALIGN_UP(x, s)     (((x) + s - 1) & (~(s - 1)))
-#if SIZEOF_OFF_T > SIZEOF_VOIDP
-#define ALIGNMENT	(sizeof(off_t))
-#else
-#define ALIGNMENT	(sizeof(void *))
-#endif
+#define ALIGNMENT          (sizeof(void *))
 #define CHECK_DOUBLE_FREE 0 /* set to 1 to perform expensive check for double recycle() */
 
 typedef struct cleanup cleanup_type;
@@ -438,11 +434,6 @@ size_t region_get_recycle_size(region_type* region)
 	return region->recycle_size;
 }
 
-size_t region_get_mem(region_type* region)
-{
-	return region->total_allocated;
-}
-
 /* debug routine, includes here to keep base region-allocator independent */
 #undef ALIGN_UP
 #include "util.h"
@@ -451,7 +442,7 @@ region_log_stats(region_type *region)
 {
 	char buf[10240], *str=buf;
 	int strl = sizeof(buf);
-	int len;
+	int len=0;
 	len=snprintf(str, strl, "%lu objects (%lu small/%lu large), %lu bytes allocated (%lu wasted) in %lu chunks, %lu cleanups, %lu in recyclebin",
 		(unsigned long) (region->small_objects + region->large_objects),
 		(unsigned long) region->small_objects,
