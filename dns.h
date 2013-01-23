@@ -1,7 +1,7 @@
 /*
  * dns.h -- DNS definitions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -167,8 +167,6 @@ typedef enum nsd_rc nsd_rc_type;
 #define IP4ADDRLEN	(32/8)
 #define IP6ADDRLEN	(128/8)
 
-#define NSEC3_HASH_LEN 20
-
 /*
  * The different types of RDATA wireformat data.
  */
@@ -188,7 +186,7 @@ enum rdata_wireformat
 	RDATA_WF_BINARYWITHLENGTH,   /* Binary data preceded by 1 byte length */
 	RDATA_WF_APL,		     /* APL data.  */
 	RDATA_WF_IPSECGATEWAY,	     /* IPSECKEY gateway ip4, ip6 or dname. */
-	RDATA_WF_AAAA_HALF	     /* 64-bit uncompressed IPv6 address.  */
+	RDATA_WF_ILNP64	     /* 64-bit uncompressed IPv6 address.  */
 };
 typedef enum rdata_wireformat rdata_wireformat_type;
 
@@ -222,7 +220,7 @@ enum rdata_zoneformat
 	RDATA_ZF_NXT,		/* NXT type bitmap.  */
 	RDATA_ZF_NSEC,		/* NSEC type bitmap.  */
 	RDATA_ZF_LOC,		/* Location data.  */
-	RDATA_ZF_AAAA_HALF,	/* 64-bit uncompressed IPv6 address.  */
+	RDATA_ZF_ILNP64,	/* 64-bit uncompressed IPv6 address.  */
 	RDATA_ZF_UNKNOWN	/* Unknown data.  */
 };
 typedef enum rdata_zoneformat rdata_zoneformat_type;
