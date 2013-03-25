@@ -1,7 +1,7 @@
 /*
  * dns.c -- DNS definitions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -93,11 +93,11 @@ static rrtype_descriptor_type rrtype_descriptors[(RRTYPE_DESCRIPTORS_LENGTH+1)] 
 	  { RDATA_ZF_TEXTS } },
 	/* 17 */
 	{ TYPE_RP, "RP", T_RP, 2, 2,
-	  { RDATA_WF_COMPRESSED_DNAME, RDATA_WF_COMPRESSED_DNAME },
+	  { RDATA_WF_UNCOMPRESSED_DNAME, RDATA_WF_UNCOMPRESSED_DNAME },
 	  { RDATA_ZF_DNAME, RDATA_ZF_DNAME } },
 	/* 18 */
 	{ TYPE_AFSDB, "AFSDB", T_AFSDB, 2, 2,
-	  { RDATA_WF_SHORT, RDATA_WF_COMPRESSED_DNAME },
+	  { RDATA_WF_SHORT, RDATA_WF_UNCOMPRESSED_DNAME },
 	  { RDATA_ZF_SHORT, RDATA_ZF_DNAME } },
 	/* 19 */
 	{ TYPE_X25, "X25", T_X25, 1, 1,
@@ -109,7 +109,7 @@ static rrtype_descriptor_type rrtype_descriptors[(RRTYPE_DESCRIPTORS_LENGTH+1)] 
 	  { RDATA_ZF_TEXT, RDATA_ZF_TEXT } },
 	/* 21 */
 	{ TYPE_RT, "RT", T_RT, 2, 2,
-	  { RDATA_WF_SHORT, RDATA_WF_COMPRESSED_DNAME },
+	  { RDATA_WF_SHORT, RDATA_WF_UNCOMPRESSED_DNAME },
 	  { RDATA_ZF_SHORT, RDATA_ZF_DNAME } },
 	/* 22 */
 	{ TYPE_NSAP, "NSAP", T_NSAP, 1, 1,
@@ -412,16 +412,16 @@ static rrtype_descriptor_type rrtype_descriptors[(RRTYPE_DESCRIPTORS_LENGTH+1)] 
 	{ 103, NULL, T_UTYPE, 1, 1, { RDATA_WF_BINARY }, { RDATA_ZF_UNKNOWN } },
 	/* 104 */
 	{ TYPE_NID, "NID", T_NID, 2, 2,
-	  { RDATA_WF_SHORT, RDATA_WF_AAAA_HALF },
-	  { RDATA_ZF_SHORT, RDATA_ZF_AAAA_HALF } },
+	  { RDATA_WF_SHORT, RDATA_WF_ILNP64 },
+	  { RDATA_ZF_SHORT, RDATA_ZF_ILNP64 } },
 	/* 105 */
 	{ TYPE_L32, "L32", T_L32, 2, 2,
 	  { RDATA_WF_SHORT, RDATA_WF_A },
 	  { RDATA_ZF_SHORT, RDATA_ZF_A } },
 	/* 106 */
 	{ TYPE_L64, "L64", T_L64, 2, 2,
-	  { RDATA_WF_SHORT, RDATA_WF_AAAA_HALF },
-	  { RDATA_ZF_SHORT, RDATA_ZF_AAAA_HALF } },
+	  { RDATA_WF_SHORT, RDATA_WF_ILNP64 },
+	  { RDATA_ZF_SHORT, RDATA_ZF_ILNP64 } },
 	/* 107 */
 	{ TYPE_LP, "LP", T_LP, 2, 2,
 	  { RDATA_WF_SHORT, RDATA_WF_UNCOMPRESSED_DNAME },

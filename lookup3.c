@@ -1,5 +1,5 @@
 /*
-  February 2013(Wouter) patch defines for BSD endianness, from Brad Smith.
+  February 2013(Matthijs) patch defines for BSD endianness, from Brad Smith.
   January 2012(Wouter) added randomised initial value, fallout from 28c3.
   March 2007(Wouter) adapted from lookup3.c original, add config.h include.
      added #ifdef VALGRIND to remove 298,384,660 'unused variable k8' warnings.
@@ -81,9 +81,6 @@ hash_set_raninit(uint32_t v)
      defined(__i586__) || defined(__i686__) || defined(vax) || defined(MIPSEL))
 # define HASH_LITTLE_ENDIAN 1
 # define HASH_BIG_ENDIAN 0
-#elif (!defined(_BYTE_ORDER) && !defined(__BYTE_ORDER) && defined(_BIG_ENDIAN))
-# define HASH_LITTLE_ENDIAN 0
-# define HASH_BIG_ENDIAN 1
 #elif (defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && \
        __BYTE_ORDER == __BIG_ENDIAN) || \
       (defined(_BYTE_ORDER) && defined(_BIG_ENDIAN) && \

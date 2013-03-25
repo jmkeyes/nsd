@@ -6,6 +6,7 @@
  */
 #include "config.h"
 #include <errno.h>
+#include <ctype.h>
 #include "rrl.h"
 #include "util.h"
 #include "lookup3.h"
@@ -32,8 +33,6 @@ struct rrl_bucket {
 	/* rate, in queries per second, which due to rate=r(t)+r(t-1)/2 is
 	 * equal to double the queries per second */
 	uint32_t rate;
-	/* the full hash */
-	uint32_t hash;
 	/* counter for queries arrived in this second */
 	uint32_t counter;
 	/* timestamp, which time is the time of the counter, the rate is from
@@ -52,6 +51,37 @@ static uint32_t rrl_whitelist_ratelimit = RRL_WLIST_LIMIT; /* 2x qps */
 /* the array of mmaps for the children (saved between reloads) */
 static void** rrl_maps = NULL;
 static size_t rrl_maps_num = 0;
+
+/* from NSD4 for RRL logs */
+static char* wiredname2str(const uint8_t* dname)
+{
+	static char buf[MAXDOMAINLEN*5+3];
+	char* p = buf;
+	uint8_t lablen;
+	if(*dname == 0) {
+		strlcpy(buf, ".", sizeof(buf));
+		return buf;
+	}
+	lablen = *dname++;
+	while(lablen) {
+		while(lablen--) {
+			uint8_t ch = *dname++;
+			if (isalnum(ch) || ch == '-' || ch == '_') {
+				*p++ = ch;
+			} else if (ch == '.' || ch == '\\') {
+				*p++ = '\\';
+				*p++ = ch;
+			} else {
+				snprintf(p, 5, "\\%03u", (unsigned int)ch);
+				p += 4;
+			}
+		}
+		lablen = *dname++;
+		*p++ = '.';
+	}
+	*p++ = 0;
+	return buf;
+}
 
 void rrl_mmap_init(int numch, size_t numbuck, size_t lm, size_t wlm)
 {
@@ -263,7 +293,7 @@ static void examine_query(query_type* query, uint32_t* hash, uint64_t* source,
 	*source = rrl_get_source(query, &c2);
 	c = rrl_classify(query, &dname, &dname_len);
 	if(query->zone && query->zone->opts && 
-		(query->zone->opts->pattern->rrl_whitelist & c))
+		(query->zone->opts->rrl_whitelist & c))
 		*lm = rrl_whitelist_ratelimit;
 	if(*lm == 0) return;
 	c |= c2;
@@ -307,8 +337,8 @@ rrl_msg(query_type* query, const char* str)
 	if(verbosity < 2) return;
 	s = rrl_get_source(query, &c2);
 	c = rrl_classify(query, &d, &d_len) | c2;
-	if(query->zone && query->zone->opts &&
-		(query->zone->opts->pattern->rrl_whitelist & c))
+	if(query->zone && query->zone->opts && 
+		(query->zone->opts->rrl_whitelist & c))
 		wl = 1;
 	log_msg(LOG_INFO, "ratelimit %s %s type %s%s target %s",
 		str, d?wiredname2str(d):"", rrltype2str(c),
@@ -332,16 +362,14 @@ uint32_t rrl_update(query_type* query, uint32_t hash, uint64_t source,
 		(long long unsigned)source, hash, b->rate, b->counter, b->stamp));
 
 	/* check if different source */
-	if(b->source != source || b->flags != flags || b->hash != hash) {
+	if(b->source != source || b->flags != flags) {
 		/* initialise */
 		/* potentially the wrong limit here, used lower nonwhitelim */
 		if(verbosity >=2 &&
 			used_to_block(b->rate, b->counter, rrl_ratelimit))
-			log_msg(LOG_INFO, "ratelimit unblock ~ type %s target %s (%s collision)",
+			log_msg(LOG_INFO, "ratelimit unblock ~ type %s target %s",
 				rrltype2str(b->flags),
-				rrlsource2str(b->source, b->flags),
-				(b->hash!=hash?"bucket":"hash"));
-		b->hash = hash;
+				rrlsource2str(b->source, b->flags));
 		b->source = source;
 		b->flags = flags;
 		b->counter = 1;
