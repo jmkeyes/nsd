@@ -1006,6 +1006,7 @@ NSD Version 3.0. and above
 
    draft-jabley-dnsext-eui48-eui64-rrtypes support for EUI48, EUI64 RR types.
 
+
 Not implemented:
 
    RFC2136 (Dynamic update) are not implemented and will not be implemented as
@@ -1014,10 +1015,10 @@ Not implemented:
 
 Appendix D. Changes to this file.
 
-18 june 2013 (Matthijs Mekking).
+10 april 2013 (Matthijs Mekking).
 - Updated file with EUI48 and EUI64 RRtype support.
 
-25 april 2013 (Matthijs Mekking).
+20 march 2013 (Matthijs Mekking).
 - Removed requirements label compression for RP, RT and AFSDB.
 
 19 november 2012 (Matthijs Mekking).
@@ -1029,8 +1030,6 @@ Appendix D. Changes to this file.
 
 17 october 2011 (Matthijs Mekking).
 - Updated file with RFC 5702 (SHA-2) and RFC 4509 (SHA-256 DS) support.
-
-17 october 2011 (Matthijs Mekking).
 - Added section on minimal responses.
 
 24 february 2010 (Matthijs Mekking).

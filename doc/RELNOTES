@@ -1,82 +1,7 @@
 NSD RELEASE NOTES
 
-4.0.0b5   BETA 5 release of NSD 4.0
-==================================
-BUG FIXES:
-	- The same fixes up to NSD 3.2.16.
-
-
-4.0.0b4   BETA 4 release of NSD 4.0
-==================================
-BUG FIXES:
-	- remove -fwhole-program gcc flag usage.  We cannot reliably detect
-	  if it works without failure.
-	- fix zonefiles-check: entry in nsd.conf
-	- fix gcc warning, do not use uninit value for rng init.
-	- remove printout of "bad transfer" to the log for notimpl.
-	- printout log less verbosely, not every axfr packet.
-	- RRL documented in nsd.conf.sample
-	- Fix is_apex flag for zones read from udb.
-	- Fix that nsec3 zones are precompiled when read from udb.  This
-	  caused assertion failures.
-	- Less printout of 'bad transfer'.
-	- Fix AXFR of NSEC3 slave zone.
-	- Fix that old zonefile does not override newer AXFR for slave zones.
-	- Nicer printout of notify on verbosity 2.
-
-4.0.0b3   BETA 3 release of NSD 4.0
-==================================
-BUG FIXES:
-	- applied patch from Robin Hack to remove double pid file truncation.
-	- repattern is called reconfig (because most config options are
-	  picked up, except for superuser options (chroot, logfile, port))
-	- document that the zonefile attribute can be empty.
-	- documented that the _implicit_ pattern names are used internally.
-	- Added zonefiles-check option, default yes, check mtimes of zone files
-	  on sighup and startup (from Robin Hack).
-	- Fix spurious assertion failure for some rrl blocks.
-	- Tabs and spaces nicer in nsd.conf.sample.
-	- List libevent in README.
-	- Fix configure for gentoo gcc and headers.
-	- do-ip4 and do-ip6 nsd.conf options just like unbound.
-	- do not leave task files in /tmp if nsd fails to startup because
-	  of file permissions.
-	- create xfrdir on make install (does not remove on make uninstall,
-	  because this could be /tmp).
-	- Fix segv if xfrdir does not exit.
-	- log ip address with tcp failure.
-	- Fix time calculation of zone transfer.
-
-4.0.0b2   BETA 2 release of NSD 4.0
-==================================
-FEATURES:
-	- Add and remove zones from nsd.conf with nsd-control repattern.
-	- Merge changes from 3.2.15 (such as xname-rcode fix).
-
-BUG FIXES:
-	- Fix for use with libev.
-	- 'nsd-control start' runs an absolute path to start sbin/nsd.
-	- Fix for use with libevent-2.1.2.
-	- --with-logfile sets the logfile inside the example documentation.
-	- Fixed addzone and delzone inside chroot (thanks Will Pressly).
-	- Fix make outside of source directory.
-
-4.0.0b1   BETA 1 release of NSD 4.0
-==================================
-FEATURES:
-	- add and remove zones without restart.
-	- nsdc is gone, use nsd-control for direct server control.
-	- performance increases
-	- support lots of zones
-	- and more ...
-	- longer desc in doc/NSD-4-features
-
-BUG FIXES:
-	- core code is fixed like 3.2.15r3763 (12 dec 2012).
-
-
-3.2.16 (development branch)
-=================================
+3.2.16 (up next)
+================
 
 FEATURES:
 	- New config option "ip-transparent:" to allow NSD to bind to
@@ -100,7 +25,7 @@ BUG FIXES:
 	- Bugfix #487: lookup3.c determine endianness for BSD systems.
 	- Bugfix #491: pick program name (0th argument) as syslog identity.
 	- Bugfix #494: Exit with return code 1 if socket code fails.
-	- RRtypes ASFDB, RP, RT should not compress dnames.
+	- Bugfix #495: Wrong bufsize in dname_to_string for root.
 	- Fix outgoing-interface: Don't fail if family is IPv6 but
 	  only IPv4 outgoing-interface is set, or vice versa.
 	- RRtypes ASFDB, RP, RT should not compress dnames.
@@ -110,7 +35,7 @@ BUG FIXES:
 
 
 3.2.15
-=================================
+================
 
 FEATURES:
 	- Support for ILNP RR types: NID, L32, L64, LP (RFC6742).
@@ -125,7 +50,8 @@ BUG FIXES:
 	- Fix RCODE when CNAME loop final answer does not exist, should
 	  return NXDOMAIN as stated by RFC 6604.
 	- Fix --disable-full-prehash bug, where after multiple incoming
-	  IXFRs, NSEC3 can be removed unjustified.
+	  IXFRs, NSEC3 can be removed unjustified. 
+
 
 3.2.14
 ================
