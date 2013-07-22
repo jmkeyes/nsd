@@ -2,7 +2,7 @@
 # BSD licensed (see LICENSE file).
 #
 # Version 4
-# 2011-04-06: tpk wait_logfile to wait (with timeout) for a logfile line to appear
+# 2011-04-06: wait_logfile to wait (with timeout) for a logfile line to appear
 # 2011-02-23: get_pcat for PCAT, PCAT_DIFF and PCAT_PRINT defines.
 # 2011-02-18: ports check on BSD,Solaris. wait_nsd_up.
 # 2011-02-11: first version.
@@ -118,7 +118,7 @@ get_random_port () {
 		# depending on uname try to check for collisions in port numbers
 		case "`uname`" in
 		linux|Linux)
-			plist=`netstat -n -A ip -A ip6 -a 2>/dev/null | sed -e 's/^.*:\([0-9]*\) .*$/\1/'`
+			plist=`netstat -n -A ip -A ip6 -a | sed -e 's/^.*:\([0-9]*\) .*$/\1/'`
 		;;
 		FreeBSD|freebsd|NetBSD|netbsd|OpenBSD|openbsd)
 			plist=`netstat -n -a | grep "^[ut][dc]p[46] " | sed -e 's/^.*\.\([0-9]*\) .*$/\1/'`

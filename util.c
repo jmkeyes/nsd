@@ -1,7 +1,7 @@
 /*
  * util.c -- set of various support routines.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -861,18 +861,6 @@ qid_generate(void)
 #endif
 }
 
-int
-random_generate(int max)
-{
-#ifdef HAVE_ARC4RANDOM_UNIFORM
-    return (int) arc4random_uniform(max);
-#elif HAVE_ARC4RANDOM
-    return (int) (arc4random() % max);
-#else
-    return (int) ((unsigned)random() % max);
-#endif
-}
-
 void
 cleanup_region(void *data)
 {
@@ -915,9 +903,10 @@ print_rr(FILE *out,
         const dname_type *owner = domain_dname(record->owner);
         const dname_type *owner_origin
                 = dname_origin(region, owner);
-        if (state) {
-	  if (!state->previous_owner
-                   || dname_compare(state->previous_owner, owner) != 0) {
+        int owner_changed
+                = (!state->previous_owner
+                   || dname_compare(state->previous_owner, owner) != 0);
+        if (owner_changed) {
                 int origin_changed = (!state->previous_owner_origin
                                       || dname_compare(
                                               state->previous_owner_origin,
@@ -934,10 +923,7 @@ print_rr(FILE *out,
                               "%s",
                               dname_to_string(owner,
                                               state->previous_owner_origin));
-	  }
-        } else {
-		buffer_printf(output, "%s", dname_to_string(owner, NULL));
-	}
+        }
 
         buffer_printf(output,
                       "\t%lu\t%s\t%s",
@@ -960,8 +946,8 @@ print_rr(FILE *out,
         if (result) {
                 buffer_printf(output, "\n");
                 buffer_flip(output);
-		result = write_data(out, buffer_current(output),
-			buffer_remaining(output));
+		(void)write_data(out, buffer_current(output), buffer_remaining(output));
+/*              fflush(out); */
         }
 
 	region_destroy(region);
@@ -1001,24 +987,67 @@ rcode2str(int rc)
         return NULL; /* ENOREACH */
 }
 
-void
-addr2str(
-#ifdef INET6
-        struct sockaddr_storage *addr
-#else
-        struct sockaddr_in *addr
-#endif
-	, char* str, size_t len)
+stack_type*
+stack_create(struct region* region, size_t size)
 {
-#ifdef INET6
-	if (addr->ss_family == AF_INET6) {
-		if (!inet_ntop(AF_INET6,
-			&((struct sockaddr_in6 *)addr)->sin6_addr, str, len))
-			strlcpy(str, "[unknown ip6, inet_ntop failed]", len);
+	stack_type* stack = (stack_type*)region_alloc(region,
+		sizeof(stack_type));
+	stack->capacity = size;
+	stack->num = 0;
+	stack->data = (void**) region_alloc(region, sizeof(void*)*size);
+	memset(stack->data, 0, sizeof(void*)*size);
+	return stack;
+}
+
+void
+stack_push(stack_type* stack, void* elem)
+{
+	assert(stack);
+	if(stack->num >= stack->capacity) {
+		/* stack out of capacity, elem falls off stack */
 		return;
 	}
+	stack->data[stack->num] = elem;
+	stack->num ++;
+}
+
+void*
+stack_pop(stack_type* stack)
+{
+	void* elem;
+	assert(stack);
+	if(stack->num <= 0)
+		return NULL;
+	stack->num --;
+	elem = stack->data[stack->num];
+	stack->data[stack->num] = NULL;
+	return elem;
+}
+
+int
+addr2ip(
+#ifdef INET6
+        struct sockaddr_storage addr
+#else
+        struct sockaddr_in addr
 #endif
-	if (!inet_ntop(AF_INET, &((struct sockaddr_in *)addr)->sin_addr,
-		str, len))
-		strlcpy(str, "[unknown ip4, inet_ntop failed]", len);
+, char *address, socklen_t size)
+{
+#ifdef INET6
+	if (addr.ss_family == AF_INET6) {
+		if (!inet_ntop(AF_INET6,
+			&((struct sockaddr_in6 *)&addr)->sin6_addr,
+			address, size))
+			return (1);
+#else
+	if (0) {
+#endif
+	} else {
+		if (!inet_ntop(AF_INET,
+			&((struct sockaddr_in *)&addr)->sin_addr,
+			address, size))
+			return (1);
+	}
+
+	return (0);
 }
