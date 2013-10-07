@@ -1,3 +1,23 @@
+7 October 2013: Wouter
+	- Fix mini_event ev_once flag to be prettier (review comments Yuri).
+	- tag 4.0.0rc1 recreated.
+
+4 October 2013: Wouter
+	- Fix bug where if you do not have flex, and then install flex, it
+	  would not make without a re-untar of the source.
+
+3 October 2013: Wouter
+	- Review changes from Matthijs.
+	- doc/README updated, 'nsdc' is now removed.
+
+1 October 2013: Wouter
+	- Review commits from Matthijs.
+	- doc/UPGRADING updated, review Yuri.
+
+30 September 2013: Wouter
+	- tag 4.0.0rc1
+	- updated doc/RELNOTES
+
 19 September 2013: Wouter
 	- configure --disable-recvmmsg for compat with older Linux kernels,
 	  by default it autodetects support in the kernel on the buildmachine.
