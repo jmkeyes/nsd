@@ -1,7 +1,7 @@
 /*
  * rdata.c -- RDATA conversion functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -98,9 +98,9 @@ rdata_dns_name_to_string(buffer_type *output, rdata_atom_type rdata,
 
 			if (ch=='.' || ch==';' || ch=='(' || ch==')' || ch=='\\') {
 				buffer_printf(output, "\\%c", (char) ch);
-			} else if (!isgraph((int)(unsigned char) ch)) {
+			} else if (!isgraph((int) ch)) {
 				buffer_printf(output, "\\%03u", (unsigned int) ch);
-			} else if (isprint((int)(unsigned char) ch)) {
+			} else if (isprint((int) ch)) {
 				buffer_printf(output, "%c", (char) ch);
 			} else {
 				buffer_printf(output, "\\%03u", (unsigned int) ch);
@@ -127,7 +127,7 @@ rdata_text_to_string(buffer_type *output, rdata_atom_type rdata,
 	buffer_printf(output, "\"");
 	for (i = 1; i <= length; ++i) {
 		char ch = (char) data[i];
-		if (isprint((int)(unsigned char)ch)) {
+		if (isprint((int)ch)) {
 			if (ch == '"' || ch == '\\') {
 				buffer_printf(output, "\\");
 			}
@@ -153,7 +153,7 @@ rdata_texts_to_string(buffer_type *output, rdata_atom_type rdata,
 		buffer_printf(output, "\"");
 		for (i = 1; i <= data[pos]; ++i) {
 			char ch = (char) data[pos + i];
-			if (isprint((int)(unsigned char)ch)) {
+			if (isprint((int)ch)) {
 				if (ch == '"' || ch == '\\') {
 					buffer_printf(output, "\\");
 				}
@@ -179,7 +179,7 @@ rdata_long_text_to_string(buffer_type *output, rdata_atom_type rdata,
 	buffer_printf(output, "\"");
 	for (i = 0; i < length; ++i) {
 		char ch = (char) data[i];
-		if (isprint((int)(unsigned char)ch)) {
+		if (isprint((int)ch)) {
 			if (ch == '"' || ch == '\\') {
 				buffer_printf(output, "\\");
 			}
@@ -813,11 +813,9 @@ rdata_wireformat_to_rdata_atoms(region_type *region,
 				temp_rdatas[i].data[0] = dname->name_size;
 				memcpy(temp_rdatas[i].data+1, dname_name(dname),
 					dname->name_size);
-			} else {
+			} else
 				temp_rdatas[i].domain
 					= domain_table_insert(owners, dname);
-				temp_rdatas[i].domain->usage ++;
-			}
 		} else {
 			if (buffer_position(packet) + length > end) {
 				if (required) {

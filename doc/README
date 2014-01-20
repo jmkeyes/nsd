@@ -49,7 +49,7 @@ database prepared by the zone compiler from standard zone files.
 For NSD operation this means that zones have to be compiled by zonec
 before NSD can use them.
 
-All this can be controlled via rc.d (SIGTERM, SIGHUP) or nsd-control,
+All this can be controlled by a simple control script called 'nsdc'
 and uses a simple configuration file 'nsd.conf'.
 
 
@@ -61,7 +61,6 @@ Step 2: Create user nsd or any other unprivileged user of your
         choice. In case of later make sure to use
         --with-user=<username> while running configure.
 	You can also set "username: <name>" in the nsd.conf file later.
-	Install openssl and libevent.
 
 Step 3: ./configure
 
@@ -83,16 +82,16 @@ Step 6: Create and edit /etc/nsd/nsd.conf file possibly from
 Step 7: Copy necessary master zone files into appropriate directories
         under /etc/nsd/primary & /etc/nsd/secondary. 
 
-Step 8: Run nsd-control start
+Step 8: Run nsdc rebuild
 
-Step 9: Test the NSD with dig, drill or host.
+Step 9: Run nsdc start
 
-Step 10: If you're happy add a rc.d script to start into your OS boot up
-	 sequence. The format of the rc.d startup script depends on 
-	 the platform.  Also stop it in the shutdown sequence.
-	 You can use SIGTERM to stop, or nsd-control stop.
+Step 10: Test the NSD with dig, drill or host.
 
-Step 11: If desired add 'nsd-control write' to your superuser crontab to
+Step 11: If you're happy add nsdc start into your OS boot up sequence.
+	 nsdc stop can be used in the shutdown sequence.
+
+Step 12: If desired add nsdc patch to your superuser crontab to
          update the zone files with the content transferred from master
 	 servers periodically, such as once per day.
 
@@ -169,15 +168,19 @@ addition to standard configure options, one may use the following:
 
   --enable-bind8-stats
 
-        Enables BIND8-like statistics.
+	Enables BIND8-like statistics.
+
+  --enable-zone-stats
+
+	Enables per zone statistics (if BIND8 stats is enabled).
+
+	This does not scale and should not be used if serving many zones.
+	This option could lead to a reduced service level and increased
+	memory footprint.
 
   --enable-ratelimit
 
 	Enables ratelimiting, based on query name, type and source.
-
-   --enable-draft-rrtypes
-
-	Enables draft RRtypes.
 
   --with-configdir=dir
 
@@ -209,11 +212,6 @@ addition to standard configure options, one may use the following:
         Specify the syslog facility to use.  The default is
         LOG_DAEMON.  See the syslog(3) manual page for the available
         facilities.
-
-  --with-libevent=path
-
-  	Specity the location of the libevent library (or libev).
-	--with-libevent=no uses a builtin portable implementation (select()).
 
   --with-ssl=path
 
@@ -247,6 +245,11 @@ addition to standard configure options, one may use the following:
 	Disable large file support (64 bit file lengths). Makes off_t
 	a 32bit length during compilation.
 
+  --disable-full-prehash
+
+	Disables full NSEC3 prehashing. This will make NSD handle zone
+	transfers faster, but will decrease the performance of NXDOMAIN and
+    wildcard NODATA responses by 15% (with NSEC3).
 
 2.3 Building
 
@@ -259,12 +262,16 @@ do a `gmake realclean` first, to remove stuff that the make call messed up.
 
 Become a superuser (if necessary) and type ``make install''
 
-This step should install four binaries
+This step should install seven binaries
 
-nsd               - the daemon itself
-nsd-control-setup - a shell script that creates keys for nsd-control.
-nsd-control	      - program that connects over SSL to nsd and gives commands.
-nsd-checkconf	  - simple C program to check nsd.conf before use.
+nsd             - the daemon itself
+nsdc            - a shell script to control the daemon
+zonec           - zone compiler
+nsd-notify      - a simple C program to send outbound notifies
+nsd-xfer        - a program to receive zones from a master server
+                  using AXFR from the command line.
+nsd-checkconf	- simple C program to check nsd.conf before use.
+nsd-patch	- simple program that cleans IXFR changes back to zone files.
 
 Plus the manual pages and a sample configuration file.
 
@@ -364,89 +371,72 @@ timely and fully updated.
 To prevent misconfiguration, NSD configure has the --enable-root-server
 switch, that is by default disabled.
 
-In the config file, you can use patterns.  A pattern can have the
-same configuration statements that a zone can have.  And then you can
-include-pattern: <name-of-pattern> in a zone (or in another pattern)
-to apply those settings.  This can be used to organise the settings.
-
-The nsd-control tool is also controlled from the nsd.conf config file.
-It uses SSL encrypted transport to 127.0.0.1, and if you want to use it
-you have to setup the keys and also edit the config file.  You can leave
-the remote-control disabled (the secure default), or opt to turn it on:
-
-	# generate keys
-	nsd-control-setup
-
-	# edit nsd.conf to add this
-	remote-control:
-		control-enable: yes
-
-By default nsd-control is limited to localhost, as well as encrypted, but
-some people may want to remotely administer their nameserver.  What you
-then do is setup nsd-control to listen to the public IP address, with
-control-interface: <IP> after the control-enable statement.  Furthermore,
-you copy the key files /etc/nsd/nsd_server.pem /etc/nsd/nsd_control.*
-to a remote host on the internet; on that host you can run nsd-control
-with -c <special config file> which references same IP address
-control-interface and references the copies of the key files with
-server-cert-file, control-key-file and control-cert-file config lines
-after the control-enable statement.  The nsd-server authenticates the
-nsd-control client, and also the nsd-control client authenticates the
-nsd-server.
-
 When you are done with the configuration file, check the syntax using
 
 	nsd-checkconf <name of configfile>
 
-The zone files are read by the daemon, which builds 'nsd.db' with their
-contents.  You can start the daemon with
+To build the name database, use nsdc. Use -c configfile if your config
+file is not in the default location.
 
-	nsd
-	or with "nsd-control start" (which execs nsd again).
-	or with nsd -c <name of configfile>
+	nsdc rebuild
 
-To check if the daemon is running look with ps, top, or if you enabled
-nsd-control,
+This starts zonec on your zone files. If zonec reports no errors, your
+database is now ready for the daemon which can be started with
 
-	nsd-control status
+	nsdc start
 
-To reload changed zone files after you edited them, without stopping
-the daemon, use this to check if files are modified: 
+To check if the daemon is running use
 
-	kill -HUP `cat <name of nsd pidfile>`
+	nsdc running
 
-If you enabled nsd-control, you can reread with
+To reload a new database after you recompiled it with 'nsdc rebuild'
+without stopping the daemon issue
 
-	nsd-control reload
+	nsdc reload
 
-With nsd-control you can also reread the config file (new zones, ..)
+To restart the daemon (should never be necessary, unless you do some
+development work)
 
-	nsd-control reconfig
-
-To restart the daemon
-
-	/etc/rc.d/nsd restart  # or your system(d) equivalent
+	nsdc restart
 
 To shut it down (for example on the system shutdown) do
 
-	kill -TERM <pid of nsd>
-	or nsd-control stop
+	nsdc stop
 
 NSD will automatically keep track of secondary zones and update them
 when needed. When primary zones are updated and reloaded notifications
 are sent to slave servers.
 
-The zone transfers are applied to nsd.db by the daemon.  To write changed
-contents of the zone files for slave zones to disk in the text-based zone
-file format, issue nsd-control write.
+NSD keeps a journal file with the contents of the zone transfers
+(difffile: "ixfr.db" setting in the configuration file). This file
+will slowly grow as zone transfers are done. To clean up the journal
+file issue a patch command
+
+	nsdc patch
+
+This will see if a transfer journal exists, and if so, move it away,
+proceed with writing new contents to the zone files (listed as zonefile:
+for the zones). If any zone files have been changed (including master
+zones) the nsd database is rebuild with the updates zone contents and
+NSD is issued a reload command.
+
+The patch process will break a zone transfer in progress, which will be
+reattempted later.  The patch process does this to avoid certain race
+conditions, which could otherwise happen.
 
 NSD will send notifications to slave zones if a master zone is updated.
 NSD will check for updates at master servers periodically and transfer
-the updated zone by AXFR/IXFR and reload the new zone contents. If
-you wish exert manual control use nsd-control notify, transfer and
-force_transfer commands.  The transfer command will check for new versions
-of the secondary zones hosted by this NSD. The notify command will send
-notifications to the slave servers configured in 'notify:' statements.
+the updated zone by AXFR/IXFR and reload the new zone contents. If you
+wish exert manual control use the nsdc update and nsdc notify commands.
+The update command will check for new versions of all secondary zones
+hosted by this NSD. The notify command will send notifications to all
+slave servers in 'notify:' statements.
+
+the follow cron(8) command will take care of synchronizing the
+database with zone updates received:
+
+# nsd to patch every day
+5       5       *       *       *       /usr/local/sbin/nsdc patch
 
 
 3.1 Logging
@@ -463,12 +453,6 @@ dnsstat on the same machine as nsd, we would recommend using a
 multiprocessor if performance is an issue. Of course it can also run
 on a separate machine that has MAC layer access to the network of the
 server.
-
-The nsd-control tool can output some statistics, with nsd-control stats
-and nsd-control stats_noreset.  In contrib/nsd_munin_ there is a munin
-grapher plugin that uses it.  The output of nsd-control stats is easy
-to read (text only) with scripts.  The output values are documented on
-the nsd-control man page.
 
 The CAIDA dnsstat tool referenced is recommended to nsd operators as a 
 means of keeping statistics and check on abnormal query loads.
@@ -570,6 +554,35 @@ the key name on the access control line.
 If the TSIG key name is used in notify or request-xfr lines,
 the key is used to sign the request/notification messages.
 
+nsd-notify uses the -y keyname:secret format that dig uses too. For example
+  nsd-notify -y sec1_key:6KM6qiKfwfEpamEq72HQdA== -z example.com 127.0.0.1
+
+If you want to perform manual zone transfers you can use nsd-xfer.
+nsd-xfer(8) uses the same cryptic file format as named-xfer(8) (to
+be backward compatible).  This is a so called tsig-info file. 
+
+Lets say we have the following:
+
+zone: nlnetlabs.nl
+server: 213.53.69.1
+key-name: nlnetlabs-axfr
+algorithm: hmac-md5
+secret: Y87923jksdXlsdv+LeXpUA==
+
+Then we need to create file nlnetlabs.nl.tsiginfo containing:
+213.53.69.1
+nlnetlabs-axfr
+157
+Y87923jksdXlsdv+LeXpUA==
+
+Cryptic? Yes. The first line tells this key is to be used for
+213.53.69.1 Second one is the name of the key. 157 stands for hmac-md5
+algorithm and the last line is the secret.
+
+Here's a list of algorithms with their corresponding algorithm numbers.
+hmac-md5:		157
+hmac-sha1:		158
+hmac-sha256:	159
 
 3.4 Zone expiry of secondary zones
 
@@ -604,14 +617,12 @@ attempt to confirm that you have provided the correct data by polling
 the masters.  So when the master servers come back up, it will transfer
 the updated zone within <retry timeout from SOA> seconds.
 
-In general it is possible to provide zone files for both master and
-slave zones manually (say from email or rsync). Reload with SIGHUP
-or nsd-control reload to read the new zonefile contents into the name
-database.  When this is done the new zone will be served. For master
-zones, NSD will issue notifications to all configured 'notify:' targets.
-For slave zones the above happens; NSD attempts to validate the zone
-from the master (checking its SOA serial number).
-
+In general it is possible to provide zone files for both master and slave
+zones manually (say from email or rsync). Use nsdc rebuild to put the new
+zonefile contents into the name database. Upon the next reload or start,
+your zone will be served. For master zones, NSD will issue notifications
+to all configured 'notify:' targets.  For slave zones the above happens;
+NSD attempts to validate the zone from the master.
 
 3.5 Diagnosing NSD log entries
 
@@ -638,21 +649,16 @@ The corruption is removed by snipping off the trailing part.
 
 This is printed for every reload. NSD allocates and deallocates memory
 to service IXFR updates. The recyclebin holds deallocated memory ready
-for future use. If the number grows too large, a restart resets it.
+for future use. If the number grows too large, nsdc patch will reset it.
 
-- "xfrd: max number of tcp connections (32) reached."
+- "xfrd: max number of tcp connections (10) reached."
 
-This line is printed when more than 32 zones need a zone transfer at the
-same time.  The value is a compile constant (xfrd-tcp.h), but if this
-happens often for you, we could make this a config option.  NSD will reuse
-existing TCP connections to the same master (determined by IP address)
-to transfer up to 64k zones from that master.  Thus this error should
-only happen with more than 32 masters or more than 64*32=2M zones that
-need to be updated at the same time.
+This line is printed when more than 10 zones need a zone transfer at
+the same time.  The value is a compile constant (xfrd-tcp.h), but if
+this happens often for you, we could make this a config option.
 
 If this happens, more zones have to wait until a zone transfer completes
-(or is aborted) before they can have a zone transfer too. This waiting
-list has no size limit.
+(or is aborted) before they can have a zone transfer too.
 
 - "error: <zone> NSEC3PARAM entry <num> has unknown hash algo <number>"
 
@@ -690,6 +696,7 @@ all the interfaces as ip-address config file options.
 
 With the config file option ip-transparent you can allow NSD to bind to
 non local addresses.
+
 
 4.0 Support and Feedback
 

@@ -1,7 +1,7 @@
 /*
  * packet.h -- low-level DNS packet encoding and decoding functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -148,9 +148,9 @@ struct query;
  * of RRs successfully encoded.
  */
 int packet_encode_rr(struct query *query,
-		     domain_type *owner,
-		     rr_type *rr,
-		     uint32_t ttl);
+			domain_type *owner,
+			rr_type *rr,
+			uint32_t ttl);
 
 /*
  * Encode RRSET with OWNER as the owner name into QUERY.  Returns the
