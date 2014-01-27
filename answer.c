@@ -1,7 +1,7 @@
 /*
  * answer.c -- manipulating query answers and encoding them.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -33,8 +33,8 @@ answer_add_rrset(answer_type *answer, rr_section_type section,
 
 	/* Don't add an RRset multiple times.  */
 	for (i = 0; i < answer->rrset_count; ++i) {
-		if (answer->rrsets[i] == rrset &&
-			answer->domains[i]->number == domain->number) {
+		if (answer->rrsets[i] == rrset
+			&& answer->domains[i]->number == domain->number) {
 			if (section < answer->section[i]) {
 				answer->section[i] = section;
 				return 1;
