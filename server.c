@@ -1101,8 +1101,6 @@ server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio,
 	sig_atomic_t cmd = NSD_QUIT_SYNC;
 	int ret;
 	udb_ptr last_task;
-	log_msg(LOG_INFO, "reload start, region %p", nsd->db->region);
-	region_log_stats(nsd->db->region);
 
 	/* see what tasks we got from xfrd */
 	task_remap(nsd->task[nsd->mytask]);
@@ -1193,8 +1191,6 @@ server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio,
 	if (nsd->file_rotation_ok)
 		log_reopen(nsd->log_filename, 1);
 	/* exit reload, continue as new server_main */
-	log_msg(LOG_INFO, "reload exit");
-	region_log_stats(nsd->db->region);
 }
 
 /*
