@@ -1,7 +1,7 @@
 /*
  * packet.h -- low-level DNS packet encoding and decoding functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -143,17 +143,14 @@ struct query;
 #define IPV4_MINIMAL_RESPONSE_SIZE 1480	 /* Recommended minimal edns size for IPv4 */
 #define IPV6_MINIMAL_RESPONSE_SIZE 1220	 /* Recommended minimal edns size for IPv6 */
 
-/* use round robin rotation */
-extern int round_robin;
-
 /*
  * Encode RR with OWNER as owner name into QUERY.  Returns the number
  * of RRs successfully encoded.
  */
 int packet_encode_rr(struct query *query,
-		     domain_type *owner,
-		     rr_type *rr,
-		     uint32_t ttl);
+			domain_type *owner,
+			rr_type *rr,
+			uint32_t ttl);
 
 /*
  * Encode RRSET with OWNER as the owner name into QUERY.  Returns the

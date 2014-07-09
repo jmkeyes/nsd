@@ -1,7 +1,7 @@
 /*
  * util.c -- set of various support routines.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -51,7 +51,6 @@ int verbosity = 0;
 static const char *global_ident = NULL;
 static log_function_type *current_log_function = log_file;
 static FILE *current_log_file = NULL;
-int log_time_asc = 1;
 
 void
 log_init(const char *ident)
@@ -136,24 +135,7 @@ log_file(int priority, const char *message)
 	}
 
 	/* Bug #104, add time_t timestamp */
-#if defined(HAVE_STRFTIME) && defined(HAVE_LOCALTIME_R)
-	if(log_time_asc) {
-		struct timeval tv;
-		char tmbuf[32];
-		tmbuf[0]=0;
-		tv.tv_usec = 0;
-		if(gettimeofday(&tv, NULL) == 0) {
-			struct tm tm;
-			time_t now = (time_t)tv.tv_sec;
-			strftime(tmbuf, sizeof(tmbuf), "%Y-%m-%d %H:%M:%S",
-				localtime_r(&now, &tm));
-		}
-		fprintf(current_log_file, "[%s.%3.3d] %s[%d]: %s: %s",
-			tmbuf, (int)tv.tv_usec/1000,
-			global_ident, (int) getpid(), priority_text, message);
- 	} else
-#endif /* have time functions */
-		fprintf(current_log_file, "[%d] %s[%d]: %s: %s",
+	fprintf(current_log_file, "[%d] %s[%d]: %s: %s",
 		(int)time(NULL), global_ident, (int) getpid(), priority_text, message);
 	length = strlen(message);
 	if (length == 0 || message[length - 1] != '\n') {
@@ -261,11 +243,8 @@ xalloc(size_t size)
 void *
 xalloc_zero(size_t size)
 {
-	void *result = calloc(1, size);
-	if (!result) {
-		log_msg(LOG_ERR, "calloc failed: %s", strerror(errno));
-		exit(1);
-	}
+	void *result = xalloc(size);
+	memset(result, 0, size);
 	return result;
 }
 
@@ -873,23 +852,12 @@ compare_serial(uint32_t a, uint32_t b)
 uint16_t
 qid_generate(void)
 {
-    /* arc4random_uniform not needed because range is a power of 2 */
-#ifdef HAVE_ARC4RANDOM
+#ifdef HAVE_ARC4RANDOM_UNIFORM
+    return (uint16_t) arc4random_uniform(65536);
+#elif HAVE_ARC4RANDOM
     return (uint16_t) arc4random();
 #else
     return (uint16_t) random();
-#endif
-}
-
-int
-random_generate(int max)
-{
-#ifdef HAVE_ARC4RANDOM_UNIFORM
-    return (int) arc4random_uniform(max);
-#elif HAVE_ARC4RANDOM
-    return (int) (arc4random() % max);
-#else
-    return (int) ((unsigned)random() % max);
 #endif
 }
 
@@ -924,40 +892,43 @@ set_previous_owner(struct state_pretty_rr *state, const dname_type *dname)
 
 int
 print_rr(FILE *out,
-         struct state_pretty_rr *state,
-         rr_type *record,
-	 region_type* rr_region,
-	 buffer_type* output)
+	struct state_pretty_rr *state,
+	rr_type *record,
+	region_type* region,
+	buffer_type* output)
 {
-        rrtype_descriptor_type *descriptor
-                = rrtype_descriptor_by_type(record->type);
-        int result;
-        const dname_type *owner = domain_dname(record->owner);
+	rrtype_descriptor_type *descriptor
+		= rrtype_descriptor_by_type(record->type);
+	int result;
+	const dname_type *owner = domain_dname(record->owner);
+	int owner_changed
+		= (!state->previous_owner
+		|| dname_compare(state->previous_owner, owner) != 0);
 	buffer_clear(output);
-        if (state) {
-		if (!state->previous_owner
-			|| dname_compare(state->previous_owner, owner) != 0) {
-			const dname_type *owner_origin
-				= dname_origin(rr_region, owner);
-			int origin_changed = (!state->previous_owner_origin
-				|| dname_compare(state->previous_owner_origin,
-				   owner_origin) != 0);
-			if (origin_changed) {
-				buffer_printf(output, "$ORIGIN %s\n",
-					dname_to_string(owner_origin, NULL));
-			}
-
-			set_previous_owner(state, owner);
-			buffer_printf(output, "%s",
-				dname_to_string(owner,
-					state->previous_owner_origin));
-			region_free_all(rr_region);
+	if (owner_changed) {
+		const dname_type *owner_origin
+			= dname_origin(region, owner);
+		int origin_changed = (!state->previous_owner_origin
+			|| dname_compare(
+				state->previous_owner_origin,
+				owner_origin) != 0);
+		if (origin_changed) {
+			buffer_printf(
+				output,
+				"$ORIGIN %s\n",
+				dname_to_string(owner_origin, NULL));
 		}
-	} else {
-		buffer_printf(output, "%s", dname_to_string(owner, NULL));
+
+		set_previous_owner(state, owner);
+		buffer_printf(output,
+			"%s",
+			dname_to_string(owner,
+			state->previous_owner_origin));
+		region_free_all(region);
 	}
 
-	buffer_printf(output, "\t%lu\t%s\t%s",
+	buffer_printf(output,
+		"\t%lu\t%s\t%s",
 		(unsigned long) record->ttl,
 		rrclass_to_string(record->klass),
 		rrtype_to_string(record->type));
@@ -969,68 +940,115 @@ print_rr(FILE *out,
 		 * RDATA in unknown format.
 		 */
 		result = rdata_atoms_to_unknown_string(output,
-			descriptor, record->rdata_count, record->rdatas);
+			descriptor,
+			record->rdata_count,
+			record->rdatas);
 	}
 
 	if (result) {
 		buffer_printf(output, "\n");
 		buffer_flip(output);
-		result = write_data(out, buffer_current(output),
-		buffer_remaining(output));
+		(void)write_data(out, buffer_current(output), buffer_remaining(output));
+/*		fflush(out); */
 	}
+
 	return result;
 }
 
 const char*
 rcode2str(int rc)
 {
-	switch(rc) {
-		case RCODE_OK:
-			return "NO ERROR";
-		case RCODE_FORMAT:
-			return "FORMAT ERROR";
-		case RCODE_SERVFAIL:
-			return "SERV FAIL";
-		case RCODE_NXDOMAIN:
-			return "NAME ERROR";
-		case RCODE_IMPL:
-			return "NOT IMPL";
-		case RCODE_REFUSE:
-			return "REFUSED";
-		case RCODE_YXDOMAIN:
-			return "YXDOMAIN";
-		case RCODE_YXRRSET:
-			return "YXRRSET";
-		case RCODE_NXRRSET:
-			return "NXRRSET";
-		case RCODE_NOTAUTH:
-			return "SERVER NOT AUTHORITATIVE FOR ZONE";
-		case RCODE_NOTZONE:
-			return "NOTZONE";
-		default:
-			return "UNKNOWN ERROR";
-	}
-	return NULL; /* ENOREACH */
+        switch(rc)
+        {
+        case RCODE_OK:
+                return "NO ERROR";
+        case RCODE_FORMAT:
+                return "FORMAT ERROR";
+        case RCODE_SERVFAIL:
+                return "SERV FAIL";
+        case RCODE_NXDOMAIN:
+                return "NAME ERROR";
+        case RCODE_IMPL:
+                return "NOT IMPL";
+        case RCODE_REFUSE:
+                return "REFUSED";
+	case RCODE_YXDOMAIN:
+		return "YXDOMAIN";
+	case RCODE_YXRRSET:
+		return "YXRRSET";
+	case RCODE_NXRRSET:
+		return "NXRRSET";
+        case RCODE_NOTAUTH:
+                return "SERVER NOT AUTHORITATIVE FOR ZONE";
+	case RCODE_NOTZONE:
+		return "NOTZONE";
+        default:
+                return "UNKNOWN ERROR";
+        }
+        return NULL; /* ENOREACH */
+}
+
+stack_type*
+stack_create(struct region* region, size_t size)
+{
+	stack_type* stack = (stack_type*)region_alloc(region,
+		sizeof(stack_type));
+	stack->capacity = size;
+	stack->num = 0;
+	stack->data = (void**) region_alloc(region, sizeof(void*)*size);
+	memset(stack->data, 0, sizeof(void*)*size);
+	return stack;
 }
 
 void
-addr2str(
-#ifdef INET6
-	struct sockaddr_storage *addr
-#else
-	struct sockaddr_in *addr
-#endif
-	, char* str, size_t len)
+stack_push(stack_type* stack, void* elem)
 {
-#ifdef INET6
-	if (addr->ss_family == AF_INET6) {
-		if (!inet_ntop(AF_INET6,
-			&((struct sockaddr_in6 *)addr)->sin6_addr, str, len))
-			strlcpy(str, "[unknown ip6, inet_ntop failed]", len);
+	assert(stack);
+	if(stack->num >= stack->capacity) {
+		/* stack out of capacity, elem falls off stack */
 		return;
 	}
+	stack->data[stack->num] = elem;
+	stack->num ++;
+}
+
+void*
+stack_pop(stack_type* stack)
+{
+	void* elem;
+	assert(stack);
+	if(stack->num <= 0)
+		return NULL;
+	stack->num --;
+	elem = stack->data[stack->num];
+	stack->data[stack->num] = NULL;
+	return elem;
+}
+
+int
+addr2ip(
+#ifdef INET6
+        struct sockaddr_storage addr
+#else
+        struct sockaddr_in addr
 #endif
-	if (!inet_ntop(AF_INET, &((struct sockaddr_in *)addr)->sin_addr,
-		str, len))
-		strlcpy(str, "[unknown ip4, inet_ntop failed]", len);
+, char *address, socklen_t size)
+{
+#ifdef INET6
+	if (addr.ss_family == AF_INET6) {
+		if (!inet_ntop(AF_INET6,
+			&((struct sockaddr_in6 *)&addr)->sin6_addr,
+			address, size))
+			return (1);
+#else
+	if (0) {
+#endif
+	} else {
+		if (!inet_ntop(AF_INET,
+			&((struct sockaddr_in *)&addr)->sin_addr,
+			address, size))
+			return (1);
+	}
+
+	return (0);
 }
