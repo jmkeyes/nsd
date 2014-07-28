@@ -1,7 +1,7 @@
 /*
  * dns.h -- DNS definitions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -146,14 +146,14 @@ typedef enum nsd_rc nsd_rc_type;
 #define TYPE_EUI48      108     /* RFC 7043 */
 #define TYPE_EUI64      109     /* RFC 7043 */
 
-#define TYPE_TSIG	250
-#define TYPE_IXFR	251
-#define TYPE_AXFR	252
-#define TYPE_MAILB	253	/* A request for mailbox-related records (MB, MG or MR) */
-#define TYPE_MAILA	254	/* A request for mail agent RRs (Obsolete - see MX) */
-#define TYPE_ANY	255	/* any type (wildcard) */
+#define TYPE_TSIG	    250
+#define TYPE_IXFR	    251
+#define TYPE_AXFR	    252
+#define TYPE_MAILB	    253	    /* A request for mailbox-related records (MB, MG or MR) */
+#define TYPE_MAILA	    254	    /* A request for mail agent RRs (Obsolete - see MX) */
+#define TYPE_ANY	    255	    /* any type (wildcard) */
 
-#define TYPE_CAA	257	/* RFC 6844 */
+#define TYPE_CAA	257	        /* RFC 6844 */
 
 #define TYPE_DLV	32769	/* RFC 4431 */
 #define PSEUDO_TYPE_DLV	RRTYPE_DESCRIPTORS_LENGTH
@@ -172,8 +172,6 @@ typedef enum nsd_rc nsd_rc_type;
 #define IP6ADDRLEN	(128/8)
 #define EUI48ADDRLEN	(48/8)
 #define EUI64ADDRLEN	(64/8)
-
-#define NSEC3_HASH_LEN 20
 
 /*
  * The different types of RDATA wireformat data.

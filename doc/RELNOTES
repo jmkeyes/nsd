@@ -1,275 +1,43 @@
 NSD RELEASE NOTES
 
-4.0.4 (upcoming)
+3.2.18
 ================
 FEATURES:
-	- database: "" starts without mmap of database.  Less memory is used,
-	  zones are read from text zonefile.
-	- optimised zonefile parse code and zonefile write code.
-	- zonefiles-write option in nsd.conf, enabled when database is "".
-	  The server writes changed zonefiles to disk every hour.
-	- xfrdfile: "" disables xfrd.state.  If enabled, zones that are
-	  same as before are not checked for a serial update at server start.
-	- include: "foo/nsd.d/*.conf" works, wildcard glob on includes.
-	- nsd shuts down during init process if given signal.
-	- log-time-ascii option, default yes, with readable timestamp in log.
-	- nsd-control addzone reports if zone already exists.
-	- Fix #564: add nsd-checkzone tool to check zonefile correctness.
+	- NSID can be set with "ascii_somestring" in ascii.
+	- Return REFUSED for queries to non-hosted zones.
+	- Optimised zone file parse code and zonefile write code.
+
 BUG FIXES:
-	- Fixed shutdown message sporadically not printed on exit
-	  (Thanks Anand Buddhdev).
-	- Documented zonefile %s syntax in nsd.conf man page.
-	- Fix manpage to put colon after zonefiles check and write.
-	- Change from 'Zone" to "zone" with ".. serial .. is updated" log
-	  message.
-	- Changed maxbackoff for no-content secondary zones from 4h to 24h.
-	- Fix print filename of encompassing config file on read failure.
-	- Fix delete or rename of a lot of zones and make it take a
-	  non-enormous time.
-	- Speed up deletion of zone contents a lot, (56s to 1s), speeds up
-	  delete, rename and AXFR for zones.
-	- Fix #571: unused variable and incompatible pointer warnings when
-	  compiled on a system without INET6.
-	- Fix write_socket return value check in server.c (Thanks Brad Smith,
-	  Mark Kettenis).
-	- Fix that xfrd reaps all children on every eventloop, because some
-	  exited reloads may attach here and need reaping, also if the signal
-	  is lost.
-	- Fix #577: makefile incorrectly installed manpages from srcdir.
-	- Fix #587: Default value for statistics is 0.
+	- Fix #551: Change Regent to Copyright holder in the LICENSE,
+	  to match the definition on opensource.org for the BSD License.
 	- Fix #553: Improve TXT parsing.
+	- Fix #580: nsd-patch will attempt to create directories if the base
+	  directory of the zonefile does not exist.
+	- Fix #587: Default value for statistics is 0.
 	- Fix #590: rrl log does not print wildcard as a star but escaped.
 	- Fix #591: rrl log messages at verbosity level 1.
-	- fix strptime implicit declaration error on OpenBSD.
-	- Fix -O3 compile flag to -O2 to avoid miscompilations.
-	- Allow user to override the -g -O2 CFLAGS in ./configure.
-	- Fix endian.h include for OpenBSD.
+	- Fix RCODE when secondary NSD got transfer that includes
+	  deleted wildcard record. After deletion, NSD would serve
+	  NODATA, should be NXDOMAIN (thanks Michał Kępień).
 
 
-4.0.3
-================
-BUG FIXES:
-	- Fix nsd.db unclean close check.  Previous databases are considered
-	  unclean by the code and are created anew.
-	- Adds nsd.db larger than 400Tb check for sanity. Also test if
-	  filesize as documented in the file is correct.
-	- nsd waits for tasks to complete on stop, prevents nsd.db corruption.
-	- fix to not delete tmpdir too early in shutdown process.
-	- disabled udb checking functionality that made it very slow,
-	  this was enabled when enable-checking was turned on.
-
-
-4.0.2
+3.2.17
 ================
 FEATURES:
-	- Return REFUSED for queries to non-hosted zones.
+	- Support for CAA RR type (RFC6844).
+	- EUI48 and EUI64 RR types (RFC7043) enabled by default.
 
 BUG FIXES:
-	- Fix expired zones to give SERVFAIL, also when parent zone loaded.
-	- documented nsd-control zonestatus output in nsd-control manpage.
-	- remove mention of nsdc from nsd-checkconf manpage.
-	- Disabled recvmmsg and sendmmsg usage by default because kernel
-	  versions have implementation issues: ipv6 ignored, security issues.
-	- Detect libevent2 install automatically by configure, and use
-	  event2 header files if necessary.
-	- Fix #551: change Regent to Copyright holder in the LICENSE,
-	  to match the definition on opensource.org for the BSD License.
-	- Fix #552: zonefile loads on nsd-control reconfig when the name
-	  of the file has changed.
-	- Fix leak of zone name after zonefile read and fix malloc too
-	  large that would be leaked in the radix tree.
-	- Fix from 3.2: make SOA RDATA comparisons in XFR more lenient (only
-	  check serial).
-	- Fix that NSD will delete and recreate not-clean-closed databases.
-
-
-4.0.1
-================
-FEATURES:
-	- recognizes ip-address and interface as synonyms for convenience.
-	- Support for EUI48 and EUI64 RR types enabled by default (RFC 7043).
-	- Support for CAA RRtype (RFC 6844).
-	- NSID can be set with "ascii_somestring" in ascii.
-	
-BUG FIXES:
-	- Fix xfrd when zone transfer TCP contains zero length packets.
-	- Fix for NSEC3 zones where parent zone is co-hosted, also NSEC3,
-	  because AXFRs overwrote nsec3 administration in the child zone.
-   	- Fix that bad IXFR updates do not result in double SOA records,
-	  and that an AXFR is started (attempted) when the zone state seems
-	  to be inconsistent with the master's zone state.
-	- Log ip address for sendto and sendmmsg failures.
-	- Fix segfaults after read of zones with rr type WKS from zonefile.
-	- Seed PRNG for openssl at start of daemon, fixes SSL connection issue.
-	- Bugfix #534: IXFR query loop over UDP for zones that are unchanged.
-	- (same as in 3.2.16): fix wildcard cname to nxdomain repeated rrset.
-	- (same as in 3.2.16): Bugfix #542: Match RRSIG TTL with SOA TTL in
-	  negative response.
-	- Check if configure in srcdir collides with outofdir build.
-	- Fix #546:  output format errors in nsd_munin_ (Thanks Tom Hendrikx).
-	- Fix printout of high-chars in TXT on NetBSD.
-
-4.0.0	NSD 4.0
-===============
-FEATURES:
-	- documented in doc/NSD-4-features. Change configuration without
-	  restart, direct nameserver control with nsd-control, support a
-	  higher number of zones. Higher performance (compared to NSD3).
-	- nsdc is gone. Use kill -HUP for reload (also checks if zonefiles
-	  have changed and rereads them), and kill -TERM for quit. Or use
-	  nsd-control for detailed control.
-	- cron job for nsdcpatch is gone. nsd-control write creates zonefiles.
-	- nsd.db has a new format that compacts itself when it is changed,
-	  thus nsdc patch is no longer necessary.
-	- nsd.db is memory mapped, NSD needs (part of) that mmap in ram.
-	- tcp-count can go above 1000; epoll/kqueue support with libevent.
-	- nsd-control reconfig for updates with no restart (zones, keys, ..)
-	- nsd-control-setup to create keys for nsd-control (enable nsd-control
-	  with remote-control: yes in nsd.conf).
-	- the NSD 3 feature of special zone stats are not ported to 4 yet,
-	  as it would entail a complete reimplementation of the feature.
-FEATURES (incremental from BETA5):
-	- configure --disable-recvmmsg for compat with older Linux kernels,
-	  by default it autodetects support in the kernel on the buildmachine.
-	- Fix time at 2038, uint32s changed to time_t, support 64bit time_t.
-	- Fix use of 32bit time, for 2038, thanks to Theo de Raadt for patch.
-BUG FIXES (incremental from BETA5):
-	- Bugfix #518 Incorrect RRL prefix length option names in nsd.conf
-	  man page from Ville Mattila.
-	- Fix that xfrd, and nsd-control, does not stop responding when reload
-	  errors out. The pid is sent like it should by server_main.
-	- Fix that EOF in quoted string error does not cause reload to exit.
-	- Fixup errors from the stack code checker.
-	- Removed use of random when arc4random is available. Thus, random
+	- Bugfix #509: USE_ZONE_STATS used initialised memory for statistics data.
+	- Bugfix #510: USE_ZONE_STATS use a different zone stats file per process.
+	- Bugfix #542: Match RRSIG TTL with SOA TTL in negative response.
+	- Removed use of random when arc4random is available.  Thus, random
 	  and srandom are then not linked with the executable.
-	- Fix segfault with no logfile and chroot (Thanks Patrik Lundin).
-
-4.0.0b5   BETA 5 release of NSD 4.0
-==================================
-FEATURES:
-	- Optimizations for startup, qps and tcp speed, beta bug fixes and
-	  merge with code changes with NSD 3.2.16.
-	- nsd-mem tool (make nsd-mem) to estimate memory usage.
-	- Same as NSD 3.2.16: --enable-draft-rrtypes(EUI48, EUI64), rr-slip,
-	  rrl-ipv[46]-prefix-length, ip-transparent config options.
-	- configure option --disable-flto.
-	- improved RRL logging (query details that caused blockage).
-	- nsd-control status prints out ratelimit if ratelimit is enabled.
-	- nsd-control verbosity prints out verbosity level without argument.
-	- Fix #491: pick program name (of executable) as syslog identity.
-	- printout percentage for long activities (to log).  After about 5
-	  seconds have passed.
-BUG FIXES:
-	- The same fixes up to NSD 3.2.16.
-	- Fix that old zonefile does not override newer AXFR for slave zones.
-	- Nicer printout of notify.
-	- Fix tcp zonetransfer pipeline lookup function.
-	- Fix compile on bigendian netbsd alpha.
-	- Fixup the growth and shrinkage of nsd.db.  This should use less
-	  calls to remap and change the file and mmap size.
-	- notify information is logged at correct verbosity level, 1.
-	- Fix memory statistics in nsd_munin_.
-	- faster nsec3 updates.
-	- Fixup contrib/bug390.patch for 4.0.0b4.
-	- remove leak of nsec3.
-	- allocate radixtree in region for small (5%) total savings and
-	  about 15% savings in the radixtree itself (due to many small alloc
-	  savings in region).
-	- Patch from Lukas Wunner that makes nsd.conf include files work
-	  inside chroot/etc environments on repattern and reconfig.
-	- Fix race on exit of nsd, for restarts, so that the pidfile-pid
-	  process waits until port53 has been closed before exiting.
-	- Patch from Lukas Wunner that makes chroot more consistent.
-	  Make all paths absolute with the chrootdir in front, or use
-	  an absolute zonesdir with other paths relative to that.
-	- Fix segfault on repeated reconfigs, double free of zone apex name.
-	- Fix zone parser allocations are put in the db region.
-	- Fix memory leak in zone parser for txt record.
-	- Optimizations: -O3 if possible (user can override CFLAGS), udp
-	  buffers are set to 1m by default (if socket options exist),
-	  use recvmmsg and sendmmsg, or only recvmmsg, or recvfrom.
-	- nsd.db 12% smaller, no nsec3 hash storage.  Also ups udb version
-	  because of the format change.  The nsd.db is recreated when a 
-	  different version number is detected on startup.
-	- Fix region-allocator for speedup of load and change of large data.
-	- Increase tcpbacklog default to 256 (silently capped to 128 on BSD).
-	  For remote control keep it at 16, it has less TCP load.
-	  It does not actually increase TCP performance (some except), but
-	  reduces connection loss when there is a spike in TCP connections.
-	- unlink xfr file if transfer is stopped, timeouted or interrupted.
-	  And unlink xfr file in progress when the zone is deleted.
-
-4.0.0b4   BETA 4 release of NSD 4.0
-==================================
-BUG FIXES:
-	- remove -fwhole-program gcc flag usage.  We cannot reliably detect
-	  if it works without failure.
-	- fix zonefiles-check: entry in nsd.conf
-	- fix gcc warning, do not use uninit value for rng init.
-	- remove printout of "bad transfer" to the log for notimpl.
-	- printout log less verbosely, not every axfr packet.
-	- RRL documented in nsd.conf.sample
-	- Fix is_apex flag for zones read from udb.
-	- Fix that nsec3 zones are precompiled when read from udb.  This
-	  caused assertion failures.
-	- Less printout of 'bad transfer'.
-	- Fix AXFR of NSEC3 slave zone.
-	- Fix that old zonefile does not override newer AXFR for slave zones.
-	- Nicer printout of notify on verbosity 2.
-
-4.0.0b3   BETA 3 release of NSD 4.0
-==================================
-BUG FIXES:
-	- applied patch from Robin Hack to remove double pid file truncation.
-	- repattern is called reconfig (because most config options are
-	  picked up, except for superuser options (chroot, logfile, port))
-	- document that the zonefile attribute can be empty.
-	- documented that the _implicit_ pattern names are used internally.
-	- Added zonefiles-check option, default yes, check mtimes of zone files
-	  on sighup and startup (from Robin Hack).
-	- Fix spurious assertion failure for some rrl blocks.
-	- Tabs and spaces nicer in nsd.conf.sample.
-	- List libevent in README.
-	- Fix configure for gentoo gcc and headers.
-	- do-ip4 and do-ip6 nsd.conf options just like unbound.
-	- do not leave task files in /tmp if nsd fails to startup because
-	  of file permissions.
-	- create xfrdir on make install (does not remove on make uninstall,
-	  because this could be /tmp).
-	- Fix segv if xfrdir does not exit.
-	- log ip address with tcp failure.
-	- Fix time calculation of zone transfer.
-
-4.0.0b2   BETA 2 release of NSD 4.0
-==================================
-FEATURES:
-	- Add and remove zones from nsd.conf with nsd-control repattern.
-	- Merge changes from 3.2.15 (such as xname-rcode fix).
-
-BUG FIXES:
-	- Fix for use with libev.
-	- 'nsd-control start' runs an absolute path to start sbin/nsd.
-	- Fix for use with libevent-2.1.2.
-	- --with-logfile sets the logfile inside the example documentation.
-	- Fixed addzone and delzone inside chroot (thanks Will Pressly).
-	- Fix make outside of source directory.
-
-4.0.0b1   BETA 1 release of NSD 4.0
-==================================
-FEATURES:
-	- add and remove zones without restart.
-	- nsdc is gone, use nsd-control for direct server control.
-	- performance increases
-	- support lots of zones
-	- and more ...
-	- longer desc in doc/NSD-4-features
-
-BUG FIXES:
-	- core code is fixed like 3.2.15r3763 (12 dec 2012).
+	- Check if configure in srcdir collides with outofdir build.
 
 
-3.2.16 (development branch)
-=================================
+3.2.16
+================
 
 FEATURES:
 	- New config option "ip-transparent:" to allow NSD to bind to
@@ -293,7 +61,7 @@ BUG FIXES:
 	- Bugfix #487: lookup3.c determine endianness for BSD systems.
 	- Bugfix #491: pick program name (0th argument) as syslog identity.
 	- Bugfix #494: Exit with return code 1 if socket code fails.
-	- RRtypes ASFDB, RP, RT should not compress dnames.
+	- Bugfix #495: Wrong bufsize in dname_to_string for root.
 	- Fix outgoing-interface: Don't fail if family is IPv6 but
 	  only IPv4 outgoing-interface is set, or vice versa.
 	- RRtypes ASFDB, RP, RT should not compress dnames.
@@ -303,7 +71,7 @@ BUG FIXES:
 
 
 3.2.15
-=================================
+================
 
 FEATURES:
 	- Support for ILNP RR types: NID, L32, L64, LP (RFC6742).
@@ -318,7 +86,8 @@ BUG FIXES:
 	- Fix RCODE when CNAME loop final answer does not exist, should
 	  return NXDOMAIN as stated by RFC 6604.
 	- Fix --disable-full-prehash bug, where after multiple incoming
-	  IXFRs, NSEC3 can be removed unjustified.
+	  IXFRs, NSEC3 can be removed unjustified. 
+
 
 3.2.14
 ================

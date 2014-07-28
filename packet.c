@@ -1,7 +1,7 @@
 /*
  * packet.c -- low-level DNS packet encoding and decoding functions.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -15,8 +15,6 @@
 #include "query.h"
 #include "rdata.h"
 
-int round_robin = 0;
-
 static void
 encode_dname(query_type *q, domain_type *domain)
 {
@@ -24,7 +22,7 @@ encode_dname(query_type *q, domain_type *domain)
 		query_put_dname_offset(q, domain, buffer_position(q->packet));
 		DEBUG(DEBUG_NAME_COMPRESSION, 2,
 		      (LOG_INFO, "dname: %s, number: %lu, offset: %u\n",
-		       domain_to_string(domain),
+		       dname_to_string(domain_dname(domain), NULL),
 		       (unsigned long) domain->number,
 		       query_get_dname_offset(q, domain)));
 		buffer_write(q->packet, dname_name(domain_dname(domain)),
@@ -34,7 +32,7 @@ encode_dname(query_type *q, domain_type *domain)
 	if (domain->parent) {
 		DEBUG(DEBUG_NAME_COMPRESSION, 2,
 		      (LOG_INFO, "dname: %s, number: %lu, pointer: %u\n",
-		       domain_to_string(domain),
+		       dname_to_string(domain_dname(domain), NULL),
 		       (unsigned long) domain->number,
 		       query_get_dname_offset(q, domain)));
 		assert(query_get_dname_offset(q, domain) <= MAX_COMPRESSION_OFFSET);
@@ -132,30 +130,13 @@ packet_encode_rrset(query_type *query,
 				section == AUTHORITY_SECTION ||
 				section == OPTIONAL_AUTHORITY_SECTION);
 #endif
-	static int round_robin_off = 0;
-	int do_robin = (round_robin && section == ANSWER_SECTION &&
-		query->qtype != TYPE_AXFR && query->qtype != TYPE_IXFR);
-	uint16_t start;
 	rrset_type *rrsig;
 
 	assert(rrset->rr_count > 0);
 
 	truncation_mark = buffer_position(query->packet);
 
-	if(do_robin && rrset->rr_count)
-		start = (uint16_t)(round_robin_off++ % rrset->rr_count);
-	else	start = 0;
-	for (i = start; i < rrset->rr_count; ++i) {
-		if (packet_encode_rr(query, owner, &rrset->rrs[i],
-			rrset->rrs[i].ttl)) {
-			++added;
-		} else {
-			all_added = 0;
-			start = 0;
-			break;
-		}
-	}
-	for (i = 0; i < start; ++i) {
+	for (i = 0; i < rrset->rr_count; ++i) {
 		if (packet_encode_rr(query, owner, &rrset->rrs[i],
 			rrset->rrs[i].ttl)) {
 			++added;

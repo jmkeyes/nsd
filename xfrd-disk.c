@@ -1,7 +1,7 @@
 /*
  * xfrd-disk.c - XFR (transfer) Daemon TCP system source file. Read/Write state to disk.
  *
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
+ * Copyright (c) 2001-2011, NLnet Labs. All rights reserved.
  *
  * See LICENSE for the license.
  *
@@ -12,9 +12,6 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <errno.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 #include "xfrd-disk.h"
 #include "xfrd.h"
 #include "buffer.h"
@@ -189,12 +186,6 @@ xfrd_read_state(struct xfrd_state* xfrd)
 		xfrd_soa_t incoming_soa;
 		time_t incoming_acquired;
 
-		if(nsd.signal_hint_shutdown) {
-			fclose(in);
-			region_destroy(tempregion);
-			return;
-		}
-
 		memset(&soa_nsd_read, 0, sizeof(soa_nsd_read));
 		memset(&soa_disk_read, 0, sizeof(soa_disk_read));
 		memset(&soa_notified_read, 0, sizeof(soa_notified_read));
@@ -247,15 +238,15 @@ xfrd_read_state(struct xfrd_state* xfrd)
 		zone->next_master = nextmas;
 		zone->round_num = round_num;
 		zone->timeout.tv_sec = timeout;
-		zone->timeout.tv_usec = 0;
+		zone->timeout.tv_nsec = 0;
 
 		/* read the zone OK, now set the master properly */
-		zone->master = acl_find_num(zone->zone_options->pattern->
-			request_xfr, zone->master_num);
+		zone->master = acl_find_num(
+			zone->zone_options->request_xfr, zone->master_num);
 		if(!zone->master) {
 			DEBUG(DEBUG_XFRD,1, (LOG_INFO, "xfrd: masters changed for zone %s",
 				zone->apex_str));
-			zone->master = zone->zone_options->pattern->request_xfr;
+			zone->master = zone->zone_options->request_xfr;
 			zone->master_num = 0;
 			zone->round_num = 0;
 		}
@@ -281,19 +272,6 @@ xfrd_read_state(struct xfrd_state* xfrd)
 		{
 			zone->state = xfrd_zone_expired;
 			xfrd_set_refresh_now(zone);
-		} 
-
-		/* there is a zone read and it matches what we had before */
-		if(zone->soa_nsd_acquired && zone->state != xfrd_zone_expired
-			&& zone->soa_nsd.serial == soa_nsd_read.serial) {
-			xfrd_deactivate_zone(zone);
-			zone->state = state;
-			xfrd_set_timer(zone, timeout);
-		}	
-		if(zone->soa_nsd_acquired == 0 && soa_nsd_acquired_read == 0 &&
-			soa_disk_acquired_read == 0) {
-			/* continue expon backoff where we were + check now */
-			zone->fresh_xfr_timeout = timeout;
 		}
 
 		/* handle as an incoming SOA. */
@@ -462,9 +440,9 @@ xfrd_write_state(struct xfrd_state* xfrd)
 		fprintf(out, "\tnext_master: %d\n", zone->next_master);
 		fprintf(out, "\tround_num: %d\n", zone->round_num);
 		fprintf(out, "\tnext_timeout: %d",
-			(zone->zone_handler_flags&EV_TIMEOUT)?(int)zone->timeout.tv_sec:0);
-		if((zone->zone_handler_flags&EV_TIMEOUT)) {
-			neato_timeout(out, "\t# =", zone->timeout.tv_sec);
+			zone->zone_handler.timeout?(int)zone->timeout.tv_sec:0);
+		if(zone->zone_handler.timeout) {
+			neato_timeout(out, "\t# =", zone->timeout.tv_sec - xfrd_time());
 		}
 		fprintf(out, "\n");
 		xfrd_write_state_soa(out, "soa_nsd", &zone->soa_nsd,
@@ -480,83 +458,4 @@ xfrd_write_state(struct xfrd_state* xfrd)
 	DEBUG(DEBUG_XFRD,1, (LOG_INFO, "xfrd: written %d zones to state file",
 		(int)xfrd->zones->count));
 	fclose(out);
-}
-
-/* return tempdirname */
-static void
-tempdirname(char* buf, size_t sz, struct nsd* nsd)
-{
-	snprintf(buf, sz, "%snsd-xfr-%d",
-		nsd->options->xfrdir, (int)nsd->pid);
-}
-
-void
-xfrd_make_tempdir(struct nsd* nsd)
-{
-	char tnm[1024];
-	tempdirname(tnm, sizeof(tnm), nsd);
-	/* create parent directories if needed (0750 permissions) */
-	if(!create_dirs(tnm)) {
-		log_msg(LOG_ERR, "parentdirs of %s failed", tnm);
-	}
-	/* restrictive permissions here, because this may be in /tmp */
-	if(mkdir(tnm, 0700)==-1) {
-		if(errno != EEXIST) {
-			log_msg(LOG_ERR, "mkdir %s failed: %s",
-				tnm, strerror(errno));
-		}
-	}
-}
-
-void
-xfrd_del_tempdir(struct nsd* nsd)
-{
-	char tnm[1024];
-	tempdirname(tnm, sizeof(tnm), nsd);
-	/* ignore parent directories, they are likely /var/tmp, /tmp or
-	 * /var/cache/nsd and do not have to be deleted */
-	if(rmdir(tnm)==-1 && errno != ENOENT) {
-		log_msg(LOG_WARNING, "rmdir %s failed: %s", tnm,
-			strerror(errno));
-	}
-}
-
-/* return name of xfrfile in tempdir */
-static void
-tempxfrname(char* buf, size_t sz, struct nsd* nsd, uint64_t number)
-{
-	char tnm[1024];
-	tempdirname(tnm, sizeof(tnm), nsd);
-	snprintf(buf, sz, "%s/xfr.%lld", tnm, (long long)number);
-}
-
-FILE*
-xfrd_open_xfrfile(struct nsd* nsd, uint64_t number, char* mode)
-{
-	char fname[1024];
-	FILE* xfr;
-	tempxfrname(fname, sizeof(fname), nsd, number);
-	xfr = fopen(fname, mode);
-	if(!xfr && errno == ENOENT) {
-		/* directory may not exist */
-		xfrd_make_tempdir(nsd);
-		xfr = fopen(fname, mode);
-	}
-	if(!xfr) {
-		log_msg(LOG_ERR, "open %s for %s failed: %s", fname, mode,
-			strerror(errno));
-		return NULL;
-	}
-	return xfr;
-}
-
-void
-xfrd_unlink_xfrfile(struct nsd* nsd, uint64_t number)
-{
-	char fname[1024];
-	tempxfrname(fname, sizeof(fname), nsd, number);
-	if(unlink(fname) == -1) {
-		log_msg(LOG_WARNING, "could not unlink %s: %s", fname,
-			strerror(errno));
-	}
 }
